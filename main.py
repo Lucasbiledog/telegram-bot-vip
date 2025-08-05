@@ -19,7 +19,6 @@ from waitress import serve
 nest_asyncio.apply()
 load_dotenv()
 
-# --- Configurações ---
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 GROUP_FREE_ID = int(os.getenv("GROUP_FREE_ID"))
 GROUP_VIP_ID = int(os.getenv("GROUP_VIP_ID"))
@@ -34,8 +33,7 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
 
-# --- Handlers Telegram ---
-
+# Handlers do Telegram
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "Fala! Esse bot te dá acesso a arquivos premium. Entre no grupo Free e veja como virar VIP. 🚀"
@@ -79,8 +77,7 @@ async def get_chat_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     await update.message.reply_text(f"O chat_id deste chat/grupo é: {chat_id}")
 
-# --- Envio Diário ---
-
+# Envio diário
 async def enviar_asset_gratuito(application):
     if not GOOGLE_DRIVE_FREE_FOLDER_LINKS or GOOGLE_DRIVE_FREE_FOLDER_LINKS == [""]:
         logging.warning("Nenhum link gratuito configurado.")
@@ -92,8 +89,7 @@ async def enviar_asset_gratuito(application):
     except Exception as e:
         logging.error(f"Erro ao enviar asset gratuito: {e}")
 
-# --- Flask webhook Stripe ---
-
+# Flask webhook Stripe
 app = Flask(__name__)
 
 @app.route("/webhook", methods=["POST"])
@@ -102,9 +98,7 @@ def webhook():
     sig_header = request.headers.get("stripe-signature")
 
     try:
-        event = stripe.Webhook.construct_event(
-            payload, sig_header, STRIPE_WEBHOOK_SECRET
-        )
+        event = stripe.Webhook.construct_event(payload, sig_header, STRIPE_WEBHOOK_SECRET)
     except ValueError as e:
         logging.error(f"Payload inválido: {e}")
         return f"Invalid payload: {e}", 400
@@ -118,15 +112,9 @@ def webhook():
 
         if telegram_user_id:
             try:
-                bot.send_message(
-                    chat_id=int(telegram_user_id),
-                    text="✅ Pagamento confirmado! Você será adicionado ao grupo VIP."
-                )
+                bot.send_message(chat_id=int(telegram_user_id), text="✅ Pagamento confirmado! Você será adicionado ao grupo VIP.")
                 invite_link = bot.export_chat_invite_link(chat_id=GROUP_VIP_ID)
-                bot.send_message(
-                    chat_id=int(telegram_user_id),
-                    text=f"Aqui está o seu link para entrar no grupo VIP:\n{invite_link}"
-                )
+                bot.send_message(chat_id=int(telegram_user_id), text=f"Aqui está o seu link para entrar no grupo VIP:\n{invite_link}")
                 logging.info(f"Link enviado com sucesso para o usuário {telegram_user_id}")
             except Exception as e:
                 logging.error(f"Erro ao enviar link convite para grupo VIP: {e}")
@@ -135,14 +123,11 @@ def webhook():
 
     return '', 200
 
-# --- Função para rodar Flask em thread separada ---
-
 def run_flask():
     port = int(os.environ.get("PORT", 4242))
     serve(app, host="0.0.0.0", port=port)
 
-# --- Função principal async ---
-
+# Função principal async
 async def main():
     application = ApplicationBuilder().token(BOT_TOKEN).build()
 
