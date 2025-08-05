@@ -3,3 +3,4 @@ Flask
 stripe
 python-dotenv
 waitress
+nest_asyncio
