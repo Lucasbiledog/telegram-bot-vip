@@ -14,7 +14,7 @@ from telegram.ext import (
 import stripe
 from flask import Flask, request
 import telegram as telegram_api
-from waitress import serve  # Para rodar o Flask em produção (Windows recomendado)
+from waitress import serve
 
 nest_asyncio.apply()
 load_dotenv()
@@ -81,13 +81,13 @@ async def get_chat_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # --- Envio Diário ---
 
-async def enviar_asset_gratuito():
-    if not GOOGLE_DRIVE_FREE_FOLDER_LINKS:
+async def enviar_asset_gratuito(application):
+    if not GOOGLE_DRIVE_FREE_FOLDER_LINKS or GOOGLE_DRIVE_FREE_FOLDER_LINKS == [""]:
         logging.warning("Nenhum link gratuito configurado.")
         return
     asset_link = random.choice(GOOGLE_DRIVE_FREE_FOLDER_LINKS)
     try:
-        bot.send_message(chat_id=GROUP_FREE_ID, text=f"🎁 Asset gratuito do dia:\n{asset_link}")
+        await application.bot.send_message(chat_id=GROUP_FREE_ID, text=f"🎁 Asset gratuito do dia:\n{asset_link}")
         logging.info("Asset gratuito enviado com sucesso.")
     except Exception as e:
         logging.error(f"Erro ao enviar asset gratuito: {e}")
@@ -138,7 +138,8 @@ def webhook():
 # --- Função para rodar Flask em thread separada ---
 
 def run_flask():
-    serve(app, host="0.0.0.0", port=4242)
+    port = int(os.environ.get("PORT", 4242))
+    serve(app, host="0.0.0.0", port=port)
 
 # --- Função principal async ---
 
@@ -152,15 +153,15 @@ async def main():
     flask_thread = threading.Thread(target=run_flask, daemon=True)
     flask_thread.start()
 
-    # Dispara a tarefa de envio diário (exemplo: todo dia às 9h)
+    logging.info("Bot iniciado e webhook ouvindo na porta %d", int(os.environ.get("PORT", 4242)))
+
     async def daily_task():
         while True:
-            await enviar_asset_gratuito()
+            await enviar_asset_gratuito(application)
             await asyncio.sleep(86400)  # 24 horas
 
     asyncio.create_task(daily_task())
 
-    logging.info("Bot iniciado e webhook ouvindo na porta 4242")
     await application.run_polling()
 
 if __name__ == "__main__":
