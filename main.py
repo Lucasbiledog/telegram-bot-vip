@@ -243,26 +243,27 @@ def run_flask():
 async def main():
     application = ApplicationBuilder().token(BOT_TOKEN).build()
 
+    # Adiciona os comandos
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("pagar", pagar))
     application.add_handler(CommandHandler("get_chat_id", get_chat_id))
     application.add_handler(CommandHandler("enviar_drive", enviar_manual_drive))
     application.add_handler(CommandHandler("limpar_chat", limpar_chat))
 
-    # Rodar o servidor Flask em uma thread separada
+    # Iniciar o Flask em uma thread paralela
     flask_thread = threading.Thread(target=run_flask, daemon=True)
     flask_thread.start()
 
-    logging.info("Bot iniciado com webhook.")
-
-    # Definir o webhook
+    # Define o webhook
     webhook_url = f"https://{os.environ.get('RENDER_EXTERNAL_HOSTNAME')}/webhook"
-    await application.bot.set_webhook(webhook_url)
+    await application.bot.set_webhook(url=webhook_url)
 
+    logging.info(f"Webhook definido: {webhook_url}")
+
+    # Inicia o bot com webhook
     await application.initialize()
     await application.start()
-    await application.updater.start_polling()  # <- Remova essa linha, não é necessária
-    await application.updater.idle()           # <- Remova essa também
+    await application.updater.start_webhook()
 
 if __name__ == "__main__":
     try:
