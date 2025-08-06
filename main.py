@@ -9,7 +9,7 @@ from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import PlainTextResponse
 from uvicorn import Config, Server
 
-from telegram import Update, Bot
+from telegram import Update
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
@@ -47,7 +47,7 @@ app = FastAPI()
 
 # === Inicializa o bot Telegram ===
 application = ApplicationBuilder().token(BOT_TOKEN).build()
-bot: Bot = application.bot  # acesso ao bot via application
+bot = application.bot
 
 # ===== Handlers do Telegram =====
 
@@ -94,7 +94,7 @@ async def get_chat_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     await update.message.reply_text(f"O chat_id deste chat/grupo é: {chat_id}")
 
-async def enviar_asset_drive():
+async def enviar_asset_drive(application):
     try:
         query_subfolders = f"'{GOOGLE_DRIVE_FREE_FOLDER_ID}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false"
         results = drive_service.files().list(
@@ -173,7 +173,7 @@ async def enviar_asset_drive():
 
 async def enviar_manual_drive(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("✅ Enviando asset do Drive no grupo Free...")
-    await enviar_asset_drive()
+    await enviar_asset_drive(application)
 
 async def limpar_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
@@ -221,7 +221,7 @@ async def stripe_webhook(request: Request):
 
     return PlainTextResponse("", status_code=200)
 
-# ===== Webhook Telegram =====
+# ===== Webhook Telegram (corrigido) =====
 @app.post("/webhook")
 async def telegram_webhook(request: Request):
     try:
@@ -243,12 +243,12 @@ application.add_handler(CommandHandler("limpar_chat", limpar_chat))
 # ===== Task diária para enviar asset automático =====
 async def daily_task():
     while True:
-        await enviar_asset_drive()
+        await enviar_asset_drive(application)
         await asyncio.sleep(86400)  # 24 horas
 
-# ===== Main para rodar =====
+# ===== Main =====
 async def main():
-    webhook_url = os.getenv("WEBHOOK_URL", "https://telegram-bot-vip-hfn7.onrender.com/webhook")
+    webhook_url = "https://telegram-bot-vip-hfn7.onrender.com/webhook"
     await bot.set_webhook(url=webhook_url)
     logging.info(f"Webhook Telegram definido em {webhook_url}")
 
