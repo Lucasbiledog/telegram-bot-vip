@@ -42,7 +42,6 @@ drive_service = build('drive', 'v3', credentials=credentials)
 
 # === Inicializa Bot Telegram ===
 bot = telegram_api.Bot(token=BOT_TOKEN)
-
 GROUP_FREE_ID = int(os.getenv("GROUP_FREE_ID"))
 GROUP_VIP_ID = int(os.getenv("GROUP_VIP_ID"))
 STRIPE_API_KEY = os.getenv("STRIPE_SECRET_KEY")
@@ -250,19 +249,20 @@ async def main():
     application.add_handler(CommandHandler("enviar_drive", enviar_manual_drive))
     application.add_handler(CommandHandler("limpar_chat", limpar_chat))
 
+    # Rodar o servidor Flask em uma thread separada
     flask_thread = threading.Thread(target=run_flask, daemon=True)
     flask_thread.start()
 
-    logging.info("Bot iniciado e webhook ouvindo na porta %d", int(os.environ.get("PORT", 4242)))
+    logging.info("Bot iniciado com webhook.")
 
-    async def daily_task():
-        while True:
-            await enviar_asset_drive(application)
-            await asyncio.sleep(86400)  # 24 horas
+    # Definir o webhook
+    webhook_url = f"https://{os.environ.get('RENDER_EXTERNAL_HOSTNAME')}/webhook"
+    await application.bot.set_webhook(webhook_url)
 
-    asyncio.create_task(daily_task())
-
-    await application.run_polling()
+    await application.initialize()
+    await application.start()
+    await application.updater.start_polling()  # <- Remova essa linha, não é necessária
+    await application.updater.idle()           # <- Remova essa também
 
 if __name__ == "__main__":
     try:
