@@ -16,8 +16,15 @@ from flask import Flask, request
 import telegram as telegram_api
 from waitress import serve
 
+import os
+import json
 from google.oauth2 import service_account
-from googleapiclient.discovery import build
+
+service_account_info = json.loads(os.environ['SERVICE_ACCOUNT_JSON'])
+credentials = service_account.Credentials.from_service_account_info(
+    service_account_info, scopes=SCOPES
+)
+
 
 nest_asyncio.apply()
 load_dotenv()
