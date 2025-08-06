@@ -6,6 +6,7 @@ import random
 import datetime
 
 from dotenv import load_dotenv
+from database import init_db, get_all_notifications
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import PlainTextResponse
 from uvicorn import Config, Server
