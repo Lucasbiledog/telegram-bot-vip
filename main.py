@@ -9,24 +9,21 @@ from dotenv import load_dotenv
 from database import init_db, SessionLocal, NotificationMessage, Config
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import PlainTextResponse
-from uvicorn import Config, Server
 
 from telegram import Update
-from telegram.ext import (
-    ApplicationBuilder,
-    CommandHandler,
-    ContextTypes,
-)
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
 import stripe
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 
+import uvicorn
+
 # === Config Google Drive ===
 SCOPES = ['https://www.googleapis.com/auth/drive.readonly']
-GOOGLE_DRIVE_FREE_FOLDER_ID = "19MVALjrVBC5foWSUyb27qPPlbkDdSt3j"  # Ajuste conforme sua pasta
+GOOGLE_DRIVE_FREE_FOLDER_ID = "19MVALjrVBC5foWSUyb27qPPlbkDdSt3j"
 
-# === Inicialização ===
+# === Load env vars ===
 load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -37,26 +34,23 @@ STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET")
 
 stripe.api_key = STRIPE_API_KEY
 
-# === Inicializa Google Drive ===
+# === Google Drive setup ===
 service_account_info = json.loads(os.environ['SERVICE_ACCOUNT_JSON'])
-credentials = service_account.Credentials.from_service_account_info(
-    service_account_info, scopes=SCOPES
-)
+credentials = service_account.Credentials.from_service_account_info(service_account_info, scopes=SCOPES)
 drive_service = build('drive', 'v3', credentials=credentials)
 
-# === Inicializa FastAPI ===
+# === FastAPI app ===
 app = FastAPI()
 
-# === Inicializa o bot Telegram ===
+# === Telegram Bot ===
 application = ApplicationBuilder().token(BOT_TOKEN).build()
 bot = application.bot
 
-# === Inicializa banco ===
+# === Database init ===
 init_db()
 db = SessionLocal()
 
-# ===== Handlers do Telegram =====
-
+# ===== Telegram Handlers =====
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "Fala! Esse bot te dá acesso a arquivos premium. Entre no grupo Free e veja como virar VIP. 🚀"
@@ -69,9 +63,7 @@ async def criar_checkout_session(telegram_user_id: int):
             line_items=[{
                 "price_data": {
                     "currency": "usd",
-                    "product_data": {
-                        "name": "Assinatura VIP Packs Unreal",
-                    },
+                    "product_data": {"name": "Assinatura VIP Packs Unreal"},
                     "unit_amount": 1000,
                 },
                 "quantity": 1,
@@ -104,26 +96,21 @@ async def enviar_asset_drive(application):
     try:
         query_subfolders = f"'{GOOGLE_DRIVE_FREE_FOLDER_ID}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false"
         results = drive_service.files().list(
-            q=query_subfolders,
-            fields="files(id, name)",
-            pageSize=100
+            q=query_subfolders, fields="files(id, name)", pageSize=100
         ).execute()
         subfolders = results.get('files', [])
-
         if not subfolders:
-            logging.warning("Nenhuma subpasta encontrada na pasta principal do Drive.")
+            logging.warning("Nenhuma subpasta encontrada no Drive.")
             return
 
         chosen_folder = random.choice(subfolders)
         folder_id = chosen_folder['id']
 
-        query_files = f"'{folder_id}' in parents and trashed=false"
         files_results = drive_service.files().list(
-            q=query_files,
-            fields="files(id, name, mimeType, webViewLink, webContentLink)",
+            q=f"'{folder_id}' in parents and trashed=false",
+            fields="files(id, name, mimeType, webContentLink)",
             pageSize=50
         ).execute()
-
         files = files_results.get('files', [])
         if not files:
             logging.warning(f"Nenhum arquivo encontrado na subpasta {chosen_folder['name']}")
@@ -131,50 +118,39 @@ async def enviar_asset_drive(application):
 
         preview_link = None
         file_link = None
-
-        # Encontra pasta "preview"
         preview_folder_id = None
+
         for f in files:
             if f['mimeType'] == 'application/vnd.google-apps.folder' and f['name'].lower() == 'preview':
                 preview_folder_id = f['id']
                 break
 
-        # Busca preview dentro da pasta "preview"
         if preview_folder_id:
             previews_results = drive_service.files().list(
                 q=f"'{preview_folder_id}' in parents and trashed=false",
-                fields="files(id, name, mimeType)",
-                pageSize=10
+                fields="files(id, name)", pageSize=10
             ).execute()
             previews = previews_results.get('files', [])
             if previews:
                 chosen_preview = random.choice(previews)
-                preview_id = chosen_preview['id']
-                preview_link = f"https://drive.google.com/uc?id={preview_id}"
+                preview_link = f"https://drive.google.com/uc?id={chosen_preview['id']}"
 
-        # Se não achar preview, tenta qualquer imagem direto da pasta
         if not preview_link:
             for f in files:
-                file_name = f['name'].lower()
-                if any(file_name.endswith(ext) for ext in ['.jpg', '.jpeg', '.png', '.webp', '.bmp', '.gif']):
-                    preview_id = f['id']
-                    preview_link = f"https://drive.google.com/uc?id={preview_id}"
+                name = f['name'].lower()
+                if any(name.endswith(ext) for ext in ['.jpg', '.jpeg', '.png', '.webp', '.bmp', '.gif']):
+                    preview_link = f"https://drive.google.com/uc?id={f['id']}"
                     break
 
-        # Procura o arquivo para download (.zip ou outro arquivo)
         for f in files:
-            mime_type = f['mimeType']
-            file_name = f['name'].lower()
-            if (
-                not mime_type.startswith('application/vnd.google-apps.folder') and
-                (mime_type.startswith('application/') or file_name.endswith('.zip'))
-            ):
-                file_link = f.get('webContentLink')
-                if file_link:
-                    break
+            if not f['mimeType'].startswith('application/vnd.google-apps.folder'):
+                if f['mimeType'].startswith('application/') or f['name'].lower().endswith('.zip'):
+                    file_link = f.get('webContentLink')
+                    if file_link:
+                        break
 
         if not file_link:
-            logging.warning(f"Arquivo para download não encontrado na subpasta {chosen_folder['name']}")
+            logging.warning(f"Arquivo para download não encontrado em {chosen_folder['name']}")
             return
 
         texto = f"🎁 Asset gratuito do dia: *{chosen_folder['name']}*\n\nLink para download: {file_link}"
@@ -206,19 +182,16 @@ async def limpar_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logging.error(f"Erro ao limpar grupo: {e}")
         await update.message.reply_text("❌ Erro ao tentar limpar o grupo.")
 
-# ===== Comandos para gerenciar mensagens e configs no banco =====
-
+# ===== Mensagens e Config banco =====
 async def add_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if len(context.args) < 2:
         await update.message.reply_text("Uso: /addmsg <categoria> <mensagem>")
         return
-
     category = context.args[0]
     message = " ".join(context.args[1:])
     if category not in ['pre_notification', 'unreal_news']:
         await update.message.reply_text("Categoria inválida. Use 'pre_notification' ou 'unreal_news'.")
         return
-
     db.add(NotificationMessage(category=category, message=message))
     db.commit()
     await update.message.reply_text(f"Mensagem adicionada na categoria {category}.")
@@ -227,39 +200,32 @@ async def list_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if len(context.args) < 1:
         await update.message.reply_text("Uso: /listmsg <categoria>")
         return
-
     category = context.args[0]
     if category not in ['pre_notification', 'unreal_news']:
         await update.message.reply_text("Categoria inválida. Use 'pre_notification' ou 'unreal_news'.")
         return
-
     msgs = db.query(NotificationMessage).filter(NotificationMessage.category == category).all()
     if not msgs:
         await update.message.reply_text("Nenhuma mensagem encontrada.")
         return
-
     text = f"Mensagens na categoria {category}:\n\n"
     for msg in msgs:
         text += f"- (ID {msg.id}) {msg.message}\n"
-
     await update.message.reply_text(text)
 
 async def delete_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if len(context.args) < 1:
         await update.message.reply_text("Uso: /delmsg <id>")
         return
-
     try:
         msg_id = int(context.args[0])
     except:
         await update.message.reply_text("ID inválido.")
         return
-
     msg = db.query(NotificationMessage).filter(NotificationMessage.id == msg_id).first()
     if not msg:
         await update.message.reply_text("Mensagem não encontrada.")
         return
-
     db.delete(msg)
     db.commit()
     await update.message.reply_text(f"Mensagem ID {msg_id} deletada.")
@@ -268,10 +234,8 @@ async def set_config(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if len(context.args) < 2:
         await update.message.reply_text("Uso: /setconfig <chave> <valor>")
         return
-
     key = context.args[0]
     value = context.args[1]
-
     config = db.query(Config).filter(Config.key == key).first()
     if config:
         config.value = value
@@ -279,27 +243,22 @@ async def set_config(update: Update, context: ContextTypes.DEFAULT_TYPE):
         config = Config(key=key, value=value)
         db.add(config)
     db.commit()
-
     await update.message.reply_text(f"Configuração '{key}' atualizada para '{value}'.")
 
-# ==== NOVO: comando para teste de pagamento fictício ====
+# ==== Teste pagamento fictício ====
 async def testepagamento(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     db_session = SessionLocal()
-
     validade = datetime.datetime.utcnow() + datetime.timedelta(days=7)
     key = f"vip_validade:{user_id}"
-
     config = db_session.query(Config).filter(Config.key == key).first()
     if config:
         config.value = validade.isoformat()
     else:
         config = Config(key=key, value=validade.isoformat())
         db_session.add(config)
-
     db_session.commit()
     db_session.close()
-
     try:
         await context.bot.send_message(chat_id=user_id, text="✅ Pagamento fictício confirmado! Você será adicionado ao grupo VIP.")
         invite_link = await context.bot.export_chat_invite_link(chat_id=GROUP_VIP_ID)
@@ -307,21 +266,18 @@ async def testepagamento(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"Erro ao enviar link convite para grupo VIP: {e}")
         return
-
     await update.message.reply_text("Teste de pagamento simulado com sucesso!")
 
-# ==== NOVO: tarefa para verificar validade dos VIPs e kickar os expirados ====
+# ==== Verificar validade VIPs e kickar expirados ====
 async def verificar_vips():
     while True:
         db_session = SessionLocal()
         now = datetime.datetime.utcnow()
         vip_configs = db_session.query(Config).filter(Config.key.like("vip_validade:%")).all()
-
         for cfg in vip_configs:
             try:
                 validade = datetime.datetime.fromisoformat(cfg.value)
                 user_id = int(cfg.key.split(":", 1)[1])
-
                 if validade < now:
                     try:
                         await bot.ban_chat_member(chat_id=GROUP_VIP_ID, user_id=user_id)
@@ -330,16 +286,14 @@ async def verificar_vips():
                         logging.warning(f"Erro ao remover usuário {user_id} do grupo VIP: {e}")
             except Exception as e:
                 logging.error(f"Erro processando validade VIP {cfg.key}: {e}")
-
         db_session.close()
-        await asyncio.sleep(3600)  # checa a cada 1 hora
+        await asyncio.sleep(3600)
 
 # ===== Webhook Stripe =====
 @app.post("/stripe_webhook")
 async def stripe_webhook(request: Request):
     payload = await request.body()
     sig_header = request.headers.get("stripe-signature")
-
     try:
         event = stripe.Webhook.construct_event(payload, sig_header, STRIPE_WEBHOOK_SECRET)
     except ValueError as e:
@@ -352,7 +306,6 @@ async def stripe_webhook(request: Request):
     if event['type'] == 'checkout.session.completed':
         session = event['data']['object']
         telegram_user_id = session.get('metadata', {}).get('telegram_user_id')
-
         if telegram_user_id:
             try:
                 await bot.send_message(chat_id=int(telegram_user_id), text="✅ Pagamento confirmado! Você será adicionado ao grupo VIP.")
@@ -363,7 +316,6 @@ async def stripe_webhook(request: Request):
                 logging.error(f"Erro ao enviar link convite para grupo VIP: {e}")
         else:
             logging.warning("Webhook Stripe recebido sem telegram_user_id no metadata.")
-
     return PlainTextResponse("", status_code=200)
 
 # ===== Webhook Telegram =====
@@ -378,60 +330,50 @@ async def telegram_webhook(request: Request):
         raise HTTPException(status_code=400, detail="Invalid update")
     return PlainTextResponse("", status_code=200)
 
-# ===== Health Check para Render =====
+# ===== Health Check =====
 @app.get("/")
 async def root():
     return {"status": "online", "message": "Bot Telegram + Stripe rodando 🎉"}
 
-# ===== Adiciona Handlers =====
+# ===== Adiciona handlers =====
 application.add_handler(CommandHandler("start", start))
 application.add_handler(CommandHandler("pagar", pagar))
 application.add_handler(CommandHandler("get_chat_id", get_chat_id))
 application.add_handler(CommandHandler("enviar_drive", enviar_manual_drive))
 application.add_handler(CommandHandler("limpar_chat", limpar_chat))
-
 application.add_handler(CommandHandler("addmsg", add_message))
 application.add_handler(CommandHandler("listmsg", list_messages))
 application.add_handler(CommandHandler("delmsg", delete_message))
 application.add_handler(CommandHandler("setconfig", set_config))
-
 application.add_handler(CommandHandler("testepagamento", testepagamento))
 
-# ===== Tarefa diária =====
+# ===== Tarefa diária para enviar asset =====
 async def daily_task():
     while True:
         config = db.query(Config).filter(Config.key == "asset_hour").first()
-        hour = int(config.value) if config else 9  # default 9h se não configurado
-
+        hour = int(config.value) if config else 9
         now = datetime.datetime.now()
         target_time = now.replace(hour=hour, minute=0, second=0, microsecond=0)
-
         if now >= target_time:
             target_time += datetime.timedelta(days=1)
-
         wait_seconds = (target_time - now).total_seconds()
         logging.info(f"Aguardando até {target_time} para enviar próximo asset...")
-
         await asyncio.sleep(wait_seconds)
         await enviar_asset_drive(application)
 
-# ===== Main =====
-async def main():
+# ===== Startup event =====
+@app.on_event("startup")
+async def on_startup():
     await application.initialize()
     await application.start()
-
     webhook_url = "https://telegram-bot-vip-hfn7.onrender.com/webhook"
     await bot.set_webhook(url=webhook_url)
     logging.info(f"Webhook Telegram definido em {webhook_url}")
-
-    # Inicia as tarefas background
     asyncio.create_task(daily_task())
     asyncio.create_task(verificar_vips())
 
-    config = Config(app=app, host="0.0.0.0", port=int(os.environ.get("PORT", 4242)), log_level="info")
-    server = Server(config=config)
-    await server.serve()
-
+# ===== Run uvicorn =====
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
-    asyncio.run(main())
+    port = int(os.environ.get("PORT", 4242))
+    uvicorn.run("main:app", host="0.0.0.0", port=port, log_level="info")
