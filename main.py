@@ -89,6 +89,27 @@ async def enviar_asset_gratuito(application):
     except Exception as e:
         logging.error(f"Erro ao enviar asset gratuito: {e}")
 
+# Comando para enviar asset gratuito manualmente
+async def enviar_manual_free(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    logging.info(f"Comando /enviar_free usado por {user_id}")
+    await update.message.reply_text("✅ Enviando asset gratuito no grupo Free...")
+    await enviar_asset_gratuito(context.application)
+
+# Comando para limpar o grupo Free
+async def limpar_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        logging.info(f"Usuário {update.effective_user.id} iniciou limpeza do grupo Free")
+        async for message in context.bot.get_chat(GROUP_FREE_ID).iter_history(limit=100):
+            try:
+                await context.bot.delete_message(chat_id=GROUP_FREE_ID, message_id=message.message_id)
+            except Exception as e:
+                logging.warning(f"Erro ao deletar mensagem {message.message_id}: {e}")
+        await update.message.reply_text("✅ Limpeza do grupo Free concluída (últimas 100 mensagens).")
+    except Exception as e:
+        logging.error(f"Erro ao limpar grupo: {e}")
+        await update.message.reply_text("❌ Erro ao tentar limpar o grupo.")
+
 # Flask webhook Stripe
 app = Flask(__name__)
 
@@ -134,6 +155,8 @@ async def main():
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("pagar", pagar))
     application.add_handler(CommandHandler("get_chat_id", get_chat_id))
+    application.add_handler(CommandHandler("enviar_free", enviar_manual_free))
+    application.add_handler(CommandHandler("limpar_chat", limpar_chat))
 
     flask_thread = threading.Thread(target=run_flask, daemon=True)
     flask_thread.start()
