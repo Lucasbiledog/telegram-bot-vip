@@ -22,7 +22,7 @@ from googleapiclient.discovery import build
 
 # === Config Google Drive ===
 SCOPES = ['https://www.googleapis.com/auth/drive.readonly']
-GOOGLE_DRIVE_FREE_FOLDER_ID = "19MVALjrVBC5foWSUyb27qPPlbkDdSt3j"
+GOOGLE_DRIVE_FREE_FOLDER_ID = "19MVALjrVBC5foWSUyb27qPPlbkDdSt3j" #==AQUI MUDA O LINK DA PASTA DO GRUPO FREE ===
 
 # === Inicialização ===
 load_dotenv()
@@ -257,10 +257,23 @@ application.add_handler(CommandHandler("enviar_drive", enviar_manual_drive))
 application.add_handler(CommandHandler("limpar_chat", limpar_chat))
 
 # ===== Tarefa diária =====
+import datetime
+
 async def daily_task():
     while True:
+        now = datetime.datetime.now()
+        target_time = now.replace(hour=9, minute=0, second=0, microsecond=0)
+
+        # Se já passou do horário hoje, agendar para amanhã
+        if now >= target_time:
+            target_time += datetime.timedelta(days=1)
+
+        wait_seconds = (target_time - now).total_seconds()
+        logging.info(f"Aguardando até {target_time} para enviar próximo asset...")
+
+        await asyncio.sleep(wait_seconds)
         await enviar_asset_drive(application)
-        await asyncio.sleep(86400)  # 24 horas
+
 
 # ===== Main =====
 async def main():
