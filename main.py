@@ -16,6 +16,9 @@ from flask import Flask, request
 import telegram as telegram_api
 from waitress import serve
 
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
+
 nest_asyncio.apply()
 load_dotenv()
 
@@ -24,7 +27,10 @@ GROUP_FREE_ID = int(os.getenv("GROUP_FREE_ID"))
 GROUP_VIP_ID = int(os.getenv("GROUP_VIP_ID"))
 STRIPE_API_KEY = os.getenv("STRIPE_SECRET_KEY")
 STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET")
-GOOGLE_DRIVE_FREE_FOLDER_LINKS = os.getenv("GOOGLE_DRIVE_FREE_FOLDER_LINKS", "").split(",")
+GOOGLE_DRIVE_FREE_FOLDER_ID = "19MVALjrVBC5foWSUyb27qPPlbkDdSt3j"  # Pasta principal do Drive
+
+SERVICE_ACCOUNT_FILE = "service_account.json"  # Seu JSON de conta de serviço
+SCOPES = ['https://www.googleapis.com/auth/drive.readonly']
 
 stripe.api_key = STRIPE_API_KEY
 bot = telegram_api.Bot(token=BOT_TOKEN)
@@ -32,6 +38,13 @@ bot = telegram_api.Bot(token=BOT_TOKEN)
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
+
+# Inicializar serviço Google Drive
+credentials = service_account.Credentials.from_service_account_file(
+    SERVICE_ACCOUNT_FILE, scopes=SCOPES
+)
+drive_service = build('drive', 'v3', credentials=credentials)
+
 
 # Handlers do Telegram
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -77,30 +90,99 @@ async def get_chat_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     await update.message.reply_text(f"O chat_id deste chat/grupo é: {chat_id}")
 
-# Envio diário
-async def enviar_asset_gratuito(application):
-    if not GOOGLE_DRIVE_FREE_FOLDER_LINKS or GOOGLE_DRIVE_FREE_FOLDER_LINKS == [""]:
-        logging.warning("Nenhum link gratuito configurado.")
-        return
-    asset_link = random.choice(GOOGLE_DRIVE_FREE_FOLDER_LINKS)
+# Função para enviar asset gratuito aleatório da pasta Google Drive
+async def enviar_asset_drive(application):
     try:
-        await application.bot.send_message(chat_id=GROUP_FREE_ID, text=f"🎁 Asset gratuito do dia:\n{asset_link}")
-        logging.info("Asset gratuito enviado com sucesso.")
-    except Exception as e:
-        logging.error(f"Erro ao enviar asset gratuito: {e}")
+        # Listar subpastas na pasta principal
+        query_subfolders = f"'{GOOGLE_DRIVE_FREE_FOLDER_ID}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false"
+        results = drive_service.files().list(
+            q=query_subfolders,
+            fields="files(id, name)",
+            pageSize=100
+        ).execute()
+        subfolders = results.get('files', [])
 
-# Comando para enviar asset gratuito manualmente
-async def enviar_manual_free(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    logging.info(f"Comando /enviar_free usado por {user_id}")
-    await update.message.reply_text("✅ Enviando asset gratuito no grupo Free...")
-    await enviar_asset_gratuito(context.application)
+        if not subfolders:
+            logging.warning("Nenhuma subpasta encontrada na pasta principal do Drive.")
+            return
+
+        chosen_folder = random.choice(subfolders)
+        folder_id = chosen_folder['id']
+
+        # Buscar arquivos dentro da subpasta
+        query_files = f"'{folder_id}' in parents and trashed=false"
+        files_results = drive_service.files().list(
+            q=query_files,
+            fields="files(id, name, mimeType, webViewLink, webContentLink)",
+            pageSize=50
+        ).execute()
+
+        files = files_results.get('files', [])
+        if not files:
+            logging.warning(f"Nenhum arquivo encontrado na subpasta {chosen_folder['name']}")
+            return
+
+        preview_link = None
+        file_link = None
+
+        # Procurar pela pasta preview dentro da subpasta para achar imagens
+        preview_folder_id = None
+        for f in files:
+            if f['mimeType'] == 'application/vnd.google-apps.folder' and f['name'].lower() == 'preview':
+                preview_folder_id = f['id']
+                break
+
+        if preview_folder_id:
+            previews_results = drive_service.files().list(
+                q=f"'{preview_folder_id}' in parents and trashed=false",
+                fields="files(id, name, mimeType)",
+                pageSize=10
+            ).execute()
+            previews = previews_results.get('files', [])
+            if previews:
+                chosen_preview = random.choice(previews)
+                preview_id = chosen_preview['id']
+                preview_link = f"https://drive.google.com/uc?id={preview_id}"
+        if not preview_link:
+            for f in files:
+                if f['mimeType'].startswith('image/'):
+                    preview_id = f['id']
+                    preview_link = f"https://drive.google.com/uc?id={preview_id}"
+                    break
+
+        # Buscar arquivo para download (não pasta, não imagem)
+        for f in files:
+            if not f['mimeType'].startswith('application/vnd.google-apps.folder') and not f['mimeType'].startswith('image/'):
+                file_link = f.get('webContentLink')
+                if file_link:
+                    break
+
+        if not file_link:
+            logging.warning(f"Arquivo para download não encontrado na subpasta {chosen_folder['name']}")
+            return
+
+        texto = f"🎁 Asset gratuito do dia: *{chosen_folder['name']}*\n\nLink para download: {file_link}"
+
+        if preview_link:
+            await application.bot.send_photo(chat_id=GROUP_FREE_ID, photo=preview_link, caption=texto, parse_mode='Markdown')
+        else:
+            await application.bot.send_message(chat_id=GROUP_FREE_ID, text=texto, parse_mode='Markdown')
+
+        logging.info(f"Enviado asset '{chosen_folder['name']}' com sucesso.")
+    except Exception as e:
+        logging.error(f"Erro ao enviar asset do Drive: {e}")
+
+# Comando para enviar asset do Drive manualmente
+async def enviar_manual_drive(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("✅ Enviando asset do Drive no grupo Free...")
+    await enviar_asset_drive(context.application)
 
 # Comando para limpar o grupo Free
 async def limpar_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         logging.info(f"Usuário {update.effective_user.id} iniciou limpeza do grupo Free")
-        async for message in context.bot.get_chat(GROUP_FREE_ID).iter_history(limit=100):
+        chat = await context.bot.get_chat(GROUP_FREE_ID)
+        async for message in chat.iter_history(limit=100):
             try:
                 await context.bot.delete_message(chat_id=GROUP_FREE_ID, message_id=message.message_id)
             except Exception as e:
@@ -155,7 +237,7 @@ async def main():
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("pagar", pagar))
     application.add_handler(CommandHandler("get_chat_id", get_chat_id))
-    application.add_handler(CommandHandler("enviar_free", enviar_manual_free))
+    application.add_handler(CommandHandler("enviar_drive", enviar_manual_drive))
     application.add_handler(CommandHandler("limpar_chat", limpar_chat))
 
     flask_thread = threading.Thread(target=run_flask, daemon=True)
@@ -165,7 +247,7 @@ async def main():
 
     async def daily_task():
         while True:
-            await enviar_asset_gratuito(application)
+            await enviar_asset_drive(application)
             await asyncio.sleep(86400)  # 24 horas
 
     asyncio.create_task(daily_task())
