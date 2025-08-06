@@ -44,7 +44,7 @@ app = FastAPI()
 
 # === Telegram Bot ===
 application = ApplicationBuilder().token(BOT_TOKEN).build()
-bot = application.bot
+
 
 # === Database init ===
 init_db()
@@ -366,11 +366,17 @@ async def daily_task():
 async def on_startup():
     await application.initialize()
     await application.start()
+
+    global bot
+    bot = application.bot  # Agora sim, após iniciar
+
     webhook_url = "https://telegram-bot-vip-hfn7.onrender.com/webhook"
     await bot.set_webhook(url=webhook_url)
     logging.info(f"Webhook Telegram definido em {webhook_url}")
+
     asyncio.create_task(daily_task())
     asyncio.create_task(verificar_vips())
+
 
 # ===== Run uvicorn =====
 if __name__ == "__main__":
