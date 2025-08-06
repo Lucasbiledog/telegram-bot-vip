@@ -248,15 +248,23 @@ async def daily_task():
 
 # ===== Main =====
 async def main():
+    # Inicializa o bot corretamente
+    await application.initialize()
+    await application.start()
+
+    # Define o webhook do Telegram
     webhook_url = "https://telegram-bot-vip-hfn7.onrender.com/webhook"
     await bot.set_webhook(url=webhook_url)
     logging.info(f"Webhook Telegram definido em {webhook_url}")
 
+    # Inicia tarefa de envio automático
     asyncio.create_task(daily_task())
 
+    # Roda FastAPI com Uvicorn
     config = Config(app=app, host="0.0.0.0", port=int(os.environ.get("PORT", 4242)), log_level="info")
     server = Server(config=config)
     await server.serve()
+
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
