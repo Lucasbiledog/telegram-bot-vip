@@ -1,7 +1,7 @@
 python-telegram-bot[asyncio]==20.3
 fastapi==0.95.2
 uvicorn==0.22.0
-stripe==12.5.0
+stripe
 python-dotenv==1.0.0
 google-api-python-client==2.126.0
 google-auth==2.29.0
