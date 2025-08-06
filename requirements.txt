@@ -1,9 +1,8 @@
-python-telegram-bot[webhooks]==20.3
-Flask
-stripe
-python-dotenv
-waitress
-nest_asyncio
+python-telegram-bot[asyncio]==20.3
+fastapi==0.95.2
+uvicorn==0.22.0
+stripe==6.56.0
+python-dotenv==1.0.0
 google-api-python-client==2.126.0
 google-auth==2.29.0
 google-auth-httplib2==0.2.0

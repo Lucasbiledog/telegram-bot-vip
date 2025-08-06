@@ -2,19 +2,20 @@ import os
 import json
 import logging
 import asyncio
-import threading
 import random
-import nest_asyncio
+
 from dotenv import load_dotenv
-from flask import Flask, request
-from waitress import serve
+from fastapi import FastAPI, Request, HTTPException
+from fastapi.responses import PlainTextResponse
+from uvicorn import Config, Server
+
 from telegram import Update
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
     ContextTypes,
 )
-import telegram as telegram_api
+
 import stripe
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
@@ -24,7 +25,6 @@ SCOPES = ['https://www.googleapis.com/auth/drive.readonly']
 GOOGLE_DRIVE_FREE_FOLDER_ID = "19MVALjrVBC5foWSUyb27qPPlbkDdSt3j"
 
 # === Inicialização ===
-nest_asyncio.apply()
 load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -33,6 +33,8 @@ GROUP_VIP_ID = int(os.getenv("GROUP_VIP_ID"))
 STRIPE_API_KEY = os.getenv("STRIPE_SECRET_KEY")
 STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET")
 
+stripe.api_key = STRIPE_API_KEY
+
 # === Inicializa Google Drive ===
 service_account_info = json.loads(os.environ['SERVICE_ACCOUNT_JSON'])
 credentials = service_account.Credentials.from_service_account_info(
@@ -40,22 +42,15 @@ credentials = service_account.Credentials.from_service_account_info(
 )
 drive_service = build('drive', 'v3', credentials=credentials)
 
-# === Inicializa Bot Telegram ===
-bot = telegram_api.Bot(token=BOT_TOKEN)
-GROUP_FREE_ID = int(os.getenv("GROUP_FREE_ID"))
-GROUP_VIP_ID = int(os.getenv("GROUP_VIP_ID"))
-STRIPE_API_KEY = os.getenv("STRIPE_SECRET_KEY")
-STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET")
+# === Inicializa FastAPI ===
+app = FastAPI()
 
-# ==== AUTENTICAÇÃO GOOGLE DRIVE ====
-service_account_info = json.loads(os.environ['SERVICE_ACCOUNT_JSON'])
-credentials = service_account.Credentials.from_service_account_info(
-    service_account_info, scopes=SCOPES
-)
-drive_service = build('drive', 'v3', credentials=credentials)
+# === Inicializa o bot Telegram ===
+application = ApplicationBuilder().token(BOT_TOKEN).build()
+bot = application.bot  # acesso ao bot via application
 
+# ===== Handlers do Telegram =====
 
-# Handlers do Telegram
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "Fala! Esse bot te dá acesso a arquivos premium. Entre no grupo Free e veja como virar VIP. 🚀"
@@ -99,10 +94,8 @@ async def get_chat_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     await update.message.reply_text(f"O chat_id deste chat/grupo é: {chat_id}")
 
-# Função para enviar asset gratuito aleatório da pasta Google Drive
 async def enviar_asset_drive(application):
     try:
-        # Listar subpastas na pasta principal
         query_subfolders = f"'{GOOGLE_DRIVE_FREE_FOLDER_ID}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false"
         results = drive_service.files().list(
             q=query_subfolders,
@@ -118,7 +111,6 @@ async def enviar_asset_drive(application):
         chosen_folder = random.choice(subfolders)
         folder_id = chosen_folder['id']
 
-        # Buscar arquivos dentro da subpasta
         query_files = f"'{folder_id}' in parents and trashed=false"
         files_results = drive_service.files().list(
             q=query_files,
@@ -134,7 +126,6 @@ async def enviar_asset_drive(application):
         preview_link = None
         file_link = None
 
-        # Procurar pela pasta preview dentro da subpasta para achar imagens
         preview_folder_id = None
         for f in files:
             if f['mimeType'] == 'application/vnd.google-apps.folder' and f['name'].lower() == 'preview':
@@ -159,7 +150,6 @@ async def enviar_asset_drive(application):
                     preview_link = f"https://drive.google.com/uc?id={preview_id}"
                     break
 
-        # Buscar arquivo para download (não pasta, não imagem)
         for f in files:
             if not f['mimeType'].startswith('application/vnd.google-apps.folder') and not f['mimeType'].startswith('image/'):
                 file_link = f.get('webContentLink')
@@ -173,20 +163,18 @@ async def enviar_asset_drive(application):
         texto = f"🎁 Asset gratuito do dia: *{chosen_folder['name']}*\n\nLink para download: {file_link}"
 
         if preview_link:
-            await application.bot.send_photo(chat_id=GROUP_FREE_ID, photo=preview_link, caption=texto, parse_mode='Markdown')
+            await bot.send_photo(chat_id=GROUP_FREE_ID, photo=preview_link, caption=texto, parse_mode='Markdown')
         else:
-            await application.bot.send_message(chat_id=GROUP_FREE_ID, text=texto, parse_mode='Markdown')
+            await bot.send_message(chat_id=GROUP_FREE_ID, text=texto, parse_mode='Markdown')
 
         logging.info(f"Enviado asset '{chosen_folder['name']}' com sucesso.")
     except Exception as e:
         logging.error(f"Erro ao enviar asset do Drive: {e}")
 
-# Comando para enviar asset do Drive manualmente
 async def enviar_manual_drive(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("✅ Enviando asset do Drive no grupo Free...")
-    await enviar_asset_drive(context.application)
+    await enviar_asset_drive(application)
 
-# Comando para limpar o grupo Free
 async def limpar_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         logging.info(f"Usuário {update.effective_user.id} iniciou limpeza do grupo Free")
@@ -201,22 +189,20 @@ async def limpar_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logging.error(f"Erro ao limpar grupo: {e}")
         await update.message.reply_text("❌ Erro ao tentar limpar o grupo.")
 
-# Flask webhook Stripe
-app = Flask(__name__)
-
-@app.route("/webhook", methods=["POST"])
-def webhook():
-    payload = request.data
+# ===== Webhook Stripe =====
+@app.post("/stripe_webhook")
+async def stripe_webhook(request: Request):
+    payload = await request.body()
     sig_header = request.headers.get("stripe-signature")
 
     try:
         event = stripe.Webhook.construct_event(payload, sig_header, STRIPE_WEBHOOK_SECRET)
     except ValueError as e:
-        logging.error(f"Payload inválido: {e}")
-        return f"Invalid payload: {e}", 400
+        logging.error(f"Payload inválido Stripe: {e}")
+        raise HTTPException(status_code=400, detail=f"Invalid payload: {e}")
     except stripe.error.SignatureVerificationError as e:
-        logging.error(f"Assinatura inválida: {e}")
-        return f"Invalid signature: {e}", 400
+        logging.error(f"Assinatura inválida Stripe: {e}")
+        raise HTTPException(status_code=400, detail=f"Invalid signature: {e}")
 
     if event['type'] == 'checkout.session.completed':
         session = event['data']['object']
@@ -224,49 +210,52 @@ def webhook():
 
         if telegram_user_id:
             try:
-                bot.send_message(chat_id=int(telegram_user_id), text="✅ Pagamento confirmado! Você será adicionado ao grupo VIP.")
-                invite_link = bot.export_chat_invite_link(chat_id=GROUP_VIP_ID)
-                bot.send_message(chat_id=int(telegram_user_id), text=f"Aqui está o seu link para entrar no grupo VIP:\n{invite_link}")
+                await bot.send_message(chat_id=int(telegram_user_id), text="✅ Pagamento confirmado! Você será adicionado ao grupo VIP.")
+                invite_link = await bot.export_chat_invite_link(chat_id=GROUP_VIP_ID)
+                await bot.send_message(chat_id=int(telegram_user_id), text=f"Aqui está o seu link para entrar no grupo VIP:\n{invite_link}")
                 logging.info(f"Link enviado com sucesso para o usuário {telegram_user_id}")
             except Exception as e:
                 logging.error(f"Erro ao enviar link convite para grupo VIP: {e}")
         else:
-            logging.warning("Webhook recebido sem telegram_user_id no metadata.")
+            logging.warning("Webhook Stripe recebido sem telegram_user_id no metadata.")
 
-    return '', 200
+    return PlainTextResponse("", status_code=200)
 
-def run_flask():
-    port = int(os.environ.get("PORT", 4242))
-    serve(app, host="0.0.0.0", port=port)
+# ===== Webhook Telegram =====
+@app.post("/webhook")
+async def telegram_webhook(update: Update, request: Request):
+    update = Update.de_json(await request.json(), bot)
+    await application.update_queue.put(update)
+    return PlainTextResponse("", status_code=200)
 
-# Função principal async
+# ===== Adiciona Handlers =====
+application.add_handler(CommandHandler("start", start))
+application.add_handler(CommandHandler("pagar", pagar))
+application.add_handler(CommandHandler("get_chat_id", get_chat_id))
+application.add_handler(CommandHandler("enviar_drive", enviar_manual_drive))
+application.add_handler(CommandHandler("limpar_chat", limpar_chat))
+
+# ===== Task diária para enviar asset automático =====
+async def daily_task():
+    while True:
+        await enviar_asset_drive(application)
+        await asyncio.sleep(86400)  # 24 horas
+
+# ===== Main para rodar =====
 async def main():
-    application = ApplicationBuilder().token(BOT_TOKEN).build()
+    # Seta webhook Telegram para a URL correta
+    webhook_url = "https://telegram-bot-vip-hfn7.onrender.com/webhook"
+    await bot.set_webhook(url=webhook_url)
+    logging.info(f"Webhook Telegram definido em {webhook_url}")
 
-    # Adiciona os comandos
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("pagar", pagar))
-    application.add_handler(CommandHandler("get_chat_id", get_chat_id))
-    application.add_handler(CommandHandler("enviar_drive", enviar_manual_drive))
-    application.add_handler(CommandHandler("limpar_chat", limpar_chat))
+    # Cria task para enviar assets diários
+    asyncio.create_task(daily_task())
 
-    # Iniciar o Flask em uma thread paralela
-    flask_thread = threading.Thread(target=run_flask, daemon=True)
-    flask_thread.start()
-
-    # Define o webhook
-    webhook_url = f"https://{os.environ.get('RENDER_EXTERNAL_HOSTNAME')}/webhook"
-    await application.bot.set_webhook(url=webhook_url)
-
-    logging.info(f"Webhook definido: {webhook_url}")
-
-    # Inicia o bot com webhook
-    await application.initialize()
-    await application.start()
-    await application.updater.start_webhook()
+    # Roda servidor Uvicorn com FastAPI
+    config = Config(app=app, host="0.0.0.0", port=int(os.environ.get("PORT", 4242)), log_level="info")
+    server = Server(config=config)
+    await server.serve()
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        logging.info("Bot encerrado manualmente.")
+    logging.basicConfig(level=logging.INFO)
+    asyncio.run(main())
