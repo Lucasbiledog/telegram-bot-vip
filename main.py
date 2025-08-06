@@ -126,12 +126,14 @@ async def enviar_asset_drive(application):
         preview_link = None
         file_link = None
 
+        # Encontra pasta "preview"
         preview_folder_id = None
         for f in files:
             if f['mimeType'] == 'application/vnd.google-apps.folder' and f['name'].lower() == 'preview':
                 preview_folder_id = f['id']
                 break
 
+        # Busca preview dentro da pasta "preview"
         if preview_folder_id:
             previews_results = drive_service.files().list(
                 q=f"'{preview_folder_id}' in parents and trashed=false",
@@ -143,15 +145,24 @@ async def enviar_asset_drive(application):
                 chosen_preview = random.choice(previews)
                 preview_id = chosen_preview['id']
                 preview_link = f"https://drive.google.com/uc?id={preview_id}"
+
+        # Se não achar preview, tenta qualquer imagem direto da pasta
         if not preview_link:
             for f in files:
-                if f['mimeType'].startswith('image/'):
+                file_name = f['name'].lower()
+                if any(file_name.endswith(ext) for ext in ['.jpg', '.jpeg', '.png', '.webp', '.bmp', '.gif']):
                     preview_id = f['id']
                     preview_link = f"https://drive.google.com/uc?id={preview_id}"
                     break
 
+        # Procura o arquivo para download (.zip ou outro arquivo)
         for f in files:
-            if not f['mimeType'].startswith('application/vnd.google-apps.folder') and not f['mimeType'].startswith('image/'):
+            mime_type = f['mimeType']
+            file_name = f['name'].lower()
+            if (
+                not mime_type.startswith('application/vnd.google-apps.folder') and
+                (mime_type.startswith('application/') or file_name.endswith('.zip'))
+            ):
                 file_link = f.get('webContentLink')
                 if file_link:
                     break
@@ -221,7 +232,7 @@ async def stripe_webhook(request: Request):
 
     return PlainTextResponse("", status_code=200)
 
-# ===== Webhook Telegram (corrigido) =====
+# ===== Webhook Telegram =====
 @app.post("/webhook")
 async def telegram_webhook(request: Request):
     try:
@@ -233,6 +244,11 @@ async def telegram_webhook(request: Request):
         raise HTTPException(status_code=400, detail="Invalid update")
     return PlainTextResponse("", status_code=200)
 
+# ===== Health Check para Render =====
+@app.get("/")
+async def root():
+    return {"status": "online", "message": "Bot Telegram + Stripe rodando 🎉"}
+
 # ===== Adiciona Handlers =====
 application.add_handler(CommandHandler("start", start))
 application.add_handler(CommandHandler("pagar", pagar))
@@ -240,7 +256,7 @@ application.add_handler(CommandHandler("get_chat_id", get_chat_id))
 application.add_handler(CommandHandler("enviar_drive", enviar_manual_drive))
 application.add_handler(CommandHandler("limpar_chat", limpar_chat))
 
-# ===== Task diária para enviar asset automático =====
+# ===== Tarefa diária =====
 async def daily_task():
     while True:
         await enviar_asset_drive(application)
@@ -248,23 +264,18 @@ async def daily_task():
 
 # ===== Main =====
 async def main():
-    # Inicializa o bot corretamente
     await application.initialize()
     await application.start()
 
-    # Define o webhook do Telegram
     webhook_url = "https://telegram-bot-vip-hfn7.onrender.com/webhook"
     await bot.set_webhook(url=webhook_url)
     logging.info(f"Webhook Telegram definido em {webhook_url}")
 
-    # Inicia tarefa de envio automático
     asyncio.create_task(daily_task())
 
-    # Roda FastAPI com Uvicorn
     config = Config(app=app, host="0.0.0.0", port=int(os.environ.get("PORT", 4242)), log_level="info")
     server = Server(config=config)
     await server.serve()
-
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
