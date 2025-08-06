@@ -6,7 +6,7 @@ import random
 import datetime
 
 from dotenv import load_dotenv
-from database import init_db
+from database import init_db, SessionLocal, NotificationMessage, Config
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import PlainTextResponse
 from uvicorn import Config, Server
@@ -22,11 +22,9 @@ import stripe
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 
-from database import SessionLocal, init_db, NotificationMessage, Config
-
 # === Config Google Drive ===
 SCOPES = ['https://www.googleapis.com/auth/drive.readonly']
-GOOGLE_DRIVE_FREE_FOLDER_ID = "19MVALjrVBC5foWSUyb27qPPlbkDdSt3j"  # Mude aqui para a pasta no Google Drive
+GOOGLE_DRIVE_FREE_FOLDER_ID = "19MVALjrVBC5foWSUyb27qPPlbkDdSt3j"  # Ajuste conforme sua pasta
 
 # === Inicialização ===
 load_dotenv()
@@ -284,6 +282,58 @@ async def set_config(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(f"Configuração '{key}' atualizada para '{value}'.")
 
+# ==== NOVO: comando para teste de pagamento fictício ====
+async def testepagamento(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    db_session = SessionLocal()
+
+    validade = datetime.datetime.utcnow() + datetime.timedelta(days=7)
+    key = f"vip_validade:{user_id}"
+
+    config = db_session.query(Config).filter(Config.key == key).first()
+    if config:
+        config.value = validade.isoformat()
+    else:
+        config = Config(key=key, value=validade.isoformat())
+        db_session.add(config)
+
+    db_session.commit()
+    db_session.close()
+
+    try:
+        await context.bot.send_message(chat_id=user_id, text="✅ Pagamento fictício confirmado! Você será adicionado ao grupo VIP.")
+        invite_link = await context.bot.export_chat_invite_link(chat_id=GROUP_VIP_ID)
+        await context.bot.send_message(chat_id=user_id, text=f"Aqui está o seu link para entrar no grupo VIP:\n{invite_link}")
+    except Exception as e:
+        await update.message.reply_text(f"Erro ao enviar link convite para grupo VIP: {e}")
+        return
+
+    await update.message.reply_text("Teste de pagamento simulado com sucesso!")
+
+# ==== NOVO: tarefa para verificar validade dos VIPs e kickar os expirados ====
+async def verificar_vips():
+    while True:
+        db_session = SessionLocal()
+        now = datetime.datetime.utcnow()
+        vip_configs = db_session.query(Config).filter(Config.key.like("vip_validade:%")).all()
+
+        for cfg in vip_configs:
+            try:
+                validade = datetime.datetime.fromisoformat(cfg.value)
+                user_id = int(cfg.key.split(":", 1)[1])
+
+                if validade < now:
+                    try:
+                        await bot.ban_chat_member(chat_id=GROUP_VIP_ID, user_id=user_id)
+                        logging.info(f"Usuário {user_id} removido do grupo VIP por validade expirada.")
+                    except Exception as e:
+                        logging.warning(f"Erro ao remover usuário {user_id} do grupo VIP: {e}")
+            except Exception as e:
+                logging.error(f"Erro processando validade VIP {cfg.key}: {e}")
+
+        db_session.close()
+        await asyncio.sleep(3600)  # checa a cada 1 hora
+
 # ===== Webhook Stripe =====
 @app.post("/stripe_webhook")
 async def stripe_webhook(request: Request):
@@ -345,6 +395,8 @@ application.add_handler(CommandHandler("listmsg", list_messages))
 application.add_handler(CommandHandler("delmsg", delete_message))
 application.add_handler(CommandHandler("setconfig", set_config))
 
+application.add_handler(CommandHandler("testepagamento", testepagamento))
+
 # ===== Tarefa diária =====
 async def daily_task():
     while True:
@@ -372,7 +424,9 @@ async def main():
     await bot.set_webhook(url=webhook_url)
     logging.info(f"Webhook Telegram definido em {webhook_url}")
 
+    # Inicia as tarefas background
     asyncio.create_task(daily_task())
+    asyncio.create_task(verificar_vips())
 
     config = Config(app=app, host="0.0.0.0", port=int(os.environ.get("PORT", 4242)), log_level="info")
     server = Server(config=config)
