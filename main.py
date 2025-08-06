@@ -3,6 +3,7 @@ import json
 import logging
 import asyncio
 import random
+import datetime
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request, HTTPException
@@ -20,9 +21,11 @@ import stripe
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 
+from database import SessionLocal, init_db, NotificationMessage, Config
+
 # === Config Google Drive ===
 SCOPES = ['https://www.googleapis.com/auth/drive.readonly']
-GOOGLE_DRIVE_FREE_FOLDER_ID = "19MVALjrVBC5foWSUyb27qPPlbkDdSt3j" #==AQUI MUDA O LINK DA PASTA DO GRUPO FREE ===
+GOOGLE_DRIVE_FREE_FOLDER_ID = "19MVALjrVBC5foWSUyb27qPPlbkDdSt3j"  # Mude aqui para a pasta no Google Drive
 
 # === Inicialização ===
 load_dotenv()
@@ -48,6 +51,10 @@ app = FastAPI()
 # === Inicializa o bot Telegram ===
 application = ApplicationBuilder().token(BOT_TOKEN).build()
 bot = application.bot
+
+# === Inicializa banco ===
+init_db()
+db = SessionLocal()
 
 # ===== Handlers do Telegram =====
 
@@ -200,6 +207,82 @@ async def limpar_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logging.error(f"Erro ao limpar grupo: {e}")
         await update.message.reply_text("❌ Erro ao tentar limpar o grupo.")
 
+# ===== Comandos para gerenciar mensagens e configs no banco =====
+
+async def add_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if len(context.args) < 2:
+        await update.message.reply_text("Uso: /addmsg <categoria> <mensagem>")
+        return
+
+    category = context.args[0]
+    message = " ".join(context.args[1:])
+    if category not in ['pre_notification', 'unreal_news']:
+        await update.message.reply_text("Categoria inválida. Use 'pre_notification' ou 'unreal_news'.")
+        return
+
+    db.add(NotificationMessage(category=category, message=message))
+    db.commit()
+    await update.message.reply_text(f"Mensagem adicionada na categoria {category}.")
+
+async def list_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if len(context.args) < 1:
+        await update.message.reply_text("Uso: /listmsg <categoria>")
+        return
+
+    category = context.args[0]
+    if category not in ['pre_notification', 'unreal_news']:
+        await update.message.reply_text("Categoria inválida. Use 'pre_notification' ou 'unreal_news'.")
+        return
+
+    msgs = db.query(NotificationMessage).filter(NotificationMessage.category == category).all()
+    if not msgs:
+        await update.message.reply_text("Nenhuma mensagem encontrada.")
+        return
+
+    text = f"Mensagens na categoria {category}:\n\n"
+    for msg in msgs:
+        text += f"- (ID {msg.id}) {msg.message}\n"
+
+    await update.message.reply_text(text)
+
+async def delete_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if len(context.args) < 1:
+        await update.message.reply_text("Uso: /delmsg <id>")
+        return
+
+    try:
+        msg_id = int(context.args[0])
+    except:
+        await update.message.reply_text("ID inválido.")
+        return
+
+    msg = db.query(NotificationMessage).filter(NotificationMessage.id == msg_id).first()
+    if not msg:
+        await update.message.reply_text("Mensagem não encontrada.")
+        return
+
+    db.delete(msg)
+    db.commit()
+    await update.message.reply_text(f"Mensagem ID {msg_id} deletada.")
+
+async def set_config(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if len(context.args) < 2:
+        await update.message.reply_text("Uso: /setconfig <chave> <valor>")
+        return
+
+    key = context.args[0]
+    value = context.args[1]
+
+    config = db.query(Config).filter(Config.key == key).first()
+    if config:
+        config.value = value
+    else:
+        config = Config(key=key, value=value)
+        db.add(config)
+    db.commit()
+
+    await update.message.reply_text(f"Configuração '{key}' atualizada para '{value}'.")
+
 # ===== Webhook Stripe =====
 @app.post("/stripe_webhook")
 async def stripe_webhook(request: Request):
@@ -256,15 +339,20 @@ application.add_handler(CommandHandler("get_chat_id", get_chat_id))
 application.add_handler(CommandHandler("enviar_drive", enviar_manual_drive))
 application.add_handler(CommandHandler("limpar_chat", limpar_chat))
 
-# ===== Tarefa diária =====
-import datetime
+application.add_handler(CommandHandler("addmsg", add_message))
+application.add_handler(CommandHandler("listmsg", list_messages))
+application.add_handler(CommandHandler("delmsg", delete_message))
+application.add_handler(CommandHandler("setconfig", set_config))
 
+# ===== Tarefa diária =====
 async def daily_task():
     while True:
-        now = datetime.datetime.now()
-        target_time = now.replace(hour=9, minute=0, second=0, microsecond=0)
+        config = db.query(Config).filter(Config.key == "asset_hour").first()
+        hour = int(config.value) if config else 9  # default 9h se não configurado
 
-        # Se já passou do horário hoje, agendar para amanhã
+        now = datetime.datetime.now()
+        target_time = now.replace(hour=hour, minute=0, second=0, microsecond=0)
+
         if now >= target_time:
             target_time += datetime.timedelta(days=1)
 
@@ -273,7 +361,6 @@ async def daily_task():
 
         await asyncio.sleep(wait_seconds)
         await enviar_asset_drive(application)
-
 
 # ===== Main =====
 async def main():
