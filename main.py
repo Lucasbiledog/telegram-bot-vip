@@ -15,17 +15,15 @@ import stripe
 from flask import Flask, request
 import telegram as telegram_api
 from waitress import serve
-
-import os
 import json
 from google.oauth2 import service_account
+from googleapiclient.discovery import build  # Faltando no seu código
 
-service_account_info = json.loads(os.environ['SERVICE_ACCOUNT_JSON'])
-credentials = service_account.Credentials.from_service_account_info(
-    service_account_info, scopes=SCOPES
-)
+# ==== VARIÁVEIS DE ESCOPO DEVEM VIR PRIMEIRO ====
+SCOPES = ['https://www.googleapis.com/auth/drive.readonly']
+GOOGLE_DRIVE_FREE_FOLDER_ID = "19MVALjrVBC5foWSUyb27qPPlbkDdSt3j"
 
-
+# ==== VARIÁVEIS DE AMBIENTE ====
 nest_asyncio.apply()
 load_dotenv()
 
@@ -34,21 +32,11 @@ GROUP_FREE_ID = int(os.getenv("GROUP_FREE_ID"))
 GROUP_VIP_ID = int(os.getenv("GROUP_VIP_ID"))
 STRIPE_API_KEY = os.getenv("STRIPE_SECRET_KEY")
 STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET")
-GOOGLE_DRIVE_FREE_FOLDER_ID = "19MVALjrVBC5foWSUyb27qPPlbkDdSt3j"  # Pasta principal do Drive
 
-SERVICE_ACCOUNT_FILE = "service_account.json"  # Seu JSON de conta de serviço
-SCOPES = ['https://www.googleapis.com/auth/drive.readonly']
-
-stripe.api_key = STRIPE_API_KEY
-bot = telegram_api.Bot(token=BOT_TOKEN)
-
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
-)
-
-# Inicializar serviço Google Drive
-credentials = service_account.Credentials.from_service_account_file(
-    SERVICE_ACCOUNT_FILE, scopes=SCOPES
+# ==== AUTENTICAÇÃO GOOGLE DRIVE ====
+service_account_info = json.loads(os.environ['SERVICE_ACCOUNT_JSON'])
+credentials = service_account.Credentials.from_service_account_info(
+    service_account_info, scopes=SCOPES
 )
 drive_service = build('drive', 'v3', credentials=credentials)
 
