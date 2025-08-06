@@ -9,7 +9,7 @@ from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import PlainTextResponse
 from uvicorn import Config, Server
 
-from telegram import Update
+from telegram import Update, Bot
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
@@ -47,7 +47,7 @@ app = FastAPI()
 
 # === Inicializa o bot Telegram ===
 application = ApplicationBuilder().token(BOT_TOKEN).build()
-bot = application.bot  # acesso ao bot via application
+bot: Bot = application.bot  # acesso ao bot via application
 
 # ===== Handlers do Telegram =====
 
@@ -94,7 +94,7 @@ async def get_chat_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     await update.message.reply_text(f"O chat_id deste chat/grupo é: {chat_id}")
 
-async def enviar_asset_drive(application):
+async def enviar_asset_drive():
     try:
         query_subfolders = f"'{GOOGLE_DRIVE_FREE_FOLDER_ID}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false"
         results = drive_service.files().list(
@@ -173,7 +173,7 @@ async def enviar_asset_drive(application):
 
 async def enviar_manual_drive(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("✅ Enviando asset do Drive no grupo Free...")
-    await enviar_asset_drive(application)
+    await enviar_asset_drive()
 
 async def limpar_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
@@ -223,9 +223,14 @@ async def stripe_webhook(request: Request):
 
 # ===== Webhook Telegram =====
 @app.post("/webhook")
-async def telegram_webhook(update: Update, request: Request):
-    update = Update.de_json(await request.json(), bot)
-    await application.update_queue.put(update)
+async def telegram_webhook(request: Request):
+    try:
+        data = await request.json()
+        update = Update.de_json(data, bot)
+        await application.process_update(update)
+    except Exception as e:
+        logging.error(f"Erro processando update Telegram: {e}")
+        raise HTTPException(status_code=400, detail="Invalid update")
     return PlainTextResponse("", status_code=200)
 
 # ===== Adiciona Handlers =====
@@ -238,20 +243,17 @@ application.add_handler(CommandHandler("limpar_chat", limpar_chat))
 # ===== Task diária para enviar asset automático =====
 async def daily_task():
     while True:
-        await enviar_asset_drive(application)
+        await enviar_asset_drive()
         await asyncio.sleep(86400)  # 24 horas
 
 # ===== Main para rodar =====
 async def main():
-    # Seta webhook Telegram para a URL correta
-    webhook_url = "https://telegram-bot-vip-hfn7.onrender.com/webhook"
+    webhook_url = os.getenv("WEBHOOK_URL", "https://telegram-bot-vip-hfn7.onrender.com/webhook")
     await bot.set_webhook(url=webhook_url)
     logging.info(f"Webhook Telegram definido em {webhook_url}")
 
-    # Cria task para enviar assets diários
     asyncio.create_task(daily_task())
 
-    # Roda servidor Uvicorn com FastAPI
     config = Config(app=app, host="0.0.0.0", port=int(os.environ.get("PORT", 4242)), log_level="info")
     server = Server(config=config)
     await server.serve()
