@@ -8,4 +8,5 @@ google-auth
 google-auth-oauthlib
 apscheduler
 python-telegram-bot==22.3
+pytz
 
