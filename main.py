@@ -371,7 +371,7 @@ async def daily_task():
         config = db.query(Config).filter(Config.key == "asset_hour").first()
         hour = int(config.value) if config else 9
         now = datetime.datetime.now()
-        target_time = now.replace(hour=hour, minute=0, second=0, microsecond=0)
+        target_time = now.replace(hour=11, minute=55, second=0, microsecond=0)
         if now >= target_time:
             target_time += datetime.timedelta(days=1)
         wait_seconds = (target_time - now).total_seconds()
