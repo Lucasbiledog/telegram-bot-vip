@@ -4,8 +4,7 @@ import logging
 import asyncio
 import random
 import datetime
-import telegram
-
+import telegram  # Import necessário para usar telegram.__version__
 
 from dotenv import load_dotenv
 from database import init_db, SessionLocal, NotificationMessage, Config
