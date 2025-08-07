@@ -1,10 +1,9 @@
-python-telegram-bot[asyncio]==20.3
-fastapi==0.95.2
-uvicorn==0.22.0
+fastapi
+uvicorn
+python-dotenv
 stripe
-python-dotenv==1.0.0
-google-api-python-client==2.126.0
-google-auth==2.29.0
-google-auth-httplib2==0.2.0
-google-auth-oauthlib==1.2.0
 sqlalchemy
+google-api-python-client
+google-auth
+google-auth-oauthlib
+python-telegram-bot==20.6
