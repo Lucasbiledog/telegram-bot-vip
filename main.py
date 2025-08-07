@@ -6,126 +6,154 @@ import random
 import datetime
 
 from dotenv import load_dotenv
+from database import init_db, SessionLocal, NotificationMessage, Config
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import PlainTextResponse
+
 from telegram import Update
-from telegram.ext import (
-    ApplicationBuilder, CommandHandler, ContextTypes
-)
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
+
 import stripe
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
+
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-# Local imports
-from database import init_db, SessionLocal, NotificationMessage, Config
-
+# Carrega variáveis de ambiente do .env
 load_dotenv()
 
-# Logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-# Telegram & Stripe config
+# Variáveis do ambiente
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-GROUP_FREE_ID = int(os.getenv("GROUP_FREE_ID"))
 STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY")
-STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET")
+STRIPE_PRICE_ID = os.getenv("STRIPE_PRICE_ID")
+GROUP_FREE_ID = int(os.getenv("GROUP_FREE_ID"))
+VIP_GROUP_ID = int(os.getenv("VIP_GROUP_ID"))
+CANCELAR_LINK = os.getenv("CANCELAR_LINK")
+CHECKOUT_LINK = os.getenv("CHECKOUT_LINK")
+
+# Inicializa Stripe
 stripe.api_key = STRIPE_SECRET_KEY
 
-# Google Drive config
-FOLDER_ID = os.getenv("GOOGLE_DRIVE_FREE_FOLDER_ID")
-SERVICE_ACCOUNT_INFO = json.loads(os.getenv("SERVICE_ACCOUNT_JSON"))
-SCOPES = ["https://www.googleapis.com/auth/drive"]
-creds = service_account.Credentials.from_service_account_info(SERVICE_ACCOUNT_INFO, scopes=SCOPES)
-drive_service = build("drive", "v3", credentials=creds)
+# Inicializa DB
+init_db()
 
-# FastAPI app
+# Inicializa FastAPI
 app = FastAPI()
-db = init_db()
 
-# Telegram app
-application = ApplicationBuilder().token(BOT_TOKEN).build()
+# Inicializa Google Drive
+SERVICE_ACCOUNT_FILE = 'credentials.json'
+SCOPES = ['https://www.googleapis.com/auth/drive']
+credentials = service_account.Credentials.from_service_account_file(
+    SERVICE_ACCOUNT_FILE, scopes=SCOPES)
+drive_service = build('drive', 'v3', credentials=credentials)
+
+# Agenda
+application = None
 scheduler = AsyncIOScheduler()
 
-# ---- UTILS ----
-def escolher_asset():
-    response = drive_service.files().list(q=f"'{FOLDER_ID}' in parents and mimeType = 'application/vnd.google-apps.folder'", fields="files(id, name)").execute()
-    pastas = response.get('files', [])
-    if not pastas:
+
+def get_random_asset():
+    asset_folder_id = os.getenv("DRIVE_ASSET_FOLDER_ID")
+    query = f"'{asset_folder_id}' in parents and mimeType = 'application/vnd.google-apps.folder'"
+    results = drive_service.files().list(q=query, fields="files(id, name)").execute()
+    folders = results.get('files', [])
+    if not folders:
         return None
-    pasta = random.choice(pastas)
-    arquivos = drive_service.files().list(q=f"'{pasta['id']}' in parents and mimeType != 'application/vnd.google-apps.folder'", fields="files(id, name, mimeType, webContentLink)").execute()
-    arquivos = arquivos.get('files', [])
-    if not arquivos:
+
+    folder = random.choice(folders)
+    folder_id = folder['id']
+    asset_name = folder['name']
+
+    files = drive_service.files().list(q=f"'{folder_id}' in parents", fields="files(id, name, mimeType)").execute().get('files', [])
+    preview_images = [f for f in files if f['mimeType'].startswith('image/')]
+    download_files = [f for f in files if not f['mimeType'].startswith('image/')]
+
+    if not download_files:
         return None
-    arquivo = next((f for f in arquivos if not f['name'].endswith('.jpg')), None)
-    previews = [f for f in arquivos if f['name'].endswith('.jpg')]
-    return pasta['name'], arquivo, previews
+
+    chosen_file = random.choice(download_files)
+    download_url = f"https://drive.google.com/uc?id={chosen_file['id']}&export=download"
+    preview_file_id = preview_images[0]['id'] if preview_images else None
+
+    return {
+        "name": asset_name,
+        "download_url": download_url,
+        "preview_file_id": preview_file_id
+    }
+
 
 async def enviar_asset_drive():
-    session = SessionLocal()
-    ja_enviados = [n.asset_name for n in session.query(NotificationMessage).all()]
-    tentativa = 0
-    while tentativa < 5:
-        resultado = escolher_asset()
-        if resultado is None:
-            logger.warning("Nenhum asset encontrado.")
-            return
-        nome, arquivo, previews = resultado
-        if nome in ja_enviados:
-            tentativa += 1
-            continue
-        for preview in previews:
-            await application.bot.send_photo(chat_id=GROUP_FREE_ID, photo=preview['webContentLink'])
-        await application.bot.send_document(chat_id=GROUP_FREE_ID, document=arquivo['webContentLink'], caption=f"🔹 {nome}")
-        session.add(NotificationMessage(asset_name=nome))
-        session.commit()
-        logger.info(f"Asset enviado: {nome}")
+    asset = get_random_asset()
+    if not asset:
         return
-    logger.warning("Nenhum asset novo para enviar hoje.")
 
-# ---- TELEGRAM COMMANDS ----
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Bem-vindo ao bot!")
+    caption = f"🆓 Asset Grátis do Dia: {asset['name']}\n⬇️ Download: {asset['download_url']}"
+    if asset['preview_file_id']:
+        preview_url = f"https://drive.google.com/uc?id={asset['preview_file_id']}"
+        caption += f"\n🖼 Preview: {preview_url}"
 
-application.add_handler(CommandHandler("start", start))
+    try:
+        await application.bot.send_message(chat_id=GROUP_FREE_ID, text=caption)
+    except Exception as e:
+        logging.error(f"Erro ao enviar asset: {e}")
 
-# ---- STRIPE WEBHOOK ----
-@app.post("/webhook")
+
+@app.post("/telegram")
+async def telegram_webhook(req: Request):
+    data = await req.json()
+    await application.update_queue.put(Update.de_json(data, application.bot))
+    return PlainTextResponse("OK")
+
+
+@app.post("/stripe/webhook")
 async def stripe_webhook(request: Request):
     payload = await request.body()
     sig_header = request.headers.get("stripe-signature")
+    webhook_secret = os.getenv("STRIPE_WEBHOOK_SECRET")
+
     try:
-        event = stripe.Webhook.construct_event(payload, sig_header, STRIPE_WEBHOOK_SECRET)
-    except (ValueError, stripe.error.SignatureVerificationError) as e:
+        event = stripe.Webhook.construct_event(payload, sig_header, webhook_secret)
+    except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
     if event['type'] == 'checkout.session.completed':
-        session_obj = event['data']['object']
-        cliente_id = session_obj.get('client_reference_id')
-        if cliente_id:
-            await application.bot.send_message(chat_id=cliente_id, text="✅ Pagamento confirmado! Você será adicionado ao grupo VIP.")
+        session = event['data']['object']
+        customer_email = session.get("customer_email")
+        db = SessionLocal()
+        db.add(NotificationMessage(email=customer_email, sent=False))
+        db.commit()
+        db.close()
 
-    return PlainTextResponse("ok")
+    return {"status": "success"}
 
-# ---- STARTUP ----
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Olá! Use /pagar para assinar o VIP ou /cancelar para cancelar sua assinatura.")
+
+
+async def pagar(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(f"Para assinar o grupo VIP, clique no link abaixo:\n\n{CHECKOUT_LINK}")
+
+
+async def cancelar(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(f"Para cancelar sua assinatura, clique no link abaixo:\n\n{CANCELAR_LINK}")
+
+
 @app.on_event("startup")
 async def startup_event():
+    global application
+    application = await ApplicationBuilder().token(BOT_TOKEN).build_async()
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("pagar", pagar))
+    application.add_handler(CommandHandler("cancelar", cancelar))
     await application.initialize()
     await application.bot.set_webhook(url="https://telegram-bot-vip-hfn7.onrender.com/telegram")
-
     await application.start()
+
     scheduler.add_job(enviar_asset_drive, trigger='cron', hour=9, minute=0)
     scheduler.start()
 
-# ---- SHUTDOWN ----
+
 @app.on_event("shutdown")
 async def shutdown_event():
     await application.stop()
-    await application.shutdown()
-
-# ---- RUN ----
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=int(os.getenv("PORT", 10000)))
