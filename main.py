@@ -24,6 +24,105 @@ from googleapiclient.discovery import build
 
 import uvicorn
 
+
+load_dotenv()
+init_db()
+
+stripe.api_key = os.getenv("STRIPE_SECRET_KEY")
+
+app = FastAPI()
+
+bot = None
+application = None
+
+
+async def enviar_asset_drive():
+    global bot
+    if bot is None:
+        logging.error("Bot ainda não inicializado para enviar asset.")
+        return
+
+    try:
+        db_session = SessionLocal()
+        data_hoje = datetime.datetime.now().date()
+
+        msg = db_session.query(NotificationMessage)\
+            .filter(NotificationMessage.tipo == "free")\
+            .filter((NotificationMessage.enviado == False) | (NotificationMessage.enviado.is_(None)))\
+            .order_by(NotificationMessage.id.asc())\
+            .first()
+
+        if not msg:
+            logging.info("Nenhum asset gratuito disponível para envio hoje.")
+            return
+
+        await bot.send_photo(chat_id=os.getenv("GROUP_FREE_ID"), photo=msg.preview, caption=msg.text)
+
+        msg.enviado = True
+        msg.data_envio = datetime.datetime.now()
+        db_session.commit()
+        db_session.close()
+
+        logging.info(f"Asset enviado com sucesso: ID {msg.id}")
+
+    except Exception as e:
+        logging.error(f"Erro ao enviar asset: {e}")
+
+
+async def daily_task():
+    while True:
+        try:
+            logging.info("daily_task rodando, buscando config asset_hour")
+            db_session = SessionLocal()
+            config = db_session.query(Config).filter(Config.key == "asset_hour").first()
+            hour = int(config.value) if config and config.value.isdigit() else 9
+            db_session.close()
+
+            now = datetime.datetime.now()
+            target_time = now.replace(hour=hour, minute=0, second=0, microsecond=0)
+            if now >= target_time:
+                target_time += datetime.timedelta(days=1)
+
+            wait_seconds = (target_time - now).total_seconds()
+            logging.info(f"daily_task vai dormir por {wait_seconds} segundos até {target_time}")
+
+            await asyncio.sleep(wait_seconds)
+
+            logging.info("daily_task acordou, enviando asset")
+            await enviar_asset_drive()
+
+        except Exception as e:
+            logging.error(f"Erro na daily_task: {e}")
+            await asyncio.sleep(60)
+
+
+@app.on_event("startup")
+async def on_startup():
+    global bot, application
+
+    logging.basicConfig(level=logging.INFO)
+
+    application = ApplicationBuilder().token(os.getenv("BOT_TOKEN")).build()
+
+    await application.initialize()
+    await application.start()
+
+    bot = application.bot
+
+    webhook_url = os.getenv("WEBHOOK_URL")
+    if not webhook_url:
+        raise RuntimeError("WEBHOOK_URL não definido no ambiente")
+
+    await bot.set_webhook(url=webhook_url)
+
+    logging.info(f"Bot iniciado com sucesso. Versão PTB: {telegram.__version__}")
+    logging.info("Iniciando a task daily_task...")
+
+    asyncio.create_task(daily_task())
+
+
+# Adicione aqui seus outros handlers como /pagar, /cancelar etc.
+
 # === Config Google Drive ===
 SCOPES = ['https://www.googleapis.com/auth/drive.readonly']
 GOOGLE_DRIVE_FREE_FOLDER_ID = "19MVALjrVBC5foWSUyb27qPPlbkDdSt3j"
