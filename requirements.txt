@@ -7,4 +7,5 @@ google-api-python-client
 google-auth
 google-auth-oauthlib
 apscheduler
-python-telegram-bot==20.6
+python-telegram-bot>=20.0
+

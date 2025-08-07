@@ -8,6 +8,7 @@ from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import PlainTextResponse
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
+import telegram
 import stripe
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
@@ -132,6 +133,7 @@ async def telegram_webhook(request: Request):
 
 @app.on_event("startup")
 async def on_startup():
+    logger.info(f"python-telegram-bot version: {telegram.__version__}")
     await application.initialize()
 
     webhook_url = os.getenv("WEBHOOK_URL")
