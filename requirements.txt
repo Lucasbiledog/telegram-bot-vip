@@ -6,5 +6,5 @@ sqlalchemy
 google-api-python-client
 google-auth
 google-auth-oauthlib
-python-telegram-bot==20.6
 apscheduler
+python-telegram-bot==20.6
