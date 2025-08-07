@@ -113,7 +113,8 @@ async def stripe_webhook(request: Request):
 @app.on_event("startup")
 async def startup_event():
     await application.initialize()
-    await application.bot.set_webhook(url="https://telegram-bot-vip-hfn7.onrender.com/webhook")
+    await application.bot.set_webhook(url="https://telegram-bot-vip-hfn7.onrender.com/telegram")
+
     await application.start()
     scheduler.add_job(enviar_asset_drive, trigger='cron', hour=9, minute=0)
     scheduler.start()
