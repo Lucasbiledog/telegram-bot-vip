@@ -1,159 +1,90 @@
+# === Versão compatível para Render ===
 import os
 import json
 import logging
-import random
 import asyncio
+import random
+import datetime
+
 from dotenv import load_dotenv
+from database import init_db, SessionLocal, NotificationMessage, Config
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import PlainTextResponse
-from telegram import Update
+
+from telegram import Update, Bot
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
-import telegram
+
 import stripe
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
+import uvicorn
+
+# === Config Google Drive ===
+SCOPES = ['https://www.googleapis.com/auth/drive.readonly']
+GOOGLE_DRIVE_FREE_FOLDER_ID = "19MVALjrVBC5foWSUyb27qPPlbkDdSt3j"
+
+# === Load env vars ===
 load_dotenv()
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-)
-logger = logging.getLogger("bot")
-
-def get_env_int(var_name: str, default=None):
-    val = os.getenv(var_name)
-    if val is None:
-        if default is not None:
-            return default
-        raise ValueError(f"Variável de ambiente {var_name} não definida.")
-    try:
-        return int(val)
-    except Exception:
-        raise ValueError(f"Variável {var_name} deve ser um inteiro válido.")
-
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-if not BOT_TOKEN:
-    raise ValueError("BOT_TOKEN não definido no .env")
-
-VIP_GROUP_ID = get_env_int("VIP_GROUP_ID")
-GROUP_FREE_ID = get_env_int("GROUP_FREE_ID")
-STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY")
+GROUP_FREE_ID = int(os.getenv("GROUP_FREE_ID"))
+GROUP_VIP_ID = int(os.getenv("GROUP_VIP_ID"))
+STRIPE_API_KEY = os.getenv("STRIPE_SECRET_KEY")
 STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET")
 
-stripe.api_key = STRIPE_SECRET_KEY
+stripe.api_key = STRIPE_API_KEY
 
-FOLDER_ID = os.getenv("GOOGLE_DRIVE_FREE_FOLDER_ID")
-SERVICE_ACCOUNT_JSON = os.getenv("SERVICE_ACCOUNT_JSON")
-if not SERVICE_ACCOUNT_JSON:
-    raise ValueError("SERVICE_ACCOUNT_JSON não definido no .env")
+# === Google Drive setup ===
+service_account_info = json.loads(os.environ['SERVICE_ACCOUNT_JSON'])
+credentials = service_account.Credentials.from_service_account_info(service_account_info, scopes=SCOPES)
+drive_service = build('drive', 'v3', credentials=credentials)
 
-SERVICE_ACCOUNT_INFO = json.loads(SERVICE_ACCOUNT_JSON)
-SCOPES = ["https://www.googleapis.com/auth/drive"]
-creds = service_account.Credentials.from_service_account_info(SERVICE_ACCOUNT_INFO, scopes=SCOPES)
-drive_service = build("drive", "v3", credentials=creds)
-
+# === FastAPI app ===
 app = FastAPI()
+
+# === Telegram Bot ===
 application = ApplicationBuilder().token(BOT_TOKEN).build()
-scheduler = AsyncIOScheduler()
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Bem-vindo ao bot!")
+# === Database init ===
+init_db()
+db = SessionLocal()
 
-application.add_handler(CommandHandler("start", start))
+# === Handlers e outras funções ficam iguais ===
+# Coloque aqui todo o código anterior igual, SEM alterar o conteúdo das funções.
+# Apenas certifique-se de que o bot seja definido após iniciar a aplicacao:
 
-def escolher_asset():
-    try:
-        response = drive_service.files().list(
-            q=f"'{FOLDER_ID}' in parents and mimeType = 'application/vnd.google-apps.folder'",
-            fields="files(id, name)").execute()
-        pastas = response.get('files', [])
-        if not pastas:
-            logger.warning("Nenhuma pasta encontrada no Drive.")
-            return None
-        pasta = random.choice(pastas)
-        arquivos_resp = drive_service.files().list(
-            q=f"'{pasta['id']}' in parents and mimeType != 'application/vnd.google-apps.folder'",
-            fields="files(id, name, mimeType, webContentLink)").execute()
-        arquivos = arquivos_resp.get('files', [])
-        if not arquivos:
-            logger.warning(f"Nenhum arquivo na pasta {pasta['name']}.")
-            return None
-        arquivo = next((f for f in arquivos if not f['name'].endswith('.jpg')), None)
-        previews = [f for f in arquivos if f['name'].endswith('.jpg')]
-        return pasta['name'], arquivo, previews
-    except Exception as e:
-        logger.error(f"Erro ao buscar asset no Google Drive: {e}")
-        return None
-
-async def enviar_asset_drive():
-    resultado = escolher_asset()
-    if resultado is None:
-        logger.warning("Nenhum asset disponível para envio.")
-        return
-    nome, arquivo, previews = resultado
-    try:
-        for preview in previews:
-            await application.bot.send_photo(chat_id=GROUP_FREE_ID, photo=preview['webContentLink'])
-        if arquivo:
-            await application.bot.send_document(chat_id=GROUP_FREE_ID, document=arquivo['webContentLink'], caption=f"🔹 {nome}")
-        else:
-            logger.warning(f"Arquivo principal não encontrado para asset {nome}")
-        logger.info(f"Asset enviado: {nome}")
-    except Exception as e:
-        logger.error(f"Erro ao enviar asset: {e}")
-
-def job_wrapper():
-    asyncio.create_task(enviar_asset_drive())
-
-@app.post("/webhook")
-async def stripe_webhook(request: Request):
-    payload = await request.body()
-    sig_header = request.headers.get("stripe-signature")
-    try:
-        event = stripe.Webhook.construct_event(payload, sig_header, STRIPE_WEBHOOK_SECRET)
-    except (ValueError, stripe.error.SignatureVerificationError) as e:
-        logger.error(f"Webhook Stripe inválido: {e}")
-        raise HTTPException(status_code=400, detail=str(e))
-
-    if event['type'] == 'checkout.session.completed':
-        session_obj = event['data']['object']
-        cliente_id = session_obj.get('client_reference_id')
-        if cliente_id:
-            await application.bot.send_message(chat_id=cliente_id, text="✅ Pagamento confirmado! Você será adicionado ao grupo VIP.")
-    return PlainTextResponse("ok")
-
-@app.post("/telegram")
-async def telegram_webhook(request: Request):
-    data = await request.json()
-    update = Update.de_json(data, application.bot)
-    await application.process_update(update)
-    return PlainTextResponse("OK")
-
+# ==== Evento de startup (Render-ready) ====
 @app.on_event("startup")
 async def on_startup():
-    logger.info(f"python-telegram-bot version: {telegram.__version__}")
     await application.initialize()
-
-    webhook_url = os.getenv("WEBHOOK_URL")
-    if not webhook_url:
-        raise ValueError("WEBHOOK_URL não definido no .env")
-
-    await application.bot.set_webhook(webhook_url)
     await application.start()
-    scheduler.add_job(job_wrapper, 'cron', hour=9, minute=0)
-    scheduler.start()
-    logger.info("Bot iniciado e scheduler configurado.")
 
-@app.on_event("shutdown")
-async def on_shutdown():
-    scheduler.shutdown()
-    await application.stop()
-    await application.shutdown()
-    logger.info("Bot desligado.")
+    global bot
+    bot = application.bot
 
+    # Adiciona essa mensagem para confirmar execução correta no Render
+    logging.info(f"Bot Telegram online na Render. Versão PTB: {application.__version__}")
+
+    webhook_url = os.getenv("RENDER_EXTERNAL_URL", "https://telegram-bot-vip-hfn7.onrender.com") + "/webhook"
+    await bot.set_webhook(url=webhook_url)
+    logging.info(f"Webhook Telegram definido em {webhook_url}")
+
+    asyncio.create_task(daily_task())
+    asyncio.create_task(verificar_vips())
+
+# ==== Rota simples de versão para debug Render ====
+@app.get("/version")
+async def version():
+    import telegram
+    return {
+        "status": "ok",
+        "python_telegram_bot_version": telegram.__version__,
+        "render_env": os.getenv("RENDER") or "not in render"
+    }
+
+# ===== Run uvicorn =====
 if __name__ == "__main__":
-    import uvicorn
-    port = int(os.getenv("PORT", 10000))
+    logging.basicConfig(level=logging.INFO)
+    port = int(os.environ.get("PORT", 4242))
     uvicorn.run("main:app", host="0.0.0.0", port=port, log_level="info")
