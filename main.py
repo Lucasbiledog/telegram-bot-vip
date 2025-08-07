@@ -4,6 +4,8 @@ import logging
 import asyncio
 import random
 import datetime
+import telegram
+
 
 from dotenv import load_dotenv
 from database import init_db, SessionLocal, NotificationMessage, Config
