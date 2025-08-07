@@ -45,7 +45,7 @@ drive_service = build('drive', 'v3', credentials=credentials)
 
 # === FastAPI app ===
 app = FastAPI()
-app.mount("/static", StaticFiles(directory="static"), name="static")
+# === app.mount("/static", StaticFiles(directory="static"), name="static") === 
 security = HTTPBasic()
 
 # === Telegram Bot ===
@@ -216,7 +216,7 @@ async def verificar_vips():
 async def daily_task():
     while True:
         now = datetime.datetime.now()
-        target = now.replace(hour=9, minute=50, second=0, microsecond=0)
+        target = now.replace(hour=9, minute=55, second=0, microsecond=0)
         if now >= target:
             target += datetime.timedelta(days=1)
         wait_time = (target - now).total_seconds()
