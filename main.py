@@ -4,7 +4,7 @@ import logging
 import asyncio
 import random
 import datetime
-import telegram  # Import necessário para usar telegram.__version__
+import telegram  # Importação necessária para telegram.__version__
 
 from dotenv import load_dotenv
 from database import init_db, SessionLocal, NotificationMessage, Config
@@ -387,24 +387,22 @@ async def on_startup():
     await application.initialize()
     await application.start()
 
-    bot = application.bot  # necessário após start()
+    bot = application.bot  # guarda referência global para uso
 
-    # Webhook Telegram - coloque sua URL real aqui
     webhook_url = os.getenv("WEBHOOK_URL")
     if not webhook_url:
         raise RuntimeError("WEBHOOK_URL não definido no ambiente")
-    await bot.set_webhook(url=webhook_url)
-    logging.info(f"Webhook Telegram definido em {webhook_url}")
 
-    # Inicia as tasks em background
-    asyncio.create_task(daily_task())
-    asyncio.create_task(verificar_vips())
+    await bot.set_webhook(url=webhook_url)
 
     logging.info(f"Bot iniciado com sucesso. Versão PTB: {telegram.__version__}")
 
+    # Start VIP expiration checker
+    asyncio.create_task(verificar_vips())
+    # Start daily sending task
+    asyncio.create_task(daily_task())
 
-# ===== Run uvicorn =====
+# ===== Run =====
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
-    port = int(os.environ.get("PORT", 4242))
-    uvicorn.run("main:app", host="0.0.0.0", port=port, log_level="info")
+    uvicorn.run("main:app", host="0.0.0.0", port=int(os.environ.get("PORT", 8000)), reload=False)
