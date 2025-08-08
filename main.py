@@ -416,10 +416,10 @@ async def on_startup():
     job_queue: JobQueue = application.job_queue
 
     # Agendar envio da mensagem de preparação 1 minuto antes (ex: 12:25)
-    job_queue.run_daily(send_preparation_message, time=dt.time(hour=12, minute=45, tzinfo=timezone), name="prep_msg")
+    job_queue.run_daily(send_preparation_message, time=dt.time(hour=18, minute=15, tzinfo=timezone), name="prep_msg")
 
     # Agendar envio do asset às 12:26
-    job_queue.run_daily(send_daily_asset, time=dt.time(hour=12, minute=50, tzinfo=timezone), name="daily_asset")
+    job_queue.run_daily(send_daily_asset, time=dt.time(hour=18, minute=16, tzinfo=timezone), name="daily_asset")
 
 
 # ===== RODAR SERVIDOR =====
