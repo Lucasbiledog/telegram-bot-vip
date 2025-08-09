@@ -41,11 +41,11 @@ WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 STRIPE_API_KEY = os.getenv("STRIPE_SECRET_KEY", "")
 STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "")
 
-# seu(s) admin(s)
+# seus admins
 ADMIN_USER_IDS = {7123614866}
 
 # grupos
-STORAGE_GROUP_ID = int(os.getenv("STORAGE_GROUP_ID", "-4806334341"))   # grupo onde você posta os packs
+STORAGE_GROUP_ID = int(os.getenv("STORAGE_GROUP_ID", "-4806334341"))   # grupo com os assets
 GROUP_VIP_ID     = int(os.getenv("GROUP_VIP_ID", "-1002791988432"))    # grupo VIP
 PORT = int(os.getenv("PORT", 8000))
 
@@ -431,7 +431,7 @@ async def remover_item_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         s.close()
 
 # =========================
-# NOVO: Conversa /novopack com confirmação passo a passo
+# NOVO: Conversa /novopack (passo a passo com confirmações)
 # =========================
 # Estados
 TITLE, CONFIRM_TITLE, PREVIEWS, FILES, CONFIRM_SAVE = range(5)
@@ -443,11 +443,11 @@ def _summary_from_session(user_data: Dict[str, Any]) -> str:
     title = user_data.get("title", "—")
     previews = user_data.get("previews", [])
     files = user_data.get("files", [])
-    # gerar nomes “amigáveis”
     preview_names = []
     p_index = 1
     for it in previews:
-        label = "Foto" if it["file_type"] == "photo" else ("Vídeo" if it["file_type"] == "video" else "Animação")
+        label = "Foto" if it["file_type"] == "photo" \
+            else ("Vídeo" if it["file_type"] == "video" else "Animação")
         preview_names.append(f"{label} {p_index}")
         p_index += 1
     file_names = []
@@ -456,7 +456,6 @@ def _summary_from_session(user_data: Dict[str, Any]) -> str:
         if it["file_type"] == "document" and it.get("file_name"):
             file_names.append(it["file_name"])
         else:
-            # áudio/voice não tem nome de arquivo
             file_names.append(f"{it['file_type'].capitalize()} {f_index}")
             f_index += 1
     text = [
@@ -468,6 +467,17 @@ def _summary_from_session(user_data: Dict[str, Any]) -> str:
         "Deseja salvar? *(sim/não)*"
     ]
     return "\n".join(text)
+
+# Dicas assíncronas quando usuário manda TEXTO onde esperávamos mídia
+async def hint_previews(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "Agora envie PREVIEWS (📷 foto / 🎞 vídeo / 🎞 animação) ou use /proximo para ir aos ARQUIVOS."
+    )
+
+async def hint_files(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "Agora envie ARQUIVOS (📄 documento / 🎵 áudio / 🎙 voice) ou use /finalizar para revisar e salvar."
+    )
 
 async def novopack_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not _require_admin(update):
@@ -497,7 +507,6 @@ async def novopack_confirm_title(update: Update, context: ContextTypes.DEFAULT_T
     if answer in ("não", "nao"):
         await update.message.reply_text("Ok! Envie o *novo título* do pack.", parse_mode="Markdown")
         return TITLE
-    # sim -> fixa título e inicia coleções temporárias
     context.user_data["title"] = context.user_data.get("title_candidate")
     context.user_data["previews"] = []
     context.user_data["files"] = []
@@ -522,7 +531,8 @@ async def novopack_collect_previews(update: Update, context: ContextTypes.DEFAUL
         previews.append({"file_id": msg.animation.file_id, "file_type": "animation"})
         await update.message.reply_text("✅ *Preview (animação) cadastrado*. Envie mais ou /proximo.", parse_mode="Markdown")
     else:
-        await update.message.reply_text("Envie *foto/vídeo/animação* como preview, ou /proximo para ir aos arquivos.", parse_mode="Markdown")
+        await hint_previews(update, context)
+        return PREVIEWS
     context.user_data["previews"] = previews
     return PREVIEWS
 
@@ -554,12 +564,12 @@ async def novopack_collect_files(update: Update, context: ContextTypes.DEFAULT_T
         files.append({"file_id": msg.voice.file_id, "file_type": "voice"})
         await update.message.reply_text("✅ *Voice cadastrado*. Envie mais ou /finalizar.", parse_mode="Markdown")
     else:
-        await update.message.reply_text("Envie *documento/áudio/voice*, ou /finalizar para revisar e salvar.", parse_mode="Markdown")
+        await hint_files(update, context)
+        return FILES
     context.user_data["files"] = files
     return FILES
 
 async def novopack_finish_review(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # mostra o resumo e pede confirmação final
     summary = _summary_from_session(context.user_data)
     await update.message.reply_text(summary, parse_mode="Markdown")
     return CONFIRM_SAVE
@@ -574,7 +584,7 @@ async def novopack_confirm_save(update: Update, context: ContextTypes.DEFAULT_TY
         await update.message.reply_text("Operação cancelada. Nada foi salvo.")
         return ConversationHandler.END
 
-    # salvar no DB agora
+    # Persistir no DB agora
     title = context.user_data.get("title")
     previews = context.user_data.get("previews", [])
     files = context.user_data.get("files", [])
@@ -671,7 +681,7 @@ async def on_startup():
 
     logging.info("Bot iniciado.")
 
-    # ===== Conversa /novopack (registrar ANTES dos handlers de storage) =====
+    # ===== Conversa /novopack – prioridade maior (group=0) =====
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler("novopack", novopack_start)],
         states={
@@ -684,12 +694,12 @@ async def on_startup():
             PREVIEWS: [
                 CommandHandler("proximo", novopack_next_to_files),
                 MessageHandler(filters.PHOTO | filters.VIDEO | filters.ANIMATION, novopack_collect_previews),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, lambda u, c: u.message.reply_text("Agora envie PREVIEWS (foto/vídeo/animação) ou /proximo.")),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, hint_previews),
             ],
             FILES: [
                 CommandHandler("finalizar", novopack_finish_review),
                 MessageHandler(filters.Document.ALL | filters.AUDIO | filters.VOICE, novopack_collect_files),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, lambda u, c: u.message.reply_text("Agora envie ARQUIVOS (documento/áudio/voice) ou /finalizar.")),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, hint_files),
             ],
             CONFIRM_SAVE: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, novopack_confirm_save),
@@ -698,14 +708,15 @@ async def on_startup():
         fallbacks=[CommandHandler("cancelar", novopack_cancel)],
         allow_reentry=True,
     )
-    application.add_handler(conv_handler)
+    application.add_handler(conv_handler, group=0)
 
-    # ===== Handlers do grupo de armazenamento (opcionais) =====
+    # ===== Handlers do grupo de armazenamento (group=1) =====
     application.add_handler(
         MessageHandler(
             filters.Chat(STORAGE_GROUP_ID) & filters.TEXT & ~filters.COMMAND,
             storage_text_handler
-        )
+        ),
+        group=1,
     )
     media_filter = (
         filters.Chat(STORAGE_GROUP_ID)
@@ -718,15 +729,15 @@ async def on_startup():
             | filters.VOICE
         )
     )
-    application.add_handler(MessageHandler(media_filter, storage_media_handler))
+    application.add_handler(MessageHandler(media_filter, storage_media_handler), group=1)
 
-    # ===== Comandos gerais =====
-    application.add_handler(CommandHandler("start", start_cmd))
-    application.add_handler(CommandHandler("getid", getid_cmd))
-    application.add_handler(CommandHandler("simularvip", simularvip_cmd))
-    application.add_handler(CommandHandler("listar_packs", listar_packs_cmd))
-    application.add_handler(CommandHandler("pack_info", pack_info_cmd))
-    application.add_handler(CommandHandler("remover_item", remover_item_cmd))
+    # ===== Comandos gerais (group=1) =====
+    application.add_handler(CommandHandler("start", start_cmd), group=1)
+    application.add_handler(CommandHandler("getid", getid_cmd), group=1)
+    application.add_handler(CommandHandler("simularvip", simularvip_cmd), group=1)
+    application.add_handler(CommandHandler("listar_packs", listar_packs_cmd), group=1)
+    application.add_handler(CommandHandler("pack_info", pack_info_cmd), group=1)
+    application.add_handler(CommandHandler("remover_item", remover_item_cmd), group=1)
 
     # ===== Job diário às 09:00 America/Sao_Paulo =====
     tz = pytz.timezone("America/Sao_Paulo")
