@@ -268,10 +268,10 @@ async def on_startup():
     job_queue: JobQueue = application.job_queue
 
     # Enviar asset VIP todo dia 9h
-    job_queue.run_daily(enviar_asset_vip, time=dt.time(hour=00, minute=35, tzinfo=timezone), name="daily_vip_asset")
+    job_queue.run_daily(enviar_asset_vip, time=dt.time(hour=0, minute=45, tzinfo=timezone), name="daily_vip_asset")
 
     # Enviar bom dia todo dia 9h (antes do asset)
-    job_queue.run_daily(enviar_bom_dia, time=dt.time(hour=00, minute=33, tzinfo=timezone), name="daily_bom_dia")
+    job_queue.run_daily(enviar_bom_dia, time=dt.time(hour=0, minute=43, tzinfo=timezone), name="daily_bom_dia")
 
     # Registrar handlers
     application.add_handler(CommandHandler("start", start))
