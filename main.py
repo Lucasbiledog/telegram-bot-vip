@@ -927,7 +927,7 @@ async def on_startup():
     # ===== Job diário às 09:00 America/Sao_Paulo =====
     tz = pytz.timezone("America/Sao_Paulo")
     job_queue: JobQueue = application.job_queue
-    job_queue.run_daily(enviar_pack_vip_job, time=dt.time(hour=16, minute=25, tzinfo=tz), name="daily_pack_vip")
+    job_queue.run_daily(enviar_pack_vip_job, time=dt.time(hour=16, minute=29, tzinfo=tz), name="daily_pack_vip")
 
     logging.info("Handlers e jobs registrados.")
 
