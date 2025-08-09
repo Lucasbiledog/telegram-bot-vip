@@ -3,7 +3,7 @@ import os
 import logging
 import asyncio
 import datetime as dt
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Tuple
 import html
 
 import pytz
@@ -27,7 +27,7 @@ from telegram.ext import (
 
 # SQLAlchemy
 from sqlalchemy import (
-    create_engine, Column, Integer, String, DateTime, Boolean, ForeignKey, Text
+    create_engine, Column, Integer, String, DateTime, Boolean, ForeignKey, Text, BigInteger, UniqueConstraint
 )
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship
 from sqlalchemy.engine import make_url
@@ -41,6 +41,16 @@ def esc(s):
 def now_utc():
     return dt.datetime.utcnow()
 
+def parse_hhmm(s: str) -> Tuple[int, int]:
+    s = (s or "").strip()
+    if ":" not in s:
+        raise ValueError("Formato inválido; use HH:MM")
+    hh, mm = s.split(":", 1)
+    h = int(hh); m = int(mm)
+    if not (0 <= h <= 23 and 0 <= m <= 59):
+        raise ValueError("Hora fora do intervalo 00:00–23:59")
+    return h, m
+
 # =========================
 # ENV / CONFIG
 # =========================
@@ -48,9 +58,8 @@ load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 
-# grupos
-STORAGE_GROUP_ID = int(os.getenv("STORAGE_GROUP_ID", "-4806334341"))   # grupo com os assets
-GROUP_VIP_ID     = int(os.getenv("GROUP_VIP_ID", "-1002791988432"))    # grupo VIP
+STORAGE_GROUP_ID = int(os.getenv("STORAGE_GROUP_ID", "-4806334341"))
+GROUP_VIP_ID     = int(os.getenv("GROUP_VIP_ID", "-1002791988432"))
 PORT = int(os.getenv("PORT", 8000))
 
 # Pagamento cripto
@@ -86,11 +95,39 @@ else:
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 Base = declarative_base()
 
-# ---- Admins dinâmicos ----
+# ---- Config chave/valor persistente ----
+class ConfigKV(Base):
+    __tablename__ = "config_kv"
+    key = Column(String, primary_key=True)
+    value = Column(String, nullable=True)
+    updated_at = Column(DateTime, default=now_utc, onupdate=now_utc)
+
+def cfg_get(key: str, default: Optional[str] = None) -> Optional[str]:
+    s = SessionLocal()
+    try:
+        row = s.query(ConfigKV).filter(ConfigKV.key == key).first()
+        return row.value if row else default
+    finally:
+        s.close()
+
+def cfg_set(key: str, value: Optional[str]):
+    s = SessionLocal()
+    try:
+        row = s.query(ConfigKV).filter(ConfigKV.key == key).first()
+        if not row:
+            row = ConfigKV(key=key, value=value)
+            s.add(row)
+        else:
+            row.value = value
+        s.commit()
+    finally:
+        s.close()
+
+# ---- Admins ----
 class Admin(Base):
     __tablename__ = "admins"
     id = Column(Integer, primary_key=True)
-    user_id = Column(Integer, unique=True, index=True)
+    user_id = Column(BigInteger, unique=True, index=True)  # BIGINT
     added_at = Column(DateTime, default=now_utc)
 
 # ---- Packs ----
@@ -119,19 +156,33 @@ class PackFile(Base):
 class Payment(Base):
     __tablename__ = "payments"
     id = Column(Integer, primary_key=True)
-    user_id = Column(Integer, index=True)
+    user_id = Column(BigInteger, index=True)  # BIGINT
     username = Column(String, nullable=True)
     tx_hash = Column(String, unique=True, index=True)
     chain = Column(String, default=CHAIN_NAME)
-    amount = Column(String, nullable=True)  # opcional (texto)
+    amount = Column(String, nullable=True)
     status = Column(String, default="pending")  # pending | approved | rejected
-    notes = Column(Text, nullable=True)  # livre
+    notes = Column(Text, nullable=True)
     created_at = Column(DateTime, default=now_utc)
     decided_at = Column(DateTime, nullable=True)
 
+# ---- Mensagens agendadas (VIP) ----
+class ScheduledMessage(Base):
+    __tablename__ = "scheduled_messages"
+    id = Column(Integer, primary_key=True)
+    hhmm = Column(String, nullable=False)      # "HH:MM" (24h)
+    tz = Column(String, default="America/Sao_Paulo")
+    text = Column(Text, nullable=False)
+    enabled = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=now_utc)
+
+    # (opcional) agrupar por horário, mas PERMITE várias no mesmo horário
+    __table_args__ = (
+        UniqueConstraint('id', name='uq_scheduled_messages_id'),
+    )
+
 def init_db():
     Base.metadata.create_all(bind=engine)
-    # Garante que existe pelo menos 1 admin inicial (coloque o seu ID aqui na primeira execução, se quiser)
     initial_admin_id = os.getenv("INITIAL_ADMIN_ID")
     if initial_admin_id:
         s = SessionLocal()
@@ -142,6 +193,9 @@ def init_db():
                 s.commit()
         finally:
             s.close()
+    # Valor default do horário do pack, se não existir
+    if not cfg_get("daily_pack_hhmm"):
+        cfg_set("daily_pack_hhmm", "09:00")
 
 init_db()
 
@@ -242,6 +296,71 @@ def list_packs_db():
     s = SessionLocal()
     try:
         return s.query(Pack).order_by(Pack.created_at.desc()).all()
+    finally:
+        s.close()
+
+# ---- Scheduled messages helpers ----
+def scheduled_all() -> List[ScheduledMessage]:
+    s = SessionLocal()
+    try:
+        return s.query(ScheduledMessage).order_by(ScheduledMessage.hhmm.asc(), ScheduledMessage.id.asc()).all()
+    finally:
+        s.close()
+
+def scheduled_get(sid: int) -> Optional[ScheduledMessage]:
+    s = SessionLocal()
+    try:
+        return s.query(ScheduledMessage).filter(ScheduledMessage.id == sid).first()
+    finally:
+        s.close()
+
+def scheduled_create(hhmm: str, text: str, tz_name: str = "America/Sao_Paulo") -> ScheduledMessage:
+    s = SessionLocal()
+    try:
+        m = ScheduledMessage(hhmm=hhmm, text=text, tz=tz_name, enabled=True)
+        s.add(m)
+        s.commit()
+        s.refresh(m)
+        return m
+    finally:
+        s.close()
+
+def scheduled_update(sid: int, hhmm: Optional[str], text: Optional[str]) -> bool:
+    s = SessionLocal()
+    try:
+        m = s.query(ScheduledMessage).filter(ScheduledMessage.id == sid).first()
+        if not m:
+            return False
+        if hhmm:
+            m.hhmm = hhmm
+        if text is not None:
+            m.text = text
+        s.commit()
+        return True
+    finally:
+        s.close()
+
+def scheduled_toggle(sid: int) -> Optional[bool]:
+    s = SessionLocal()
+    try:
+        m = s.query(ScheduledMessage).filter(ScheduledMessage.id == sid).first()
+        if not m:
+            return None
+        m.enabled = not m.enabled
+        s.commit()
+        return m.enabled
+    finally:
+        s.close()
+
+def scheduled_delete(sid: int) -> bool:
+    s = SessionLocal()
+    try:
+        m = s.query(ScheduledMessage).filter(ScheduledMessage.id == sid).first()
+        if not m:
+            return False
+        s.delete(m)
+        s.commit()
+        return True
     finally:
         s.close()
 
@@ -450,7 +569,7 @@ async def enviar_pack_vip_job(context: ContextTypes.DEFAULT_TYPE) -> str:
 async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.effective_message
     text = (
-        "Fala! Eu gerencio packs VIP e pagamentos via MetaMask.\n"
+        "Fala! Eu gerencio packs VIP, pagamentos via MetaMask e mensagens agendadas.\n"
         "Use /comandos para ver tudo."
     )
     if msg:
@@ -462,16 +581,26 @@ async def comandos_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "📋 <b>Comandos</b>",
         "• /start — mensagem inicial",
         "• /comandos — lista de comandos",
-        "• /pagar — instruções de pagamento (MetaMask)",
-        "• /tx <hash> — registrar o hash da transação",
+        "• /getid — mostra seus IDs",
+        "",
+        "💸 Pagamento (MetaMask):",
+        "• /pagar — instruções",
+        "• /tx <hash> — registrar a transação",
         "",
         "🧩 Packs (privado):",
         "• /novopack — cadastrar pack (título, previews e arquivos)",
         "",
+        "🕒 Mensagens agendadas (VIP):",
+        "• /add_msg HH:MM <texto> — adiciona",
+        "• /list_msgs — lista todas",
+        "• /edit_msg <id> [HH:MM] [novo texto] — edita",
+        "• /toggle_msg <id> — ativa/desativa",
+        "• /del_msg <id> — remove",
     ]
     adm = [
+        "",
         "🛠 <b>Admin</b>",
-        "• /simularvip — força o envio do próximo pack pendente",
+        "• /simularvip — envia o próximo pack pendente agora",
         "• /listar_packs — lista packs",
         "• /pack_info <id> — detalhes do pack",
         "• /excluir_item <id_item> — remove item do pack",
@@ -479,13 +608,15 @@ async def comandos_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• /set_pendente <id> — marca pack como pendente",
         "• /set_enviado <id> — marca pack como enviado",
         "• /limpar_chat <N> — apaga últimas N mensagens (melhor esforço)",
-        "• /mudar_nome <novo nome> — muda o nome do bot",
+        "• /mudar_nome <novo nome> — muda o nome exibido do bot",
+        "• /mudar_username — instruções para mudar o @username (BotFather)",
         "• /add_admin <user_id> — adiciona admin",
         "• /rem_admin <user_id> — remove admin",
         "• /listar_admins — lista admins",
         "• /listar_pendentes — pagamentos pendentes",
-        "• /aprovar_tx <user_id> — aprova pagamento e envia convite VIP",
+        "• /aprovar_tx <user_id> — aprova e envia convite VIP",
         "• /rejeitar_tx <user_id> [motivo] — rejeita pagamento",
+        "• /set_pack_horario HH:MM — define o horário diário de envio de pack",
     ]
     lines = base + (adm if isadm else [])
     await update.effective_message.reply_text("\n".join(lines), parse_mode="HTML")
@@ -500,6 +631,101 @@ async def getid_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="HTML"
         )
 
+# ====== Admin utils ======
+async def mudar_nome_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not (update.effective_user and is_admin(update.effective_user.id)):
+        await update.effective_message.reply_text("Apenas admins podem usar este comando.")
+        return
+    if not context.args:
+        await update.effective_message.reply_text("Uso: /mudar_nome <novo nome exibido do bot>")
+        return
+    novo_nome = " ".join(context.args).strip()
+    try:
+        await application.bot.set_my_name(name=novo_nome)
+        await update.effective_message.reply_text(f"✅ Nome exibido alterado para: {novo_nome}")
+    except Exception as e:
+        await update.effective_message.reply_text(f"Erro: {e}")
+
+async def mudar_username_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Não é possível pela API; orientar BotFather
+    txt = (
+        "⚠️ Alterar o <b>@username</b> do bot não é possível via API.\n"
+        "Siga no <b>@BotFather</b>:\n"
+        "1) /mybots → selecione seu bot\n"
+        "2) Bot Settings → Edit Username → informe o novo @username disponível\n"
+        "Obs.: o nome exibido (não o @) você pode mudar com /mudar_nome aqui."
+    )
+    await update.effective_message.reply_text(txt, parse_mode="HTML")
+
+async def limpar_chat_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not (update.effective_user and is_admin(update.effective_user.id)):
+        await update.effective_message.reply_text("Apenas admins podem usar este comando.")
+        return
+    if not context.args:
+        await update.effective_message.reply_text("Uso: /limpar_chat <N>")
+        return
+    try:
+        n = int(context.args[0])
+        if n <= 0 or n > 500:
+            await update.effective_message.reply_text("Escolha um N entre 1 e 500.")
+            return
+    except:
+        await update.effective_message.reply_text("Número inválido.")
+        return
+
+    chat_id = update.effective_chat.id
+    current_id = update.effective_message.message_id
+    deleted = 0
+    for mid in range(current_id, current_id - n, -1):
+        try:
+            await application.bot.delete_message(chat_id=chat_id, message_id=mid)
+            deleted += 1
+            await asyncio.sleep(0.03)
+        except Exception:
+            pass
+    await application.bot.send_message(chat_id=chat_id, text=f"🧹 Apaguei ~{deleted} mensagens (melhor esforço).")
+
+async def listar_admins_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not (update.effective_user and is_admin(update.effective_user.id)):
+        await update.effective_message.reply_text("Apenas admins podem usar este comando.")
+        return
+    ids = list_admin_ids()
+    if not ids:
+        await update.effective_message.reply_text("Sem admins cadastrados.")
+        return
+    await update.effective_message.reply_text("👑 Admins:\n" + "\n".join(f"- {i}" for i in ids))
+
+async def add_admin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not (update.effective_user and is_admin(update.effective_user.id)):
+        await update.effective_message.reply_text("Apenas admins podem usar este comando.")
+        return
+    if not context.args:
+        await update.effective_message.reply_text("Uso: /add_admin <user_id>")
+        return
+    try:
+        uid = int(context.args[0])
+    except:
+        await update.effective_message.reply_text("user_id inválido.")
+        return
+    ok = add_admin_db(uid)
+    await update.effective_message.reply_text("✅ Admin adicionado." if ok else "Já era admin.")
+
+async def rem_admin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not (update.effective_user and is_admin(update.effective_user.id)):
+        await update.effective_message.reply_text("Apenas admins podem usar este comando.")
+        return
+    if not context.args:
+        await update.effective_message.reply_text("Uso: /rem_admin <user_id>")
+        return
+    try:
+        uid = int(context.args[0])
+    except:
+        await update.effective_message.reply_text("user_id inválido.")
+        return
+    ok = remove_admin_db(uid)
+    await update.effective_message.reply_text("✅ Admin removido." if ok else "Este user não é admin.")
+
+# ====== Packs admin ======
 async def simularvip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not (update.effective_user and is_admin(update.effective_user.id)):
         await update.effective_message.reply_text("Apenas admins podem usar este comando.")
@@ -557,7 +783,6 @@ async def pack_info_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     finally:
         s.close()
 
-# ===== EXCLUIR ITEM =====
 async def excluir_item_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not (update.effective_user and is_admin(update.effective_user.id)):
         await update.effective_message.reply_text("Apenas admins podem usar este comando.")
@@ -973,7 +1198,6 @@ async def tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     s = SessionLocal()
     try:
-        # evita duplicado
         if s.query(Payment).filter(Payment.tx_hash == tx_hash).first():
             await msg.reply_text("Esse hash já foi registrado. Aguarde aprovação.")
             return
@@ -1030,7 +1254,6 @@ async def aprovar_tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         p.decided_at = now_utc()
         s.commit()
 
-        # Envia convite
         try:
             invite = await application.bot.export_chat_invite_link(chat_id=GROUP_VIP_ID)
             await application.bot.send_message(chat_id=uid, text=f"✅ Pagamento aprovado! Entre no VIP: {invite}")
@@ -1074,91 +1297,190 @@ async def rejeitar_tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         s.close()
 
 # =========================
-# Admin management commands
+# Mensagens agendadas (VIP)
 # =========================
-async def listar_admins_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not (update.effective_user and is_admin(update.effective_user.id)):
-        await update.effective_message.reply_text("Apenas admins podem usar este comando.")
-        return
-    ids = list_admin_ids()
-    if not ids:
-        await update.effective_message.reply_text("Sem admins cadastrados.")
-        return
-    await update.effective_message.reply_text("👑 Admins:\n" + "\n".join(f"- {i}" for i in ids))
+JOB_PREFIX_SM = "schmsg_"  # nome base dos jobs
 
-async def add_admin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not (update.effective_user and is_admin(update.effective_user.id)):
-        await update.effective_message.reply_text("Apenas admins podem usar este comando.")
-        return
-    if not context.args:
-        await update.effective_message.reply_text("Uso: /add_admin <user_id>")
-        return
+def _tz(tz_name: str):
     try:
-        uid = int(context.args[0])
-    except:
-        await update.effective_message.reply_text("user_id inválido.")
-        return
-    ok = add_admin_db(uid)
-    await update.effective_message.reply_text("✅ Admin adicionado." if ok else "Já era admin.")
+        return pytz.timezone(tz_name)
+    except Exception:
+        return pytz.timezone("America/Sao_Paulo")
 
-async def rem_admin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not (update.effective_user and is_admin(update.effective_user.id)):
-        await update.effective_message.reply_text("Apenas admins podem usar este comando.")
+async def _scheduled_message_job(context: ContextTypes.DEFAULT_TYPE):
+    """Executa envio da mensagem agendada; o job name contém o id."""
+    job = context.job
+    sid = int(job.name.replace(JOB_PREFIX_SM, "")) if job and job.name else None
+    if sid is None:
         return
-    if not context.args:
-        await update.effective_message.reply_text("Uso: /rem_admin <user_id>")
-        return
-    try:
-        uid = int(context.args[0])
-    except:
-        await update.effective_message.reply_text("user_id inválido.")
-        return
-    ok = remove_admin_db(uid)
-    await update.effective_message.reply_text("✅ Admin removido." if ok else "Este user não é admin.")
 
-async def mudar_nome_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not (update.effective_user and is_admin(update.effective_user.id)):
-        await update.effective_message.reply_text("Apenas admins podem usar este comando.")
+    m = scheduled_get(sid)
+    if not m or not m.enabled:
         return
-    if not context.args:
-        await update.effective_message.reply_text("Uso: /mudar_nome <novo nome>")
-        return
-    novo_nome = " ".join(context.args).strip()
+
     try:
-        await application.bot.set_my_name(name=novo_nome)
-        await update.effective_message.reply_text(f"✅ Nome alterado para: {novo_nome}")
+        await context.application.bot.send_message(chat_id=GROUP_VIP_ID, text=m.text)
     except Exception as e:
-        await update.effective_message.reply_text(f"Erro: {e}")
+        logging.warning(f"Falha ao enviar scheduled_message id={sid}: {e}")
 
-async def limpar_chat_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Apaga as últimas N mensagens deste chat (melhor esforço).
-       Observação: o bot precisa ser admin com permissão de apagar mensagens."""
+def _register_all_scheduled_messages(job_queue: JobQueue):
+    # Remove jobs antigos desse prefixo
+    for j in list(job_queue.jobs()):
+        if j.name and j.name.startswith(JOB_PREFIX_SM):
+            j.schedule_removal()
+
+    msgs = scheduled_all()
+    for m in msgs:
+        try:
+            h, k = parse_hhmm(m.hhmm)
+        except Exception:
+            continue
+        tz = _tz(m.tz)
+        job_queue.run_daily(
+            _scheduled_message_job,
+            time=dt.time(hour=h, minute=k, tzinfo=tz),
+            name=f"{JOB_PREFIX_SM}{m.id}",
+        )
+
+async def add_msg_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not (update.effective_user and is_admin(update.effective_user.id)):
-        await update.effective_message.reply_text("Apenas admins podem usar este comando.")
+        await update.effective_message.reply_text("Apenas admins.")
+        return
+    if not context.args or len(context.args) < 2:
+        await update.effective_message.reply_text("Uso: /add_msg HH:MM <texto>")
+        return
+    hhmm = context.args[0]
+    try:
+        parse_hhmm(hhmm)
+    except Exception as e:
+        await update.effective_message.reply_text(f"Hora inválida: {e}")
+        return
+    # O resto vira o texto
+    texto = " ".join(context.args[1:]).strip()
+    if not texto:
+        await update.effective_message.reply_text("Texto vazio.")
+        return
+
+    m = scheduled_create(hhmm, texto)
+    # registra o job imediatamente
+    tz = _tz(m.tz)
+    h, k = parse_hhmm(m.hhmm)
+    context.job_queue.run_daily(
+        _scheduled_message_job,
+        time=dt.time(hour=h, minute=k, tzinfo=tz),
+        name=f"{JOB_PREFIX_SM}{m.id}",
+    )
+    await update.effective_message.reply_text(f"✅ Mensagem #{m.id} criada para {m.hhmm} (diária).")
+
+async def list_msgs_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not (update.effective_user and is_admin(update.effective_user.id)):
+        await update.effective_message.reply_text("Apenas admins.")
+        return
+    msgs = scheduled_all()
+    if not msgs:
+        await update.effective_message.reply_text("Não há mensagens agendadas.")
+        return
+    lines = ["🕒 <b>Mensagens agendadas</b>"]
+    for m in msgs:
+        status = "ON" if m.enabled else "OFF"
+        preview = (m.text[:80] + "…") if len(m.text) > 80 else m.text
+        lines.append(f"#{m.id} — {m.hhmm} ({m.tz}) [{status}] — {esc(preview)}")
+    await update.effective_message.reply_text("\n".join(lines), parse_mode="HTML")
+
+async def edit_msg_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not (update.effective_user and is_admin(update.effective_user.id)):
+        await update.effective_message.reply_text("Apenas admins.")
         return
     if not context.args:
-        await update.effective_message.reply_text("Uso: /limpar_chat <N>")
+        await update.effective_message.reply_text("Uso: /edit_msg <id> [HH:MM] [novo texto]")
         return
     try:
-        n = int(context.args[0])
-        if n <= 0 or n > 500:
-            await update.effective_message.reply_text("Escolha um N entre 1 e 500.")
-            return
+        sid = int(context.args[0])
     except:
-        await update.effective_message.reply_text("Número inválido.")
+        await update.effective_message.reply_text("ID inválido.")
         return
 
-    chat_id = update.effective_chat.id
-    current_id = update.effective_message.message_id
-    deleted = 0
-    for mid in range(current_id, current_id - n, -1):
-        try:
-            await application.bot.delete_message(chat_id=chat_id, message_id=mid)
-            deleted += 1
-            await asyncio.sleep(0.03)  # evita flood
-        except Exception:
-            pass
-    await application.bot.send_message(chat_id=chat_id, text=f"🧹 Apaguei ~{deleted} mensagens (melhor esforço).")
+    # Detecta se há horário e/ou texto
+    hhmm = None
+    new_text = None
+    if len(context.args) >= 2:
+        candidate = context.args[1]
+        if ":" in candidate and len(candidate) <= 5:
+            # tem horário
+            try:
+                parse_hhmm(candidate)
+                hhmm = candidate
+                new_text = " ".join(context.args[2:]).strip() if len(context.args) > 2 else None
+            except Exception as e:
+                await update.effective_message.reply_text(f"Hora inválida: {e}")
+                return
+        else:
+            new_text = " ".join(context.args[1:]).strip()
+
+    if hhmm is None and new_text is None:
+        await update.effective_message.reply_text("Nada para alterar. Informe HH:MM e/ou novo texto.")
+        return
+
+    ok = scheduled_update(sid, hhmm, new_text)
+    if not ok:
+        await update.effective_message.reply_text("Mensagem não encontrada.")
+        return
+
+    # resched job desse id
+    for j in list(context.job_queue.jobs()):
+        if j.name == f"{JOB_PREFIX_SM}{sid}":
+            j.schedule_removal()
+    m = scheduled_get(sid)
+    if m:
+        tz = _tz(m.tz)
+        h, k = parse_hhmm(m.hhmm)
+        context.job_queue.run_daily(
+            _scheduled_message_job,
+            time=dt.time(hour=h, minute=k, tzinfo=tz),
+            name=f"{JOB_PREFIX_SM}{m.id}",
+        )
+    await update.effective_message.reply_text("✅ Mensagem atualizada.")
+
+async def toggle_msg_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not (update.effective_user and is_admin(update.effective_user.id)):
+        await update.effective_message.reply_text("Apenas admins.")
+        return
+    if not context.args:
+        await update.effective_message.reply_text("Uso: /toggle_msg <id>")
+        return
+    try:
+        sid = int(context.args[0])
+    except:
+        await update.effective_message.reply_text("ID inválido.")
+        return
+    new_state = scheduled_toggle(sid)
+    if new_state is None:
+        await update.effective_message.reply_text("Mensagem não encontrada.")
+        return
+    # ligar/desligar não exige re-criar job (job roda, mas checa enabled); opcional manter
+    await update.effective_message.reply_text(f"✅ Mensagem #{sid} agora está {'ON' if new_state else 'OFF'}.")
+
+async def del_msg_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not (update.effective_user and is_admin(update.effective_user.id)):
+        await update.effective_message.reply_text("Apenas admins.")
+        return
+    if not context.args:
+        await update.effective_message.reply_text("Uso: /del_msg <id>")
+        return
+    try:
+        sid = int(context.args[0])
+    except:
+        await update.effective_message.reply_text("ID inválido.")
+        return
+    ok = scheduled_delete(sid)
+    if not ok:
+        await update.effective_message.reply_text("Mensagem não encontrada.")
+        return
+    # remove job
+    for j in list(context.job_queue.jobs()):
+        if j.name == f"{JOB_PREFIX_SM}{sid}":
+            j.schedule_removal()
+    await update.effective_message.reply_text("✅ Mensagem removida.")
 
 # =========================
 # Error handler global
@@ -1171,10 +1493,6 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
 # =========================
 @app.post("/crypto_webhook")
 async def crypto_webhook(request: Request):
-    """
-    Webhook opcional para automação externa.
-    Espera JSON: { "telegram_user_id": 123, "tx_hash": "0x...", "amount": "xx", "chain": "Polygon" }
-    """
     data = await request.json()
     uid = data.get("telegram_user_id")
     tx_hash = data.get("tx_hash")
@@ -1186,7 +1504,6 @@ async def crypto_webhook(request: Request):
 
     s = SessionLocal()
     try:
-        # registra caso não exista
         pay = s.query(Payment).filter(Payment.tx_hash == tx_hash).first()
         if not pay:
             pay = Payment(user_id=int(uid), tx_hash=tx_hash, amount=amount, chain=chain, status="approved", decided_at=now_utc())
@@ -1219,7 +1536,7 @@ async def telegram_webhook(request: Request):
 
 @app.get("/")
 async def root():
-    return {"status": "online", "message": "Bot ready (crypto payments)"}
+    return {"status": "online", "message": "Bot ready (crypto + schedules)"}
 
 # =========================
 # Startup: register handlers & jobs
@@ -1236,22 +1553,17 @@ async def on_startup():
     await bot.set_webhook(url=WEBHOOK_URL)
 
     logging.basicConfig(level=logging.INFO)
-    logging.info("Bot iniciado (cripto).")
+    logging.info("Bot iniciado (cripto + schedules).")
 
     # ===== Error handler =====
     application.add_error_handler(error_handler)
 
     # ===== Conversa /novopack – SOMENTE NO PRIVADO (group=0) =====
-    TITLE, CONFIRM_TITLE, PREVIEWS, FILES, CONFIRM_SAVE = range(5)
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler("novopack", novopack_start, filters=filters.ChatType.PRIVATE)],
         states={
-            TITLE: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, novopack_title),
-            ],
-            CONFIRM_TITLE: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, novopack_confirm_title),
-            ],
+            TITLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, novopack_title)],
+            CONFIRM_TITLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, novopack_confirm_title)],
             PREVIEWS: [
                 CommandHandler("proximo", novopack_next_to_files),
                 MessageHandler(filters.PHOTO | filters.VIDEO | filters.ANIMATION, novopack_collect_previews),
@@ -1262,9 +1574,7 @@ async def on_startup():
                 MessageHandler(filters.Document.ALL | filters.AUDIO | filters.VOICE, novopack_collect_files),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, hint_files),
             ],
-            CONFIRM_SAVE: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, novopack_confirm_save),
-            ],
+            CONFIRM_SAVE: [MessageHandler(filters.TEXT & ~filters.COMMAND, novopack_confirm_save)],
         },
         fallbacks=[CommandHandler("cancelar", novopack_cancel)],
         allow_reentry=True,
@@ -1319,6 +1629,7 @@ async def on_startup():
     application.add_handler(CommandHandler("add_admin", add_admin_cmd), group=1)
     application.add_handler(CommandHandler("rem_admin", rem_admin_cmd), group=1)
     application.add_handler(CommandHandler("mudar_nome", mudar_nome_cmd), group=1)
+    application.add_handler(CommandHandler("mudar_username", mudar_username_cmd), group=1)
     application.add_handler(CommandHandler("limpar_chat", limpar_chat_cmd), group=1)
 
     # Pagamentos cripto
@@ -1328,10 +1639,50 @@ async def on_startup():
     application.add_handler(CommandHandler("aprovar_tx", aprovar_tx_cmd), group=1)
     application.add_handler(CommandHandler("rejeitar_tx", rejeitar_tx_cmd), group=1)
 
-    # ===== Job diário às 09:00 America/Sao_Paulo =====
+    # Mensagens agendadas
+    application.add_handler(CommandHandler("add_msg", add_msg_cmd), group=1)
+    application.add_handler(CommandHandler("list_msgs", list_msgs_cmd), group=1)
+    application.add_handler(CommandHandler("edit_msg", edit_msg_cmd), group=1)
+    application.add_handler(CommandHandler("toggle_msg", toggle_msg_cmd), group=1)
+    application.add_handler(CommandHandler("del_msg", del_msg_cmd), group=1)
+
+    # ===== Job diário de envio de pack (configurável/persistente) =====
     tz = pytz.timezone("America/Sao_Paulo")
-    job_queue: JobQueue = application.job_queue
-    job_queue.run_daily(enviar_pack_vip_job, time=dt.time(hour=9, minute=0, tzinfo=tz), name="daily_pack_vip")
+    # função para ler horário da config e agendar:
+    async def _reschedule_daily_pack():
+        # remove job antigo
+        for j in list(application.job_queue.jobs()):
+            if j.name == "daily_pack_vip":
+                j.schedule_removal()
+        hhmm = cfg_get("daily_pack_hhmm") or "09:00"
+        h, m = parse_hhmm(hhmm)
+        application.job_queue.run_daily(enviar_pack_vip_job, time=dt.time(hour=h, minute=m, tzinfo=tz), name="daily_pack_vip")
+        logging.info(f"Job diário de pack agendado para {hhmm} America/Sao_Paulo")
+
+    # comando admin para alterar horário e persistir
+    async def set_pack_horario_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not (update.effective_user and is_admin(update.effective_user.id)):
+            await update.effective_message.reply_text("Apenas admins.")
+            return
+        if not context.args:
+            await update.effective_message.reply_text("Uso: /set_pack_horario HH:MM")
+            return
+        try:
+            hhmm = context.args[0]
+            parse_hhmm(hhmm)
+            cfg_set("daily_pack_hhmm", hhmm)
+            await _reschedule_daily_pack()
+            await update.effective_message.reply_text(f"✅ Horário diário dos packs definido para {hhmm}.")
+        except Exception as e:
+            await update.effective_message.reply_text(f"Hora inválida: {e}")
+
+    application.add_handler(CommandHandler("set_pack_horario", set_pack_horario_cmd), group=1)
+
+    # agenda conforme config
+    await _reschedule_daily_pack()
+
+    # registra todas as scheduled messages
+    _register_all_scheduled_messages(application.job_queue)
 
     logging.info("Handlers e jobs registrados.")
 
