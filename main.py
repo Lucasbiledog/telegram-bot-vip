@@ -2,7 +2,6 @@
 import os
 import logging
 import asyncio
-import random
 import datetime as dt
 from typing import Optional, List
 
@@ -22,6 +21,7 @@ from telegram.ext import (
     MessageHandler,
     ContextTypes,
     JobQueue,
+    ConversationHandler,
     filters,
 )
 
@@ -31,9 +31,9 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship
 
-# -------------------------
+# =========================
 # ENV / CONFIG
-# -------------------------
+# =========================
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
@@ -55,16 +55,16 @@ if not BOT_TOKEN:
 if STRIPE_API_KEY:
     stripe.api_key = STRIPE_API_KEY
 
-# -------------------------
+# =========================
 # FASTAPI + PTB
-# -------------------------
+# =========================
 app = FastAPI()
 application = ApplicationBuilder().token(BOT_TOKEN).build()
 bot = None
 
-# -------------------------
+# =========================
 # DB setup
-# -------------------------
+# =========================
 DB_URL = os.getenv("DATABASE_URL", "sqlite:///./bot_data.db")
 engine = create_engine(DB_URL, connect_args={"check_same_thread": False})
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
@@ -98,9 +98,9 @@ def init_db():
 
 init_db()
 
-# -------------------------
+# =========================
 # DB helpers
-# -------------------------
+# =========================
 def create_pack(title: str, header_message_id: Optional[int] = None) -> Pack:
     s = SessionLocal()
     try:
@@ -161,10 +161,10 @@ def list_packs_db():
     finally:
         s.close()
 
-# -------------------------
+# =========================
 # STORAGE GROUP handlers
-# -------------------------
-# Regra:
+# =========================
+# Regras:
 # 1) Envie no grupo de armazenamento um TEXTO com o título do pack.
 # 2) Envie as mídias como RESPOSTA (reply) à mensagem de título.
 
@@ -241,9 +241,9 @@ async def storage_media_handler(update: Update, context: ContextTypes.DEFAULT_TY
     add_file_to_pack(pack, file_id=file_id, file_unique_id=file_unique_id, file_type=file_type, role=role, file_name=file_name)
     await msg.reply_text(f"Arquivo adicionado ao pack *{pack.title}*.", parse_mode="Markdown")
 
-# -------------------------
+# =========================
 # ENVIO DO PACK (JobQueue) — retorna status p/ debug
-# -------------------------
+# =========================
 async def enviar_pack_vip_job(context: ContextTypes.DEFAULT_TYPE) -> str:
     try:
         pack = get_next_unsent_pack()
@@ -337,9 +337,9 @@ async def enviar_pack_vip_job(context: ContextTypes.DEFAULT_TYPE) -> str:
         logging.exception("Erro no enviar_pack_vip_job")
         return f"❌ Erro no envio: {e!r}"
 
-# -------------------------
+# =========================
 # COMMANDS
-# -------------------------
+# =========================
 async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Fala! Eu gerencio packs VIP. Envie um título no grupo de assets e responda com as mídias/arquivos.")
 
@@ -399,14 +399,204 @@ async def pack_info_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         lines = [f"Pack [{p.id}] {p.title} — {'ENVIADO' if p.sent else 'PENDENTE'}"]
         for f in files:
-            lines.append(f" - #{f.id} {f.file_type} ({f.role}) {f.file_name or ''}")
+            lines.append(f" - item #{f.id} | {f.file_type} ({f.role}) {f.file_name or ''}")
         await update.message.reply_text("\n".join(lines))
     finally:
         s.close()
 
-# -------------------------
+# ===== /remover_item <id> =====
+async def remover_item_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id not in ADMIN_USER_IDS:
+        await update.message.reply_text("Apenas admins podem usar este comando.")
+        return
+    if not context.args:
+        await update.message.reply_text("Uso: /remover_item <id>")
+        return
+    try:
+        item_id = int(context.args[0])
+    except:
+        await update.message.reply_text("ID inválido. Use: /remover_item <id>")
+        return
+
+    s = SessionLocal()
+    try:
+        item = s.query(PackFile).filter(PackFile.id == item_id).first()
+        if not item:
+            await update.message.reply_text("Item não encontrado.")
+            return
+        pack = s.query(Pack).filter(Pack.id == item.pack_id).first()
+        s.delete(item)
+        s.commit()
+        await update.message.reply_text(f"✅ Item #{item_id} removido do pack '{pack.title if pack else '?'}'.")
+    except Exception as e:
+        s.rollback()
+        logging.exception("Erro ao remover item")
+        await update.message.reply_text(f"❌ Erro ao remover item: {e}")
+    finally:
+        s.close()
+
+# =========================
+# Conversa: criar pack manualmente (admin)
+# =========================
+TITLE, PREVIEWS, FILES = range(3)
+
+def _require_admin(update: Update) -> bool:
+    return update.effective_user and update.effective_user.id in ADMIN_USER_IDS
+
+async def novopack_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not _require_admin(update):
+        await update.message.reply_text("Apenas admins podem usar este comando.")
+        return ConversationHandler.END
+    context.user_data.clear()
+    await update.message.reply_text(
+        "🧩 Vamos criar um novo pack!\n\n"
+        "1) Me diga o **título do pack** (apenas texto)."
+    )
+    return TITLE
+
+async def novopack_title(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    title = (update.message.text or "").strip()
+    if not title:
+        await update.message.reply_text("Título vazio. Envie um texto com o título do pack.")
+        return TITLE
+    p = create_pack(title=title, header_message_id=None)
+    context.user_data["pack_id"] = p.id
+    await update.message.reply_text(
+        f"✅ Título salvo: *{title}* (id {p.id}).\n\n"
+        "2) Agora envie as **PREVIEWS** (📷 fotos / 🎞 vídeos / 🎞 animações).\n"
+        "Envie quantas quiser. Quando terminar, mande /proximo.",
+        parse_mode="Markdown"
+    )
+    return PREVIEWS
+
+async def novopack_collect_previews(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    p_id = context.user_data.get("pack_id")
+    if not p_id:
+        await update.message.reply_text("Pack não encontrado em sessão. Use /cancelar e recomece com /novopack.")
+        return ConversationHandler.END
+
+    # carrega pack
+    s = SessionLocal()
+    try:
+        p = s.query(Pack).filter(Pack.id == p_id).first()
+    finally:
+        s.close()
+    if not p:
+        await update.message.reply_text("Pack não encontrado no banco. Use /cancelar e recomece.")
+        return ConversationHandler.END
+
+    msg = update.message
+    file_id = None
+    file_unique_id = None
+    file_type = None
+    role = "preview"
+
+    if msg.photo:
+        biggest = msg.photo[-1]
+        file_id = biggest.file_id
+        file_unique_id = getattr(biggest, "file_unique_id", None)
+        file_type = "photo"
+    elif msg.video:
+        file_id = msg.video.file_id
+        file_unique_id = getattr(msg.video, "file_unique_id", None)
+        file_type = "video"
+    elif msg.animation:
+        file_id = msg.animation.file_id
+        file_unique_id = getattr(msg.animation, "file_unique_id", None)
+        file_type = "animation"
+    else:
+        await update.message.reply_text("Isso não é preview. Envie foto/vídeo/animação ou /proximo para ir aos arquivos.")
+        return PREVIEWS
+
+    add_file_to_pack(p, file_id=file_id, file_unique_id=file_unique_id, file_type=file_type, role=role)
+    await update.message.reply_text("Preview adicionado. Envie mais ou /proximo para ir aos ARQUIVOS.")
+    return PREVIEWS
+
+async def novopack_next_to_files(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.user_data.get("pack_id"):
+        await update.message.reply_text("Pack não encontrado em sessão. Use /cancelar e recomece com /novopack.")
+        return ConversationHandler.END
+    await update.message.reply_text(
+        "3) Agora envie os **ARQUIVOS** (📄 documentos / 🎵 áudio / 🎙 voice).\n"
+        "Envie quantos quiser. Quando terminar, mande /salvar."
+    )
+    return FILES
+
+async def novopack_collect_files(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    p_id = context.user_data.get("pack_id")
+    if not p_id:
+        await update.message.reply_text("Pack não encontrado em sessão. Use /cancelar e recomece com /novopack.")
+        return ConversationHandler.END
+
+    s = SessionLocal()
+    try:
+        p = s.query(Pack).filter(Pack.id == p_id).first()
+    finally:
+        s.close()
+    if not p:
+        await update.message.reply_text("Pack não encontrado no banco. Use /cancelar e recomece.")
+        return ConversationHandler.END
+
+    msg = update.message
+    file_id = None
+    file_unique_id = None
+    file_type = None
+    role = "file"
+    file_name = None
+
+    if msg.document:
+        file_id = msg.document.file_id
+        file_unique_id = getattr(msg.document, "file_unique_id", None)
+        file_type = "document"
+        file_name = getattr(msg.document, "file_name", None)
+    elif msg.audio:
+        file_id = msg.audio.file_id
+        file_unique_id = getattr(msg.audio, "file_unique_id", None)
+        file_type = "audio"
+    elif msg.voice:
+        file_id = msg.voice.file_id
+        file_unique_id = getattr(msg.voice, "file_unique_id", None)
+        file_type = "voice"
+    else:
+        await update.message.reply_text("Isso não é arquivo. Envie documento/áudio/voice ou /salvar para concluir.")
+        return FILES
+
+    add_file_to_pack(p, file_id=file_id, file_unique_id=file_unique_id, file_type=file_type, role=role, file_name=file_name)
+    await update.message.reply_text("Arquivo adicionado. Envie mais ou /salvar para concluir.")
+    return FILES
+
+async def novopack_save(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    p_id = context.user_data.get("pack_id")
+    if not p_id:
+        await update.message.reply_text("Nada para salvar. Use /novopack para iniciar.")
+        return ConversationHandler.END
+
+    s = SessionLocal()
+    try:
+        p = s.query(Pack).filter(Pack.id == p_id).first()
+        if not p:
+            await update.message.reply_text("Pack não encontrado no banco.")
+            return ConversationHandler.END
+        previews = s.query(PackFile).filter(PackFile.pack_id == p.id, PackFile.role == "preview").count()
+        files    = s.query(PackFile).filter(PackFile.pack_id == p.id, PackFile.role == "file").count()
+    finally:
+        s.close()
+
+    context.user_data.clear()
+    await update.message.reply_text(
+        f"✅ Pack salvo!\nTítulo: *{p.title}*\nPreviews: {previews}\nArquivos: {files}",
+        parse_mode="Markdown"
+    )
+    return ConversationHandler.END
+
+async def novopack_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data.clear()
+    await update.message.reply_text("Operação cancelada.")
+    return ConversationHandler.END
+
+# =========================
 # Stripe webhook (mínimo)
-# -------------------------
+# =========================
 @app.post("/stripe_webhook")
 async def stripe_webhook(request: Request):
     if not STRIPE_WEBHOOK_SECRET:
@@ -433,9 +623,9 @@ async def stripe_webhook(request: Request):
                 logging.exception("Erro enviando invite")
     return PlainTextResponse("", status_code=200)
 
-# -------------------------
+# =========================
 # Telegram webhook receiver
-# -------------------------
+# =========================
 @app.post("/webhook")
 async def telegram_webhook(request: Request):
     try:
@@ -451,9 +641,9 @@ async def telegram_webhook(request: Request):
 async def root():
     return {"status": "online", "message": "Bot ready"}
 
-# -------------------------
+# =========================
 # Startup: register handlers & jobs
-# -------------------------
+# =========================
 @app.on_event("startup")
 async def on_startup():
     global bot
@@ -474,7 +664,6 @@ async def on_startup():
             storage_text_handler
         )
     )
-
     media_filter = (
         filters.Chat(STORAGE_GROUP_ID)
         & (
@@ -488,12 +677,34 @@ async def on_startup():
     )
     application.add_handler(MessageHandler(media_filter, storage_media_handler))
 
+    # Conversa /novopack (admin)
+    conv_handler = ConversationHandler(
+        entry_points=[CommandHandler("novopack", novopack_start)],
+        states={
+            TITLE: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, novopack_title),
+            ],
+            PREVIEWS: [
+                CommandHandler("proximo", novopack_next_to_files),
+                MessageHandler(filters.PHOTO | filters.VIDEO | filters.ANIMATION, novopack_collect_previews),
+            ],
+            FILES: [
+                CommandHandler("salvar", novopack_save),
+                MessageHandler(filters.Document.ALL | filters.AUDIO | filters.VOICE, novopack_collect_files),
+            ],
+        },
+        fallbacks=[CommandHandler("cancelar", novopack_cancel)],
+        allow_reentry=True,
+    )
+    application.add_handler(conv_handler)
+
     # Comandos
     application.add_handler(CommandHandler("start", start_cmd))
     application.add_handler(CommandHandler("getid", getid_cmd))
     application.add_handler(CommandHandler("simularvip", simularvip_cmd))
     application.add_handler(CommandHandler("listar_packs", listar_packs_cmd))
     application.add_handler(CommandHandler("pack_info", pack_info_cmd))
+    application.add_handler(CommandHandler("remover_item", remover_item_cmd))
 
     # Job diário às 09:00 America/Sao_Paulo
     tz = pytz.timezone("America/Sao_Paulo")
@@ -502,9 +713,9 @@ async def on_startup():
 
     logging.info("Handlers e jobs registrados.")
 
-# -------------------------
+# =========================
 # Run
-# -------------------------
+# =========================
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     uvicorn.run("main:app", host="0.0.0.0", port=PORT)
