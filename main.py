@@ -39,7 +39,7 @@ STORAGE_GROUP_ID = int(os.getenv("STORAGE_GROUP_ID", "-4806334341"))  # grupo on
 STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET")
 
 # Defina seus admins aqui para liberar comandos restritos
-ADMIN_IDS = [int(os.getenv("ADMIN_ID", "123456789"))]  # substitua 123456789 pelo seu ID
+ADMIN_IDS = [int(os.getenv("ADMIN_ID", "7123614866"))]  # substitua 123456789 pelo seu ID
 
 application = ApplicationBuilder().token(BOT_TOKEN).build()
 bot = None
