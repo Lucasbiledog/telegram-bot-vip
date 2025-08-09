@@ -10,3 +10,6 @@ apscheduler
 python-telegram-bot==22.3
 pytz
 psycopg2-binary
+web3==6.20.1
+eth-account>=0.10.0
+psycopg2-binary
