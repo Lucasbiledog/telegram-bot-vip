@@ -3,7 +3,7 @@ import os
 import logging
 import asyncio
 import datetime as dt
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 
 import pytz
 from dotenv import load_dotenv
@@ -162,12 +162,8 @@ def list_packs_db():
         s.close()
 
 # =========================
-# STORAGE GROUP handlers
+# STORAGE GROUP handlers (opcional, continua funcionando)
 # =========================
-# Regras:
-# 1) Envie no grupo de armazenamento um TEXTO com o título do pack.
-# 2) Envie as mídias como RESPOSTA (reply) à mensagem de título.
-
 async def storage_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message
     if not msg or msg.chat.id != STORAGE_GROUP_ID:
@@ -338,10 +334,10 @@ async def enviar_pack_vip_job(context: ContextTypes.DEFAULT_TYPE) -> str:
         return f"❌ Erro no envio: {e!r}"
 
 # =========================
-# COMMANDS
+# COMMANDS BÁSICOS
 # =========================
 async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Fala! Eu gerencio packs VIP. Envie um título no grupo de assets e responda com as mídias/arquivos.")
+    await update.message.reply_text("Fala! Eu gerencio packs VIP. Use /novopack para cadastrar via conversa ou publique no grupo de assets com título + replies.")
 
 async def getid_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -404,7 +400,6 @@ async def pack_info_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     finally:
         s.close()
 
-# ===== /remover_item <id> =====
 async def remover_item_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in ADMIN_USER_IDS:
         await update.message.reply_text("Apenas admins podem usar este comando.")
@@ -436,12 +431,43 @@ async def remover_item_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         s.close()
 
 # =========================
-# Conversa: criar pack manualmente (admin)
+# NOVO: Conversa /novopack com confirmação passo a passo
 # =========================
-TITLE, PREVIEWS, FILES = range(3)
+# Estados
+TITLE, CONFIRM_TITLE, PREVIEWS, FILES, CONFIRM_SAVE = range(5)
 
 def _require_admin(update: Update) -> bool:
     return update.effective_user and update.effective_user.id in ADMIN_USER_IDS
+
+def _summary_from_session(user_data: Dict[str, Any]) -> str:
+    title = user_data.get("title", "—")
+    previews = user_data.get("previews", [])
+    files = user_data.get("files", [])
+    # gerar nomes “amigáveis”
+    preview_names = []
+    p_index = 1
+    for it in previews:
+        label = "Foto" if it["file_type"] == "photo" else ("Vídeo" if it["file_type"] == "video" else "Animação")
+        preview_names.append(f"{label} {p_index}")
+        p_index += 1
+    file_names = []
+    f_index = 1
+    for it in files:
+        if it["file_type"] == "document" and it.get("file_name"):
+            file_names.append(it["file_name"])
+        else:
+            # áudio/voice não tem nome de arquivo
+            file_names.append(f"{it['file_type'].capitalize()} {f_index}")
+            f_index += 1
+    text = [
+        f"📦 *Resumo do Pack*",
+        f"• Nome: *{title}*",
+        f"• Previews ({len(previews)}): " + (", ".join(preview_names) if preview_names else "—"),
+        f"• Arquivos ({len(files)}): " + (", ".join(file_names) if file_names else "—"),
+        "",
+        "Deseja salvar? *(sim/não)*"
+    ]
+    return "\n".join(text)
 
 async def novopack_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not _require_admin(update):
@@ -459,134 +485,122 @@ async def novopack_title(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not title:
         await update.message.reply_text("Título vazio. Envie um texto com o título do pack.")
         return TITLE
-    p = create_pack(title=title, header_message_id=None)
-    context.user_data["pack_id"] = p.id
+    context.user_data["title_candidate"] = title
+    await update.message.reply_text(f"Confirma o nome: *{title}*? (sim/não)", parse_mode="Markdown")
+    return CONFIRM_TITLE
+
+async def novopack_confirm_title(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    answer = (update.message.text or "").strip().lower()
+    if answer not in ("sim", "não", "nao"):
+        await update.message.reply_text("Por favor, responda *sim* ou *não*.", parse_mode="Markdown")
+        return CONFIRM_TITLE
+    if answer in ("não", "nao"):
+        await update.message.reply_text("Ok! Envie o *novo título* do pack.", parse_mode="Markdown")
+        return TITLE
+    # sim -> fixa título e inicia coleções temporárias
+    context.user_data["title"] = context.user_data.get("title_candidate")
+    context.user_data["previews"] = []
+    context.user_data["files"] = []
     await update.message.reply_text(
-        f"✅ Título salvo: *{title}* (id {p.id}).\n\n"
-        "2) Agora envie as **PREVIEWS** (📷 fotos / 🎞 vídeos / 🎞 animações).\n"
+        "2) Envie as **PREVIEWS** (📷 fotos / 🎞 vídeos / 🎞 animações).\n"
         "Envie quantas quiser. Quando terminar, mande /proximo.",
         parse_mode="Markdown"
     )
     return PREVIEWS
 
 async def novopack_collect_previews(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    p_id = context.user_data.get("pack_id")
-    if not p_id:
-        await update.message.reply_text("Pack não encontrado em sessão. Use /cancelar e recomece com /novopack.")
-        return ConversationHandler.END
-
-    # carrega pack
-    s = SessionLocal()
-    try:
-        p = s.query(Pack).filter(Pack.id == p_id).first()
-    finally:
-        s.close()
-    if not p:
-        await update.message.reply_text("Pack não encontrado no banco. Use /cancelar e recomece.")
-        return ConversationHandler.END
-
     msg = update.message
-    file_id = None
-    file_unique_id = None
-    file_type = None
-    role = "preview"
-
+    previews: List[Dict[str, Any]] = context.user_data.get("previews", [])
     if msg.photo:
         biggest = msg.photo[-1]
-        file_id = biggest.file_id
-        file_unique_id = getattr(biggest, "file_unique_id", None)
-        file_type = "photo"
+        previews.append({"file_id": biggest.file_id, "file_type": "photo"})
+        await update.message.reply_text("✅ *Foto cadastrada*. Envie mais ou /proximo.", parse_mode="Markdown")
     elif msg.video:
-        file_id = msg.video.file_id
-        file_unique_id = getattr(msg.video, "file_unique_id", None)
-        file_type = "video"
+        previews.append({"file_id": msg.video.file_id, "file_type": "video"})
+        await update.message.reply_text("✅ *Preview (vídeo) cadastrado*. Envie mais ou /proximo.", parse_mode="Markdown")
     elif msg.animation:
-        file_id = msg.animation.file_id
-        file_unique_id = getattr(msg.animation, "file_unique_id", None)
-        file_type = "animation"
+        previews.append({"file_id": msg.animation.file_id, "file_type": "animation"})
+        await update.message.reply_text("✅ *Preview (animação) cadastrado*. Envie mais ou /proximo.", parse_mode="Markdown")
     else:
-        await update.message.reply_text("Isso não é preview. Envie foto/vídeo/animação ou /proximo para ir aos arquivos.")
-        return PREVIEWS
-
-    add_file_to_pack(p, file_id=file_id, file_unique_id=file_unique_id, file_type=file_type, role=role)
-    await update.message.reply_text("Preview adicionado. Envie mais ou /proximo para ir aos ARQUIVOS.")
+        await update.message.reply_text("Envie *foto/vídeo/animação* como preview, ou /proximo para ir aos arquivos.", parse_mode="Markdown")
+    context.user_data["previews"] = previews
     return PREVIEWS
 
 async def novopack_next_to_files(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.user_data.get("pack_id"):
-        await update.message.reply_text("Pack não encontrado em sessão. Use /cancelar e recomece com /novopack.")
+    if not context.user_data.get("title"):
+        await update.message.reply_text("Título não encontrado. Use /cancelar e recomece com /novopack.")
         return ConversationHandler.END
     await update.message.reply_text(
         "3) Agora envie os **ARQUIVOS** (📄 documentos / 🎵 áudio / 🎙 voice).\n"
-        "Envie quantos quiser. Quando terminar, mande /salvar."
+        "Envie quantos quiser. Quando terminar, mande /finalizar.",
+        parse_mode="Markdown"
     )
     return FILES
 
 async def novopack_collect_files(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    p_id = context.user_data.get("pack_id")
-    if not p_id:
-        await update.message.reply_text("Pack não encontrado em sessão. Use /cancelar e recomece com /novopack.")
-        return ConversationHandler.END
-
-    s = SessionLocal()
-    try:
-        p = s.query(Pack).filter(Pack.id == p_id).first()
-    finally:
-        s.close()
-    if not p:
-        await update.message.reply_text("Pack não encontrado no banco. Use /cancelar e recomece.")
-        return ConversationHandler.END
-
     msg = update.message
-    file_id = None
-    file_unique_id = None
-    file_type = None
-    role = "file"
-    file_name = None
-
+    files: List[Dict[str, Any]] = context.user_data.get("files", [])
     if msg.document:
-        file_id = msg.document.file_id
-        file_unique_id = getattr(msg.document, "file_unique_id", None)
-        file_type = "document"
-        file_name = getattr(msg.document, "file_name", None)
+        files.append({
+            "file_id": msg.document.file_id,
+            "file_type": "document",
+            "file_name": getattr(msg.document, "file_name", None),
+        })
+        await update.message.reply_text("✅ *Arquivo cadastrado*. Envie mais ou /finalizar.", parse_mode="Markdown")
     elif msg.audio:
-        file_id = msg.audio.file_id
-        file_unique_id = getattr(msg.audio, "file_unique_id", None)
-        file_type = "audio"
+        files.append({"file_id": msg.audio.file_id, "file_type": "audio"})
+        await update.message.reply_text("✅ *Áudio cadastrado*. Envie mais ou /finalizar.", parse_mode="Markdown")
     elif msg.voice:
-        file_id = msg.voice.file_id
-        file_unique_id = getattr(msg.voice, "file_unique_id", None)
-        file_type = "voice"
+        files.append({"file_id": msg.voice.file_id, "file_type": "voice"})
+        await update.message.reply_text("✅ *Voice cadastrado*. Envie mais ou /finalizar.", parse_mode="Markdown")
     else:
-        await update.message.reply_text("Isso não é arquivo. Envie documento/áudio/voice ou /salvar para concluir.")
-        return FILES
-
-    add_file_to_pack(p, file_id=file_id, file_unique_id=file_unique_id, file_type=file_type, role=role, file_name=file_name)
-    await update.message.reply_text("Arquivo adicionado. Envie mais ou /salvar para concluir.")
+        await update.message.reply_text("Envie *documento/áudio/voice*, ou /finalizar para revisar e salvar.", parse_mode="Markdown")
+    context.user_data["files"] = files
     return FILES
 
-async def novopack_save(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    p_id = context.user_data.get("pack_id")
-    if not p_id:
-        await update.message.reply_text("Nada para salvar. Use /novopack para iniciar.")
+async def novopack_finish_review(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # mostra o resumo e pede confirmação final
+    summary = _summary_from_session(context.user_data)
+    await update.message.reply_text(summary, parse_mode="Markdown")
+    return CONFIRM_SAVE
+
+async def novopack_confirm_save(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    answer = (update.message.text or "").strip().lower()
+    if answer not in ("sim", "não", "nao"):
+        await update.message.reply_text("Responda *sim* para salvar ou *não* para cancelar.", parse_mode="Markdown")
+        return CONFIRM_SAVE
+    if answer in ("não", "nao"):
+        context.user_data.clear()
+        await update.message.reply_text("Operação cancelada. Nada foi salvo.")
         return ConversationHandler.END
 
-    s = SessionLocal()
-    try:
-        p = s.query(Pack).filter(Pack.id == p_id).first()
-        if not p:
-            await update.message.reply_text("Pack não encontrado no banco.")
-            return ConversationHandler.END
-        previews = s.query(PackFile).filter(PackFile.pack_id == p.id, PackFile.role == "preview").count()
-        files    = s.query(PackFile).filter(PackFile.pack_id == p.id, PackFile.role == "file").count()
-    finally:
-        s.close()
+    # salvar no DB agora
+    title = context.user_data.get("title")
+    previews = context.user_data.get("previews", [])
+    files = context.user_data.get("files", [])
+
+    p = create_pack(title=title, header_message_id=None)
+    for it in previews:
+        add_file_to_pack(
+            p,
+            file_id=it["file_id"],
+            file_unique_id=None,
+            file_type=it["file_type"],
+            role="preview",
+            file_name=None,
+        )
+    for it in files:
+        add_file_to_pack(
+            p,
+            file_id=it["file_id"],
+            file_unique_id=None,
+            file_type=it["file_type"],
+            role="file",
+            file_name=it.get("file_name"),
+        )
 
     context.user_data.clear()
-    await update.message.reply_text(
-        f"✅ Pack salvo!\nTítulo: *{p.title}*\nPreviews: {previews}\nArquivos: {files}",
-        parse_mode="Markdown"
-    )
+    await update.message.reply_text(f"🎉 *{title}* cadastrado com sucesso!", parse_mode="Markdown")
     return ConversationHandler.END
 
 async def novopack_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -657,7 +671,36 @@ async def on_startup():
 
     logging.info("Bot iniciado.")
 
-    # Handlers para o grupo de armazenamento
+    # ===== Conversa /novopack (registrar ANTES dos handlers de storage) =====
+    conv_handler = ConversationHandler(
+        entry_points=[CommandHandler("novopack", novopack_start)],
+        states={
+            TITLE: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, novopack_title),
+            ],
+            CONFIRM_TITLE: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, novopack_confirm_title),
+            ],
+            PREVIEWS: [
+                CommandHandler("proximo", novopack_next_to_files),
+                MessageHandler(filters.PHOTO | filters.VIDEO | filters.ANIMATION, novopack_collect_previews),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, lambda u, c: u.message.reply_text("Agora envie PREVIEWS (foto/vídeo/animação) ou /proximo.")),
+            ],
+            FILES: [
+                CommandHandler("finalizar", novopack_finish_review),
+                MessageHandler(filters.Document.ALL | filters.AUDIO | filters.VOICE, novopack_collect_files),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, lambda u, c: u.message.reply_text("Agora envie ARQUIVOS (documento/áudio/voice) ou /finalizar.")),
+            ],
+            CONFIRM_SAVE: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, novopack_confirm_save),
+            ],
+        },
+        fallbacks=[CommandHandler("cancelar", novopack_cancel)],
+        allow_reentry=True,
+    )
+    application.add_handler(conv_handler)
+
+    # ===== Handlers do grupo de armazenamento (opcionais) =====
     application.add_handler(
         MessageHandler(
             filters.Chat(STORAGE_GROUP_ID) & filters.TEXT & ~filters.COMMAND,
@@ -677,28 +720,7 @@ async def on_startup():
     )
     application.add_handler(MessageHandler(media_filter, storage_media_handler))
 
-    # Conversa /novopack (admin)
-    conv_handler = ConversationHandler(
-        entry_points=[CommandHandler("novopack", novopack_start)],
-        states={
-            TITLE: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, novopack_title),
-            ],
-            PREVIEWS: [
-                CommandHandler("proximo", novopack_next_to_files),
-                MessageHandler(filters.PHOTO | filters.VIDEO | filters.ANIMATION, novopack_collect_previews),
-            ],
-            FILES: [
-                CommandHandler("salvar", novopack_save),
-                MessageHandler(filters.Document.ALL | filters.AUDIO | filters.VOICE, novopack_collect_files),
-            ],
-        },
-        fallbacks=[CommandHandler("cancelar", novopack_cancel)],
-        allow_reentry=True,
-    )
-    application.add_handler(conv_handler)
-
-    # Comandos
+    # ===== Comandos gerais =====
     application.add_handler(CommandHandler("start", start_cmd))
     application.add_handler(CommandHandler("getid", getid_cmd))
     application.add_handler(CommandHandler("simularvip", simularvip_cmd))
@@ -706,7 +728,7 @@ async def on_startup():
     application.add_handler(CommandHandler("pack_info", pack_info_cmd))
     application.add_handler(CommandHandler("remover_item", remover_item_cmd))
 
-    # Job diário às 09:00 America/Sao_Paulo
+    # ===== Job diário às 09:00 America/Sao_Paulo =====
     tz = pytz.timezone("America/Sao_Paulo")
     job_queue: JobQueue = application.job_queue
     job_queue.run_daily(enviar_pack_vip_job, time=dt.time(hour=9, minute=0, tzinfo=tz), name="daily_pack_vip")
