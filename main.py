@@ -27,7 +27,7 @@ from telegram.ext import (
 
 # SQLAlchemy
 from sqlalchemy import (
-    create_engine, Column, Integer, String, DateTime, Boolean, ForeignKey, Text, BigInteger, UniqueConstraint
+    create_engine, Column, Integer, String, DateTime, Boolean, ForeignKey, Text, BigInteger, UniqueConstraint, text
 )
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship
 from sqlalchemy.engine import make_url
@@ -170,16 +170,31 @@ class Payment(Base):
 class ScheduledMessage(Base):
     __tablename__ = "scheduled_messages"
     id = Column(Integer, primary_key=True)
-    hhmm = Column(String, nullable=False)      # "HH:MM" (24h)
+    hhmm = Column(String, nullable=False)      # "HH:MM"
     tz = Column(String, default="America/Sao_Paulo")
     text = Column(Text, nullable=False)
     enabled = Column(Boolean, default=True)
     created_at = Column(DateTime, default=now_utc)
+    __table_args__ = (UniqueConstraint('id', name='uq_scheduled_messages_id'),)
 
-    # (opcional) agrupar por horário, mas PERMITE várias no mesmo horário
-    __table_args__ = (
-        UniqueConstraint('id', name='uq_scheduled_messages_id'),
-    )
+def ensure_bigint_columns():
+    """Migra colunas user_id para BIGINT no Postgres (safe idempotente)."""
+    if not url.get_backend_name().startswith("postgresql"):
+        return
+    try:
+        with engine.begin() as conn:
+            try:
+                conn.execute(text("ALTER TABLE admins   ALTER COLUMN user_id TYPE BIGINT USING user_id::bigint"))
+                logging.info("Migrado: admins.user_id -> BIGINT")
+            except Exception as e:
+                logging.info("Admin user_id já ok ou tabela ausente: %s", e)
+            try:
+                conn.execute(text("ALTER TABLE payments ALTER COLUMN user_id TYPE BIGINT USING user_id::bigint"))
+                logging.info("Migrado: payments.user_id -> BIGINT")
+            except Exception as e:
+                logging.info("Payment user_id já ok ou tabela ausente: %s", e)
+    except Exception as e:
+        logging.warning("Falha em ensure_bigint_columns: %s", e)
 
 def init_db():
     Base.metadata.create_all(bind=engine)
@@ -193,10 +208,11 @@ def init_db():
                 s.commit()
         finally:
             s.close()
-    # Valor default do horário do pack, se não existir
     if not cfg_get("daily_pack_hhmm"):
         cfg_set("daily_pack_hhmm", "09:00")
 
+# migração antes de criar metadata
+ensure_bigint_columns()
 init_db()
 
 # =========================
@@ -300,21 +316,21 @@ def list_packs_db():
         s.close()
 
 # ---- Scheduled messages helpers ----
-def scheduled_all() -> List[ScheduledMessage]:
+def scheduled_all() -> List['ScheduledMessage']:
     s = SessionLocal()
     try:
         return s.query(ScheduledMessage).order_by(ScheduledMessage.hhmm.asc(), ScheduledMessage.id.asc()).all()
     finally:
         s.close()
 
-def scheduled_get(sid: int) -> Optional[ScheduledMessage]:
+def scheduled_get(sid: int) -> Optional['ScheduledMessage']:
     s = SessionLocal()
     try:
         return s.query(ScheduledMessage).filter(ScheduledMessage.id == sid).first()
     finally:
         s.close()
 
-def scheduled_create(hhmm: str, text: str, tz_name: str = "America/Sao_Paulo") -> ScheduledMessage:
+def scheduled_create(hhmm: str, text: str, tz_name: str = "America/Sao_Paulo") -> 'ScheduledMessage':
     s = SessionLocal()
     try:
         m = ScheduledMessage(hhmm=hhmm, text=text, tz=tz_name, enabled=True)
@@ -581,6 +597,7 @@ async def comandos_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "📋 <b>Comandos</b>",
         "• /start — mensagem inicial",
         "• /comandos — lista de comandos",
+        "• /listar_comandos — (alias)",
         "• /getid — mostra seus IDs",
         "",
         "💸 Pagamento (MetaMask):",
@@ -647,7 +664,6 @@ async def mudar_nome_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.effective_message.reply_text(f"Erro: {e}")
 
 async def mudar_username_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Não é possível pela API; orientar BotFather
     txt = (
         "⚠️ Alterar o <b>@username</b> do bot não é possível via API.\n"
         "Siga no <b>@BotFather</b>:\n"
@@ -1299,7 +1315,7 @@ async def rejeitar_tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # =========================
 # Mensagens agendadas (VIP)
 # =========================
-JOB_PREFIX_SM = "schmsg_"  # nome base dos jobs
+JOB_PREFIX_SM = "schmsg_"
 
 def _tz(tz_name: str):
     try:
@@ -1308,27 +1324,22 @@ def _tz(tz_name: str):
         return pytz.timezone("America/Sao_Paulo")
 
 async def _scheduled_message_job(context: ContextTypes.DEFAULT_TYPE):
-    """Executa envio da mensagem agendada; o job name contém o id."""
     job = context.job
     sid = int(job.name.replace(JOB_PREFIX_SM, "")) if job and job.name else None
     if sid is None:
         return
-
     m = scheduled_get(sid)
     if not m or not m.enabled:
         return
-
     try:
         await context.application.bot.send_message(chat_id=GROUP_VIP_ID, text=m.text)
     except Exception as e:
         logging.warning(f"Falha ao enviar scheduled_message id={sid}: {e}")
 
 def _register_all_scheduled_messages(job_queue: JobQueue):
-    # Remove jobs antigos desse prefixo
     for j in list(job_queue.jobs()):
         if j.name and j.name.startswith(JOB_PREFIX_SM):
             j.schedule_removal()
-
     msgs = scheduled_all()
     for m in msgs:
         try:
@@ -1355,14 +1366,11 @@ async def add_msg_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.effective_message.reply_text(f"Hora inválida: {e}")
         return
-    # O resto vira o texto
     texto = " ".join(context.args[1:]).strip()
     if not texto:
         await update.effective_message.reply_text("Texto vazio.")
         return
-
     m = scheduled_create(hhmm, texto)
-    # registra o job imediatamente
     tz = _tz(m.tz)
     h, k = parse_hhmm(m.hhmm)
     context.job_queue.run_daily(
@@ -1399,14 +1407,11 @@ async def edit_msg_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except:
         await update.effective_message.reply_text("ID inválido.")
         return
-
-    # Detecta se há horário e/ou texto
     hhmm = None
     new_text = None
     if len(context.args) >= 2:
         candidate = context.args[1]
         if ":" in candidate and len(candidate) <= 5:
-            # tem horário
             try:
                 parse_hhmm(candidate)
                 hhmm = candidate
@@ -1416,17 +1421,13 @@ async def edit_msg_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
         else:
             new_text = " ".join(context.args[1:]).strip()
-
     if hhmm is None and new_text is None:
         await update.effective_message.reply_text("Nada para alterar. Informe HH:MM e/ou novo texto.")
         return
-
     ok = scheduled_update(sid, hhmm, new_text)
     if not ok:
         await update.effective_message.reply_text("Mensagem não encontrada.")
         return
-
-    # resched job desse id
     for j in list(context.job_queue.jobs()):
         if j.name == f"{JOB_PREFIX_SM}{sid}":
             j.schedule_removal()
@@ -1457,7 +1458,6 @@ async def toggle_msg_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if new_state is None:
         await update.effective_message.reply_text("Mensagem não encontrada.")
         return
-    # ligar/desligar não exige re-criar job (job roda, mas checa enabled); opcional manter
     await update.effective_message.reply_text(f"✅ Mensagem #{sid} agora está {'ON' if new_state else 'OFF'}.")
 
 async def del_msg_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1476,7 +1476,6 @@ async def del_msg_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not ok:
         await update.effective_message.reply_text("Mensagem não encontrada.")
         return
-    # remove job
     for j in list(context.job_queue.jobs()):
         if j.name == f"{JOB_PREFIX_SM}{sid}":
             j.schedule_removal()
@@ -1614,6 +1613,7 @@ async def on_startup():
     # ===== Comandos gerais (group=1) =====
     application.add_handler(CommandHandler("start", start_cmd), group=1)
     application.add_handler(CommandHandler("comandos", comandos_cmd), group=1)
+    application.add_handler(CommandHandler("listar_comandos", comandos_cmd), group=1)
     application.add_handler(CommandHandler("getid", getid_cmd), group=1)
 
     # Packs & admin
@@ -1646,11 +1646,10 @@ async def on_startup():
     application.add_handler(CommandHandler("toggle_msg", toggle_msg_cmd), group=1)
     application.add_handler(CommandHandler("del_msg", del_msg_cmd), group=1)
 
-    # ===== Job diário de envio de pack (configurável/persistente) =====
+    # ===== Job diário de envio de pack (persistente) =====
     tz = pytz.timezone("America/Sao_Paulo")
-    # função para ler horário da config e agendar:
+
     async def _reschedule_daily_pack():
-        # remove job antigo
         for j in list(application.job_queue.jobs()):
             if j.name == "daily_pack_vip":
                 j.schedule_removal()
@@ -1659,7 +1658,6 @@ async def on_startup():
         application.job_queue.run_daily(enviar_pack_vip_job, time=dt.time(hour=h, minute=m, tzinfo=tz), name="daily_pack_vip")
         logging.info(f"Job diário de pack agendado para {hhmm} America/Sao_Paulo")
 
-    # comando admin para alterar horário e persistir
     async def set_pack_horario_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not (update.effective_user and is_admin(update.effective_user.id)):
             await update.effective_message.reply_text("Apenas admins.")
@@ -1678,10 +1676,7 @@ async def on_startup():
 
     application.add_handler(CommandHandler("set_pack_horario", set_pack_horario_cmd), group=1)
 
-    # agenda conforme config
     await _reschedule_daily_pack()
-
-    # registra todas as scheduled messages
     _register_all_scheduled_messages(application.job_queue)
 
     logging.info("Handlers e jobs registrados.")
