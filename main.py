@@ -499,7 +499,17 @@ async def on_startup():
     # text messages = new pack header
     application.add_handler(MessageHandler(filters.Chat(STORAGE_GROUP_ID) & filters.TEXT & ~filters.COMMAND, storage_text_handler))
     # media as replies to header = add to pack
-    media_filter = filters.Chat(STORAGE_GROUP_ID) & (filters.PHOTO | filters.DOCUMENT | filters.VIDEO | filters.AUDIO)
+    media_filter = (
+    filters.Chat(STORAGE_GROUP_ID)
+    & (
+        filters.PHOTO
+        | filters.VIDEO
+        | filters.AUDIO
+        | filters.Document.ALL
+        | filters.Animation.ALL
+    )
+)
+
     application.add_handler(MessageHandler(media_filter, storage_media_handler))
 
     # commands
