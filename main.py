@@ -296,7 +296,9 @@ async def on_startup():
 
     await bot.set_webhook(url=webhook_url)
 
-    logging.info(f"Bot iniciado com sucesso. Versão PTB: {bot.__version__}")
+    import telegram  # garantir import aqui
+
+    logging.info(f"Bot iniciado com sucesso. Versão PTB: {telegram.__version__}")
 
     # Start VIP expiration checker
     asyncio.create_task(verificar_vips())
@@ -312,6 +314,7 @@ async def on_startup():
 
     # Envio do asset diário às 12:45
     job_queue.run_daily(send_daily_asset_free, time=dt.time(hour=12, minute=45, tzinfo=timezone), name="daily_asset")
+
 
 # --- Rodar servidor ---
 if __name__ == "__main__":
