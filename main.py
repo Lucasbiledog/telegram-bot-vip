@@ -69,11 +69,29 @@ app = FastAPI()
 application = ApplicationBuilder().token(BOT_TOKEN).build()
 bot = None
 
+
 # =========================
-# DB setup
+# DB setup (Neon/Postgres ou SQLite de fallback)
 # =========================
+import os
+from sqlalchemy import create_engine, Column, Integer, String, DateTime, Boolean, ForeignKey
+from sqlalchemy.orm import declarative_base, sessionmaker, relationship
+from sqlalchemy.engine import make_url
+
 DB_URL = os.getenv("DATABASE_URL", "sqlite:///./bot_data.db")
-engine = create_engine(DB_URL, connect_args={"check_same_thread": False})
+url = make_url(DB_URL)
+
+# Se for SQLite local, mantém connect_args. Se for Postgres (Neon), usa pool com pre_ping.
+if url.get_backend_name().startswith("sqlite"):
+    engine = create_engine(DB_URL, connect_args={"check_same_thread": False})
+else:
+    engine = create_engine(
+        DB_URL,
+        pool_pre_ping=True,
+        pool_size=5,
+        max_overflow=5,
+    )
+
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 Base = declarative_base()
 
@@ -95,7 +113,7 @@ class PackFile(Base):
     file_unique_id = Column(String, nullable=True)
     file_type = Column(String, nullable=True)   # photo, video, animation, document, audio, voice
     role = Column(String, nullable=True)        # preview | file
-    file_name = Column(String, nullable=True)   # nome visível (caption p/ mídia, file_name p/ doc/áudio)
+    file_name = Column(String, nullable=True)   # caption (mídias) ou file_name (documentos/áudios)
     added_at = Column(DateTime, default=dt.datetime.utcnow)
 
     pack = relationship("Pack", back_populates="files")
