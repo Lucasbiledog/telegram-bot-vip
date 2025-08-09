@@ -169,9 +169,7 @@ def list_packs_db():
         s.close()
 
 # =========================
-# STORAGE GROUP handlers (opcional, continua funcionando)
-# Regras: título como mensagem de texto; todas as mídias/arquivos como reply ao título.
-# Para capturar "nomes" de fotos/vídeos/animações, use a CAPTION (legenda) da mídia.
+# STORAGE GROUP handlers
 # =========================
 async def storage_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message
@@ -281,7 +279,7 @@ async def storage_media_handler(update: Update, context: ContextTypes.DEFAULT_TY
     await msg.reply_text(f"Item adicionado ao pack <b>{esc(pack.title)}</b>.", parse_mode="HTML")
 
 # =========================
-# ENVIO DO PACK (JobQueue) — retorna status p/ debug
+# ENVIO DO PACK (JobQueue)
 # =========================
 async def enviar_pack_vip_job(context: ContextTypes.DEFAULT_TYPE) -> str:
     try:
@@ -314,7 +312,7 @@ async def enviar_pack_vip_job(context: ContextTypes.DEFAULT_TYPE) -> str:
             media = []
             for i, fid in enumerate(photo_ids):
                 if i == 0:
-                    media.append(InputMediaPhoto(media=fid, caption=pack.title))  # sem parse_mode p/ evitar erro
+                    media.append(InputMediaPhoto(media=fid, caption=pack.title))  # sem parse_mode
                 else:
                     media.append(InputMediaPhoto(media=fid))
             try:
@@ -343,7 +341,7 @@ async def enviar_pack_vip_job(context: ContextTypes.DEFAULT_TYPE) -> str:
             except Exception as e:
                 logging.warning(f"Erro enviando preview {f.id}: {e}")
 
-        # Arquivos (documento/áudio/voice) — captions sem parse_mode
+        # Arquivos (documento/áudio/voice)
         for f in docs:
             try:
                 cap = pack.title if not sent_first else None
@@ -448,7 +446,7 @@ async def pack_info_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     finally:
         s.close()
 
-# ===== EXCLUIR ITEM (arquivo específico) =====
+# ===== EXCLUIR ITEM =====
 async def excluir_item_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in ADMIN_USER_IDS:
         await update.message.reply_text("Apenas admins podem usar este comando.")
@@ -549,10 +547,70 @@ async def excluir_pack_confirm(update: Update, context: ContextTypes.DEFAULT_TYP
 
     return ConversationHandler.END
 
+# ===== SET PENDENTE / SET ENVIADO =====
+async def set_pendente_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id not in ADMIN_USER_IDS:
+        await update.message.reply_text("Apenas admins podem usar este comando.")
+        return
+
+    if not context.args:
+        await update.message.reply_text("Uso: /set_pendente <id_do_pack>")
+        return
+
+    try:
+        pid = int(context.args[0])
+    except:
+        await update.message.reply_text("ID inválido. Ex: /set_pendente 3")
+        return
+
+    s = SessionLocal()
+    try:
+        p = s.query(Pack).filter(Pack.id == pid).first()
+        if not p:
+            await update.message.reply_text("Pack não encontrado.")
+            return
+        p.sent = False
+        s.commit()
+        await update.message.reply_text(f"✅ Pack #{p.id} — “{esc(p.title)}” marcado como <b>PENDENTE</b>.", parse_mode="HTML")
+    except Exception as e:
+        s.rollback()
+        await update.message.reply_text(f"❌ Erro ao atualizar: {e}")
+    finally:
+        s.close()
+
+async def set_enviado_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id not in ADMIN_USER_IDS:
+        await update.message.reply_text("Apenas admins podem usar este comando.")
+        return
+
+    if not context.args:
+        await update.message.reply_text("Uso: /set_enviado <id_do_pack>")
+        return
+
+    try:
+        pid = int(context.args[0])
+    except:
+        await update.message.reply_text("ID inválido. Ex: /set_enviado 3")
+        return
+
+    s = SessionLocal()
+    try:
+        p = s.query(Pack).filter(Pack.id == pid).first()
+        if not p:
+            await update.message.reply_text("Pack não encontrado.")
+            return
+        p.sent = True
+        s.commit()
+        await update.message.reply_text(f"✅ Pack #{p.id} — “{esc(p.title)}” marcado como <b>ENVIADO</b>.", parse_mode="HTML")
+    except Exception as e:
+        s.rollback()
+        await update.message.reply_text(f"❌ Erro ao atualizar: {e}")
+    finally:
+        s.close()
+
 # =========================
-# NOVO: Conversa /novopack (passo a passo com confirmações)
+# NOVOPACK (privado)
 # =========================
-# Estados
 TITLE, CONFIRM_TITLE, PREVIEWS, FILES, CONFIRM_SAVE = range(5)
 
 def _require_admin(update: Update) -> bool:
@@ -594,7 +652,6 @@ def _summary_from_session(user_data: Dict[str, Any]) -> str:
     ]
     return "\n".join(text)
 
-# Dicas assíncronas quando usuário manda TEXTO onde esperávamos mídia
 async def hint_previews(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "Agora envie PREVIEWS (📷 foto / 🎞 vídeo / 🎞 animação) ou use /proximo para ir aos ARQUIVOS."
@@ -609,7 +666,6 @@ async def novopack_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not _require_admin(update):
         await update.message.reply_text("Apenas admins podem usar este comando.")
         return ConversationHandler.END
-    # garantir que é no privado
     if update.effective_chat.type != "private":
         await update.message.reply_text("Use este comando no privado comigo, por favor.")
         return ConversationHandler.END
@@ -923,11 +979,13 @@ async def on_startup():
     application.add_handler(CommandHandler("listar_packs", listar_packs_cmd), group=1)
     application.add_handler(CommandHandler("pack_info", pack_info_cmd), group=1)
     application.add_handler(CommandHandler("excluir_item", excluir_item_cmd), group=1)
+    application.add_handler(CommandHandler("set_pendente", set_pendente_cmd), group=1)
+    application.add_handler(CommandHandler("set_enviado", set_enviado_cmd), group=1)
 
     # ===== Job diário às 09:00 America/Sao_Paulo =====
     tz = pytz.timezone("America/Sao_Paulo")
     job_queue: JobQueue = application.job_queue
-    job_queue.run_daily(enviar_pack_vip_job, time=dt.time(hour=16, minute=29, tzinfo=tz), name="daily_pack_vip")
+    job_queue.run_daily(enviar_pack_vip_job, time=dt.time(hour=16, minute=50, tzinfo=tz), name="daily_pack_vip")
 
     logging.info("Handlers e jobs registrados.")
 
