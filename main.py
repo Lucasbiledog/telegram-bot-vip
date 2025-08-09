@@ -1,4 +1,5 @@
 import os
+import json
 import logging
 import asyncio
 import random
@@ -6,10 +7,11 @@ import datetime as dt
 import pytz
 
 from dotenv import load_dotenv
+from database import init_db, SessionLocal, Config
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import PlainTextResponse
 
-from telegram import Update, InputFile
+from telegram import Update, MessageEntity
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
@@ -19,81 +21,100 @@ from telegram.ext import (
 
 import stripe
 
-from database import init_db, SessionLocal, NotificationMessage, Config
-
 import uvicorn
 
 # --- Configurações iniciais ---
 load_dotenv()
 init_db()
 
-stripe.api_key = os.getenv("STRIPE_SECRET_KEY")
+# Stripe setup
+STRIPE_API_KEY = os.getenv("STRIPE_SECRET_KEY")
+STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET")
+stripe.api_key = STRIPE_API_KEY
 
 app = FastAPI()
 
+# Bot e grupos
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-GROUP_FREE_ID = int(os.getenv("GROUP_FREE_ID", "-1002791988432"))  # grupo Free (exemplo)
-VIP_GROUP_ID = int(os.getenv("VIP_GROUP_ID", "-1002791988432"))    # grupo VIP
-STORAGE_GROUP_ID = int(os.getenv("STORAGE_GROUP_ID", "-4806334341"))  # grupo onde estão os arquivos grandes
+GROUP_VIP_ID = int(os.getenv("GROUP_VIP_ID", "-1002791988432"))        # seu grupo VIP
+STORAGE_GROUP_ID = int(os.getenv("STORAGE_GROUP_ID", "-4806334341"))   # grupo onde os assets estão armazenados
 
-STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET")
+# Admins permitidos para comandos especiais
+ADMIN_USER_IDS = {7123614866}  # substitua pelos seus IDs admins
 
-# Defina seus admins aqui para liberar comandos restritos
-ADMIN_IDS = [int(os.getenv("ADMIN_ID", "7123614866"))]  # substitua 123456789 pelo seu ID
 
+# Inicializa bot e db globalmente
 application = ApplicationBuilder().token(BOT_TOKEN).build()
 bot = None
 db = SessionLocal()
 
-# --- Comandos básicos ---
+
+# ----- FUNÇÕES PARA ENVIO DE ASSETS VIP -----
+async def enviar_asset_vip():
+    try:
+        # Pega as últimas mensagens do grupo STORAGE_GROUP_ID
+        messages = await bot.get_chat_history(STORAGE_GROUP_ID, limit=100)
+        # Filtra mensagens que tenham comentário (caption) com texto, pois o asset fica aí
+        assets = []
+        for msg in messages:
+            if msg.caption and msg.caption.strip():
+                # Cada mensagem é um asset com legenda, captura id do arquivo (photo/document/video)
+                # Pega o file_id dependendo do tipo de mensagem
+                file_id = None
+                if msg.photo:
+                    # Pega a maior resolução
+                    file_id = msg.photo[-1].file_id
+                elif msg.document:
+                    file_id = msg.document.file_id
+                elif msg.video:
+                    file_id = msg.video.file_id
+                if file_id:
+                    assets.append((file_id, msg.caption))
+
+        if not assets:
+            logging.warning("Nenhum asset encontrado no grupo de armazenamento.")
+            return
+
+        chosen_file_id, caption = random.choice(assets)
+
+        # Envia pro grupo VIP conforme tipo (foto, doc, video)
+        # Para simplicidade, vamos usar send_photo se for foto, send_document para doc e send_video para video.
+        # Mas só temos file_id e caption aqui, então tentaremos em ordem:
+
+        # Como não temos tipo aqui, enviamos como document, que aceita qualquer file_id
+        await bot.send_document(chat_id=GROUP_VIP_ID, document=chosen_file_id, caption=caption)
+        logging.info(f"Asset VIP enviado: {caption}")
+    except Exception as e:
+        logging.error(f"Erro ao enviar asset VIP: {e}")
+
+
+# ----- COMANDOS -----
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "Fala! Esse bot te dá acesso a arquivos premium. Entre no grupo Free e veja como virar VIP. 🚀"
     )
 
-async def get_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
+
+async def getid(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
     chat_id = update.effective_chat.id
-    msg = f"🆔 Seu ID de usuário: `{user_id}`\n💬 ID do chat: `{chat_id}`"
-    await update.message.reply_text(msg, parse_mode="Markdown")
+    user_name = user.full_name
+    await update.message.reply_text(f"Seu nome: {user_name}\nSeu ID de usuário: {user.id}\nID deste chat: {chat_id}")
 
-async def criar_checkout_session(telegram_user_id: int):
-    try:
-        session = stripe.checkout.Session.create(
-            payment_method_types=["card"],
-            line_items=[{
-                "price_data": {
-                    "currency": "usd",
-                    "product_data": {"name": "Assinatura VIP Packs Unreal"},
-                    "unit_amount": 1000,
-                },
-                "quantity": 1,
-            }],
-            mode="payment",
-            success_url="https://seu-site.com/sucesso?session_id={CHECKOUT_SESSION_ID}",
-            cancel_url="https://seu-site.com/cancelado",
-            metadata={"telegram_user_id": str(telegram_user_id)},
-        )
-        return session.url
-    except Exception as e:
-        logging.error(f"Erro ao criar sessão de checkout: {e}")
-        return None
 
-async def pagar(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def simular_9h(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    session_url = await criar_checkout_session(user_id)
-    if session_url:
-        await update.message.reply_text(
-            f"Para pagar, acesse o link abaixo e finalize seu pagamento na página segura da Stripe:\n\n{session_url}"
-        )
-    else:
-        await update.message.reply_text("Erro ao gerar link de pagamento, tente novamente mais tarde.")
+    if user_id not in ADMIN_USER_IDS:
+        await update.message.reply_text("❌ Você não tem permissão para usar este comando.")
+        return
+    await enviar_asset_vip()
+    await update.message.reply_text("Asset VIP do dia enviado manualmente.")
 
-# --- Testar pagamento restrito a admins ---
-async def testar_pagamento(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+async def testepagamento(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    if user_id not in ADMIN_IDS:
+    if user_id not in ADMIN_USER_IDS:
         await update.message.reply_text("❌ Você não tem permissão para usar este comando.")
         return
 
@@ -111,14 +132,40 @@ async def testar_pagamento(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         await bot.send_message(chat_id=user_id, text="✅ Pagamento fictício confirmado! Você será adicionado ao grupo VIP.")
-        invite_link = await bot.export_chat_invite_link(chat_id=VIP_GROUP_ID)
+        invite_link = await bot.export_chat_invite_link(chat_id=GROUP_VIP_ID)
         await bot.send_message(chat_id=user_id, text=f"Aqui está o seu link para entrar no grupo VIP:\n{invite_link}")
     except Exception as e:
         await update.message.reply_text(f"Erro ao enviar link convite para grupo VIP: {e}")
         return
     await update.message.reply_text("Teste de pagamento simulado com sucesso!")
 
-# --- Verificar validade dos VIPs e remover expirados ---
+
+async def listar_vips(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id not in ADMIN_USER_IDS:
+        await update.message.reply_text("❌ Você não tem permissão para usar este comando.")
+        return
+
+    db_session = SessionLocal()
+    vip_configs = db_session.query(Config).filter(Config.key.like("vip_validade:%")).all()
+    if not vip_configs:
+        await update.message.reply_text("Nenhum VIP encontrado.")
+        db_session.close()
+        return
+
+    texto = "Lista de VIPs e validade:\n\n"
+    for cfg in vip_configs:
+        try:
+            validade = dt.datetime.fromisoformat(cfg.value)
+            user_id_vip = int(cfg.key.split(":", 1)[1])
+            texto += f"UserID: {user_id_vip} — Validade até: {validade.strftime('%Y-%m-%d %H:%M:%S UTC')}\n"
+        except:
+            continue
+    db_session.close()
+    await update.message.reply_text(texto)
+
+
+# ----- CHECK VIPS -----
 async def verificar_vips():
     while True:
         db_session = SessionLocal()
@@ -130,105 +177,17 @@ async def verificar_vips():
                 user_id = int(cfg.key.split(":", 1)[1])
                 if validade < now:
                     try:
-                        await bot.ban_chat_member(chat_id=VIP_GROUP_ID, user_id=user_id)
+                        await bot.ban_chat_member(chat_id=GROUP_VIP_ID, user_id=user_id)
                         logging.info(f"Usuário {user_id} removido do grupo VIP por validade expirada.")
-                        # Opcional: remover do banco
-                        db_session.delete(cfg)
-                        db_session.commit()
                     except Exception as e:
                         logging.warning(f"Erro ao remover usuário {user_id} do grupo VIP: {e}")
             except Exception as e:
                 logging.error(f"Erro processando validade VIP {cfg.key}: {e}")
         db_session.close()
-        await asyncio.sleep(3600)  # roda a cada 1 hora
+        await asyncio.sleep(3600)  # verifica a cada 1h
 
-# --- Listar VIPs ---
-async def listar_vips(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if user_id not in ADMIN_IDS:
-        await update.message.reply_text("❌ Você não tem permissão para usar este comando.")
-        return
 
-    db_session = SessionLocal()
-    vip_configs = db_session.query(Config).filter(Config.key.like("vip_validade:%")).all()
-    if not vip_configs:
-        await update.message.reply_text("Nenhum VIP ativo no momento.")
-        db_session.close()
-        return
-
-    texto = "Lista de VIPs ativos:\n\n"
-    now = dt.datetime.utcnow()
-    for cfg in vip_configs:
-        user_id_vip = int(cfg.key.split(":", 1)[1])
-        validade = dt.datetime.fromisoformat(cfg.value)
-        restante = validade - now
-        texto += f"- User ID: {user_id_vip} | Expira em: {restante.days} dias\n"
-
-    db_session.close()
-    await update.message.reply_text(texto)
-
-# --- Enviar asset do grupo de armazenamento (pela mensagem com arquivo) ---
-async def enviar_asset_grupo_armazenamento():
-    try:
-        # Busca as últimas 50 mensagens do grupo de armazenamento
-        messages = []
-        async for message in bot.get_chat(STORAGE_GROUP_ID).iter_history(limit=50):
-            messages.append(message)
-
-        if not messages:
-            logging.warning("Nenhuma mensagem com arquivo encontrada no grupo de armazenamento.")
-            return
-
-        # Filtra mensagens que possuem arquivo (documento, foto, vídeo ou áudio)
-        mensagens_com_arquivo = [m for m in messages if (m.document or m.photo or m.video or m.audio)]
-
-        if not mensagens_com_arquivo:
-            logging.warning("Nenhuma mensagem com arquivo encontrada no grupo de armazenamento.")
-            return
-
-        # Escolhe aleatoriamente um arquivo para enviar
-        mensagem_escolhida = random.choice(mensagens_com_arquivo)
-
-        chat_id = VIP_GROUP_ID
-        texto = f"🎁 Asset do dia: enviado diretamente do grupo de armazenamento."
-
-        # Envia conforme tipo de arquivo
-        if mensagem_escolhida.document:
-            await bot.send_document(chat_id=chat_id, document=mensagem_escolhida.document.file_id, caption=texto)
-        elif mensagem_escolhida.photo:
-            # photo é lista, pegar maior qualidade
-            await bot.send_photo(chat_id=chat_id, photo=mensagem_escolhida.photo[-1].file_id, caption=texto)
-        elif mensagem_escolhida.video:
-            await bot.send_video(chat_id=chat_id, video=mensagem_escolhida.video.file_id, caption=texto)
-        elif mensagem_escolhida.audio:
-            await bot.send_audio(chat_id=chat_id, audio=mensagem_escolhida.audio.file_id, caption=texto)
-        else:
-            # fallback
-            await bot.send_message(chat_id=chat_id, text=texto)
-
-        logging.info("Asset enviado com sucesso para o grupo VIP.")
-    except Exception as e:
-        logging.error(f"Erro ao enviar asset do grupo de armazenamento: {e}")
-
-# --- Enviar mensagem preparatória no grupo Free ---
-async def send_preparation_message(context: ContextTypes.DEFAULT_TYPE):
-    logging.info("Enviando mensagem de preparo para o grupo Free...")
-    await bot.send_message(chat_id=GROUP_FREE_ID, text="🎁 Um novo asset gratuito será enviado em instantes! Fique ligado!")
-
-# --- Enviar asset diário para o grupo Free ---
-async def send_daily_asset_free(context: ContextTypes.DEFAULT_TYPE):
-    logging.info("Enviando asset gratuito para o grupo Free...")
-
-    # Vamos buscar o mesmo asset que foi enviado no VIP para manter consistência
-    # Ou, se preferir, pode mudar para escolher do grupo de armazenamento ou outra lógica
-    await enviar_asset_grupo_armazenamento()
-
-# --- Enviar mensagem de bom dia diária ---
-async def send_good_morning(context: ContextTypes.DEFAULT_TYPE):
-    logging.info("Enviando mensagem de bom dia para o grupo Free...")
-    await bot.send_message(chat_id=GROUP_FREE_ID, text="☀️ Bom dia, galera! Que hoje seja um dia produtivo e cheio de aprendizado! 🚀")
-
-# --- Webhooks Stripe e Telegram ---
+# ----- WEBHOOKS -----
 
 @app.post("/stripe_webhook")
 async def stripe_webhook(request: Request):
@@ -249,7 +208,7 @@ async def stripe_webhook(request: Request):
         if telegram_user_id:
             try:
                 await bot.send_message(chat_id=int(telegram_user_id), text="✅ Pagamento confirmado! Você será adicionado ao grupo VIP.")
-                invite_link = await bot.export_chat_invite_link(chat_id=VIP_GROUP_ID)
+                invite_link = await bot.export_chat_invite_link(chat_id=GROUP_VIP_ID)
                 await bot.send_message(chat_id=int(telegram_user_id), text=f"Aqui está o seu link para entrar no grupo VIP:\n{invite_link}")
                 logging.info(f"Link enviado com sucesso para o usuário {telegram_user_id}")
             except Exception as e:
@@ -257,6 +216,7 @@ async def stripe_webhook(request: Request):
         else:
             logging.warning("Webhook Stripe recebido sem telegram_user_id no metadata.")
     return PlainTextResponse("", status_code=200)
+
 
 @app.post("/webhook")
 async def telegram_webhook(request: Request):
@@ -269,18 +229,19 @@ async def telegram_webhook(request: Request):
         raise HTTPException(status_code=400, detail="Invalid update")
     return PlainTextResponse("", status_code=200)
 
+
 @app.get("/")
 async def root():
     return {"status": "online", "message": "Bot Telegram + Stripe rodando 🎉"}
 
-# --- Registro dos comandos ---
-application.add_handler(CommandHandler("start", start))
-application.add_handler(CommandHandler("getid", get_id))
-application.add_handler(CommandHandler("pagar", pagar))
-application.add_handler(CommandHandler("testarpagamento", testar_pagamento))
-application.add_handler(CommandHandler("listarvips", listar_vips))
 
-# --- Startup do bot ---
+# ----- MENSAGEM BOM DIA -----
+async def enviar_bom_dia():
+    texto = "☀️ Bom dia, VIPs! Aproveitem o asset exclusivo de hoje! 🚀"
+    await bot.send_message(chat_id=GROUP_VIP_ID, text=texto)
+
+
+# ----- JOBS AGENDADOS -----
 @app.on_event("startup")
 async def on_startup():
     global bot
@@ -296,27 +257,31 @@ async def on_startup():
 
     await bot.set_webhook(url=webhook_url)
 
-    import telegram  # garantir import aqui
-
-    logging.info(f"Bot iniciado com sucesso. Versão PTB: {telegram.__version__}")
+    logging.info("Bot iniciado com sucesso.")
 
     # Start VIP expiration checker
     asyncio.create_task(verificar_vips())
 
+    # Timezone São Paulo
     timezone = pytz.timezone("America/Sao_Paulo")
+
     job_queue: JobQueue = application.job_queue
 
-    # Mensagem de bom dia todo dia às 8h
-    job_queue.run_daily(send_good_morning, time=dt.time(hour=8, minute=0, tzinfo=timezone), name="bom_dia")
+    # Enviar asset VIP todo dia 9h
+    job_queue.run_daily(enviar_asset_vip, time=dt.time(hour=9, minute=0, tzinfo=timezone), name="daily_vip_asset")
 
-    # Mensagem preparatória 1 min antes do envio asset no grupo free às 12:45
-    job_queue.run_daily(send_preparation_message, time=dt.time(hour=12, minute=44, tzinfo=timezone), name="prep_msg")
+    # Enviar bom dia todo dia 9h (antes do asset)
+    job_queue.run_daily(enviar_bom_dia, time=dt.time(hour=8, minute=59, tzinfo=timezone), name="daily_bom_dia")
 
-    # Envio do asset diário às 12:45
-    job_queue.run_daily(send_daily_asset_free, time=dt.time(hour=12, minute=45, tzinfo=timezone), name="daily_asset")
+    # Registrar handlers
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("getid", getid))
+    application.add_handler(CommandHandler("simular9h", simular_9h))
+    application.add_handler(CommandHandler("testepagamento", testepagamento))
+    application.add_handler(CommandHandler("listarvips", listar_vips))
 
 
-# --- Rodar servidor ---
+# Rodar servidor
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
-    uvicorn.run("main:app", host="0.0.0.0", port=int(os.environ.get("PORT", 8000)), reload=False)
+    uvicorn.run("main:app", host="0.0.0.0", port=int(os.getenv("PORT", 8000)), reload=False)
