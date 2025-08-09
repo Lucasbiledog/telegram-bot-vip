@@ -177,12 +177,41 @@ async def storage_text_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     msg = update.message
     if not msg or msg.chat.id != STORAGE_GROUP_ID:
         return
+
+    # Título deve ser mensagem "solta" (sem reply)
+    if msg.reply_to_message:
+        return
+
     title = (msg.text or "").strip()
     if not title:
         return
+
+    lower = title.lower()
+    banned = {"sim", "não", "nao", "/proximo", "/finalizar", "/cancelar"}
+    # Ignora comandos, confirmações e textos muito curtos
+    if lower in banned or title.startswith("/") or len(title) < 4:
+        return
+
+    # Deve parecer título: 2+ palavras ou prefixos comuns
+    words = title.split()
+    looks_like_title = (
+        len(words) >= 2
+        or lower.startswith("pack ")
+        or lower.startswith("#pack ")
+        or lower.startswith("pack:")
+        or lower.startswith("[pack]")
+    )
+    if not looks_like_title:
+        return
+
+    # (Opcional) permitir só admins criarem títulos no storage group
+    if update.effective_user and update.effective_user.id not in ADMIN_USER_IDS:
+        return
+
     if get_pack_by_header(msg.message_id):
         await msg.reply_text("Pack já registrado.")
         return
+
     p = create_pack(title=title, header_message_id=msg.message_id)
     await msg.reply_text(f"Pack registrado: <b>{esc(p.title)}</b> (id {p.id})", parse_mode="HTML")
 
@@ -237,7 +266,6 @@ async def storage_media_handler(update: Update, context: ContextTypes.DEFAULT_TY
         file_unique_id = getattr(msg.audio, "file_unique_id", None)
         file_type = "audio"
         role = "file"
-        # alguns áudios trazem file_name
         visible_name = getattr(msg.audio, "file_name", None) or (msg.caption or "").strip() or None
     elif msg.voice:
         file_id = msg.voice.file_id
@@ -315,7 +343,7 @@ async def enviar_pack_vip_job(context: ContextTypes.DEFAULT_TYPE) -> str:
             except Exception as e:
                 logging.warning(f"Erro enviando preview {f.id}: {e}")
 
-        # Arquivos (documento/áudio/voice) — aqui as captions não precisam de parse mode
+        # Arquivos (documento/áudio/voice) — captions sem parse_mode
         for f in docs:
             try:
                 cap = pack.title if not sent_first else None
@@ -354,7 +382,7 @@ async def enviar_pack_vip_job(context: ContextTypes.DEFAULT_TYPE) -> str:
 async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "Fala! Eu gerencio packs VIP.\n"
-        "• Use /novopack para cadastrar via conversa (título, previews e arquivos).\n"
+        "• Use /novopack no privado para cadastrar (título, previews e arquivos).\n"
         "• Ou publique no grupo de assets: título (texto) e depois as mídias como reply.",
     )
 
@@ -535,7 +563,6 @@ def _summary_from_session(user_data: Dict[str, Any]) -> str:
     previews = user_data.get("previews", [])
     files = user_data.get("files", [])
 
-    # nomes “amigáveis” a partir do que foi capturado
     preview_names = []
     p_index = 1
     for it in previews:
@@ -582,6 +609,11 @@ async def novopack_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not _require_admin(update):
         await update.message.reply_text("Apenas admins podem usar este comando.")
         return ConversationHandler.END
+    # garantir que é no privado
+    if update.effective_chat.type != "private":
+        await update.message.reply_text("Use este comando no privado comigo, por favor.")
+        return ConversationHandler.END
+
     context.user_data.clear()
     await update.message.reply_text(
         "🧩 Vamos criar um novo pack!\n\n"
@@ -626,7 +658,6 @@ async def novopack_collect_previews(update: Update, context: ContextTypes.DEFAUL
         previews.append({
             "file_id": biggest.file_id,
             "file_type": "photo",
-            # usa caption como "nome" visível quando houver (ex.: "pack soldados part 1")
             "file_name": (msg.caption or "").strip() or None,
         })
         await update.message.reply_text("✅ <b>Foto cadastrada</b>. Envie mais ou /proximo.", parse_mode="HTML")
@@ -822,9 +853,9 @@ async def on_startup():
     # ===== Error handler =====
     application.add_error_handler(error_handler)
 
-    # ===== Conversa /novopack – prioridade maior (group=0) =====
+    # ===== Conversa /novopack – SOMENTE NO PRIVADO (group=0) =====
     conv_handler = ConversationHandler(
-        entry_points=[CommandHandler("novopack", novopack_start)],
+        entry_points=[CommandHandler("novopack", novopack_start, filters=filters.ChatType.PRIVATE)],
         states={
             TITLE: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, novopack_title),
