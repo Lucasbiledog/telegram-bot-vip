@@ -63,7 +63,7 @@ STORAGE_GROUP_ID = int(os.getenv("STORAGE_GROUP_ID", "-4806334341"))
 # VIP envio (grupo público VIP)
 GROUP_VIP_ID     = int(os.getenv("GROUP_VIP_ID", "-1002791988432"))
 
-# FREE storage (grupo privado de cadastro) — pedido do usuário
+# FREE storage (grupo privado de cadastro)
 STORAGE_GROUP_FREE_ID = int(os.getenv("STORAGE_GROUP_FREE_ID", "-1002509364079"))
 # FREE envio (grupo público FREE) — se for o mesmo do storage, pode deixar igual
 GROUP_FREE_ID         = int(os.getenv("GROUP_FREE_ID", "-1002509364079"))
@@ -143,9 +143,8 @@ class Pack(Base):
     __tablename__ = "packs"
     id = Column(Integer, primary_key=True, index=True)
     title = Column(String, nullable=False)
-    # OBS: Para evitar colisão entre chats diferentes, usaremos um "header key"
-    # (ver função header_key). header_message_id permanece unique, e o "truque"
-    # é usar número negativo para FREE, positivo para VIP (não colide).
+    # OBS: Para evitar colisão entre chats diferentes, usamos um "header key"
+    # VIP storage usa +message_id; FREE storage usa -message_id
     header_message_id = Column(Integer, nullable=True, unique=True)
     created_at = Column(DateTime, default=now_utc)
     sent = Column(Boolean, default=False)
@@ -443,7 +442,6 @@ def header_key(chat_id: int, message_id: int) -> int:
         return int(message_id)
     if chat_id == STORAGE_GROUP_FREE_ID:
         return int(-message_id)
-    # fallback: positivo
     return int(message_id)
 
 async def storage_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -680,20 +678,21 @@ async def comandos_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "",
         "💸 Pagamento (MetaMask):",
         "• /pagar — instruções",
-        "• /tx <hash> — registrar a transação",
+        "• /tx &lt;hash&gt; — registrar a transação",
         "",
         "🧩 Packs (privado):",
-        "• /novopackvip — cadastrar pack VIP (título, previews e arquivos)",
-        "• /novopackfree — cadastrar pack FREE (título, previews e arquivos)",
+        "• /novopack — cadastrar pack (pergunta VIP/FREE, depois título, previews e arquivos)",
+        "• /novopackvip — atalho direto para VIP",
+        "• /novopackfree — atalho direto para FREE",
         "",
         "🕒 Mensagens agendadas:",
-        "• /add_msg_vip HH:MM <texto>",
-        "• /add_msg_free HH:MM <texto>",
+        "• /add_msg_vip HH:MM &lt;texto&gt;",
+        "• /add_msg_free HH:MM &lt;texto&gt;",
         "• /list_msgs_vip | /list_msgs_free",
-        "• /edit_msg_vip <id> [HH:MM] [novo texto]",
-        "• /edit_msg_free <id> [HH:MM] [novo texto]",
-        "• /toggle_msg_vip <id> | /toggle_msg_free <id>",
-        "• /del_msg_vip <id> | /del_msg_free <id>",
+        "• /edit_msg_vip &lt;id&gt; [HH:MM] [novo texto]",
+        "• /edit_msg_free &lt;id&gt; [HH:MM] [novo texto]",
+        "• /toggle_msg_vip &lt;id&gt; | /toggle_msg_free &lt;id&gt;",
+        "• /del_msg_vip &lt;id&gt; | /del_msg_free &lt;id&gt;",
     ]
     adm = [
         "",
@@ -702,22 +701,22 @@ async def comandos_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• /simularfree — envia o próximo pack FREE pendente agora",
         "• /listar_packsvip — lista packs VIP",
         "• /listar_packsfree — lista packs FREE",
-        "• /pack_info <id> — detalhes do pack",
-        "• /excluir_item <id_item> — remove item do pack",
-        "• /excluir_pack [<id>] — remove pack (com confirmação)",
-        "• /set_pendentevip <id> — marca pack VIP como pendente",
-        "• /set_pendentefree <id> — marca pack FREE como pendente",
-        "• /set_enviadovip <id> — marca pack VIP como enviado",
-        "• /set_enviadofree <id> — marca pack FREE como enviado",
-        "• /limpar_chat <N> — apaga últimas N mensagens (melhor esforço)",
-        "• /mudar_nome <novo nome> — muda o nome exibido do bot",
+        "• /pack_info &lt;id&gt; — detalhes do pack",
+        "• /excluir_item &lt;id_item&gt; — remove item do pack",
+        "• /excluir_pack [&lt;id&gt;] — remove pack (com confirmação)",
+        "• /set_pendentevip &lt;id&gt; — marca pack VIP como pendente",
+        "• /set_pendentefree &lt;id&gt; — marca pack FREE como pendente",
+        "• /set_enviadovip &lt;id&gt; — marca pack VIP como enviado",
+        "• /set_enviadofree &lt;id&gt; — marca pack FREE como enviado",
+        "• /limpar_chat &lt;N&gt; — apaga últimas N mensagens (melhor esforço)",
+        "• /mudar_nome &lt;novo nome&gt; — muda o nome exibido do bot",
         "• /mudar_username — instruções para mudar o @username (BotFather)",
-        "• /add_admin <user_id> — adiciona admin",
-        "• /rem_admin <user_id> — remove admin",
+        "• /add_admin &lt;user_id&gt; — adiciona admin",
+        "• /rem_admin &lt;user_id&gt; — remove admin",
         "• /listar_admins — lista admins",
         "• /listar_pendentes — pagamentos pendentes",
-        "• /aprovar_tx <user_id> — aprova e envia convite VIP",
-        "• /rejeitar_tx <user_id> [motivo] — rejeita pagamento",
+        "• /aprovar_tx &lt;user_id&gt; — aprova e envia convite VIP",
+        "• /rejeitar_tx &lt;user_id&gt; [motivo] — rejeita pagamento",
         "• /set_pack_horario_vip HH:MM — define o horário diário dos packs VIP",
         "• /set_pack_horario_free HH:MM — define o horário diário dos packs FREE",
     ]
@@ -1075,9 +1074,9 @@ async def set_enviadovip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await _set_sent_by_tier(update, context, tier="vip", sent=True)
 
 # =========================
-# NOVOPACK (privado) — VIP e FREE
+# NOVOPACK (privado) — fluxo unificado
 # =========================
-TITLE, CONFIRM_TITLE, PREVIEWS, FILES, CONFIRM_SAVE = range(5)
+CHOOSE_TIER, TITLE, CONFIRM_TITLE, PREVIEWS, FILES, CONFIRM_SAVE = range(6)
 
 def _require_admin(update: Update) -> bool:
     return update.effective_user and is_admin(update.effective_user.id)
@@ -1129,6 +1128,42 @@ async def hint_files(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Agora envie ARQUIVOS (📄 documento / 🎵 áudio / 🎙 voice) ou use /finalizar para revisar e salvar."
     )
 
+async def novopack_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Entrada única: /novopack → pergunta VIP ou FREE, depois fluxo normal."""
+    if not _require_admin(update):
+        await update.effective_message.reply_text("Apenas admins podem usar este comando.")
+        return ConversationHandler.END
+    if update.effective_chat.type != "private":
+        await update.effective_message.reply_text("Use este comando no privado comigo, por favor.")
+        return ConversationHandler.END
+
+    context.user_data.clear()
+    await update.effective_message.reply_text(
+        "Quer cadastrar em qual tier? Responda <b>vip</b> ou <b>free</b>.",
+        parse_mode="HTML"
+    )
+    return CHOOSE_TIER
+
+async def novopack_choose_tier(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    answer = (update.effective_message.text or "").strip().lower()
+    if answer in ("vip", "v"):
+        context.user_data["tier"] = "vip"
+    elif answer in ("free", "f", "gratis", "grátis"):
+        context.user_data["tier"] = "free"
+    else:
+        await update.effective_message.reply_text(
+            "Não entendi. Responda <b>vip</b> ou <b>free</b> 🙂",
+            parse_mode="HTML"
+        )
+        return CHOOSE_TIER
+
+    await update.effective_message.reply_text(
+        f"🧩 Novo pack <b>{context.user_data['tier'].upper()}</b> — envie o <b>título</b>.",
+        parse_mode="HTML"
+    )
+    return TITLE
+
+# atalhos opcionais continuam funcionando
 async def novopackvip_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not _require_admin(update):
         await update.effective_message.reply_text("Apenas admins podem usar este comando.")
@@ -1218,7 +1253,7 @@ async def novopack_collect_previews(update: Update, context: ContextTypes.DEFAUL
 
 async def novopack_next_to_files(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.user_data.get("title"):
-        await update.effective_message.reply_text("Título não encontrado. Use /cancelar e recomece com /novopackvip ou /novopackfree.")
+        await update.effective_message.reply_text("Título não encontrado. Use /cancelar e recomece com /novopack.")
         return ConversationHandler.END
     await update.effective_message.reply_text(
         "3) Agora envie os <b>ARQUIVOS</b> (📄 documentos / 🎵 áudio / 🎙 voice).\n"
@@ -1464,7 +1499,7 @@ async def _scheduled_message_job(context: ContextTypes.DEFAULT_TYPE):
         logging.warning(f"Falha ao enviar scheduled_message id={sid}: {e}")
 
 def _register_all_scheduled_messages(job_queue: JobQueue):
-    # limpa todos os jobs antigos
+    # limpa todos os jobs antigos (mensagens + packs)
     for j in list(job_queue.jobs()):
         if j.name and (j.name.startswith(JOB_PREFIX_SM) or j.name in {"daily_pack_vip", "daily_pack_free"}):
             j.schedule_removal()
@@ -1751,7 +1786,7 @@ async def on_startup():
     # ===== Error handler =====
     application.add_error_handler(error_handler)
 
-    # ===== Conversas novopack – VIP e FREE (SOMENTE NO PRIVADO; group=0) =====
+    # ===== Conversas do NOVOPACK (privado; group=0) =====
     states_map = {
         TITLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, novopack_title)],
         CONFIRM_TITLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, novopack_confirm_title)],
@@ -1768,6 +1803,19 @@ async def on_startup():
         CONFIRM_SAVE: [MessageHandler(filters.TEXT & ~filters.COMMAND, novopack_confirm_save)],
     }
 
+    # Handler principal: /novopack pergunta o tier
+    conv_main = ConversationHandler(
+        entry_points=[CommandHandler("novopack", novopack_start, filters=filters.ChatType.PRIVATE)],
+        states={
+            CHOOSE_TIER: [MessageHandler(filters.TEXT & ~filters.COMMAND, novopack_choose_tier)],
+            **states_map,
+        },
+        fallbacks=[CommandHandler("cancelar", novopack_cancel)],
+        allow_reentry=True,
+    )
+    application.add_handler(conv_main, group=0)
+
+    # Atalhos (opcionais) mantidos
     conv_vip = ConversationHandler(
         entry_points=[CommandHandler("novopackvip", novopackvip_start, filters=filters.ChatType.PRIVATE)],
         states=states_map,
