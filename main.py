@@ -1,15 +1,16 @@
 # main.py — Bot Telegram (VIP/FREE) + Pagamento via MetaMask (multi-rede EVM)
-# - Sem .env: BOT_TOKEN vem das Env Vars do Render
+# - BOT_TOKEN vem das Env Vars do Render (sem .env)
 # - Packs VIP e FREE (armazenamento e envio)
 # - Mensagens agendadas para VIP e FREE
 # - Heartbeat anti-idle (log + ping Telegram) a cada 2 min
+# - Quando enviar o pack VIP do dia, manda TODAS as FOTOS de preview para o FREE (em lotes de até 10)
 
 import os
 import json
 import logging
 import asyncio
 import datetime as dt
-from typing import Optional, List, Dict, Any, Tuple
+from typing import Optional, List, Dict, Any, Tuple, Iterable
 import html
 from decimal import Decimal
 
@@ -32,7 +33,6 @@ from telegram.ext import (
 from sqlalchemy import (
     create_engine, Column, Integer, String, DateTime, Boolean, ForeignKey, Text, BigInteger, UniqueConstraint, text
 )
-    # pyright: reportMissingImports=false
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship
 from sqlalchemy.engine import make_url
 
@@ -61,23 +61,22 @@ def to_dec(amount_wei: int, decimals: int) -> Decimal:
     q = Decimal(10) ** decimals
     return Decimal(int(amount_wei)) / q
 
+def chunked(seq: List[Any], size: int) -> Iterable[List[Any]]:
+    for i in range(0, len(seq), size):
+        yield seq[i:i+size]
+
 # =========================
 # CONFIG FIXA (sem .env)
 # =========================
 CONFIG: Dict[str, Any] = {
-    # Se sua URL do Render for outra, troque aqui (ou defina WEBHOOK_URL no Render)
+    # Ajuste se sua URL do Render for outra (ou defina WEBHOOK_URL no Render)
     "WEBHOOK_URL": "https://telegram-bot-vip-hfn7.onrender.com/webhook",
 
     # Grupos
-    # Grupo de armazenamento VIP (títulos/itens dos packs VIP):
-    "STORAGE_GROUP_ID": -4806334341,
-    # Grupo VIP (destino dos packs VIP):
-    "GROUP_VIP_ID": -1002791988432,
-
-    # Grupo de armazenamento FREE (títulos/itens dos packs FREE):
-    "STORAGE_GROUP_FREE_ID": -1002509364079,
-    # Grupo FREE (destino dos packs FREE):
-    "GROUP_FREE_ID": -1002509364079,
+    "STORAGE_GROUP_ID": -4806334341,          # armazenamento VIP
+    "GROUP_VIP_ID": -1002791988432,           # destino VIP (confirmado)
+    "STORAGE_GROUP_FREE_ID": -1002509364079,  # armazenamento FREE
+    "GROUP_FREE_ID": -1002509364079,          # destino FREE
 
     # Banco (sqlite local por padrão)
     "DATABASE_URL": "sqlite:///./bot_data.db",
@@ -88,7 +87,7 @@ CONFIG: Dict[str, Any] = {
     # Confirmações padrão
     "REQUIRED_CONFIRMATIONS_DEFAULT": 3,
 
-    # Redes EVM suportadas (RPCs públicos para rodar sem chave)
+    # Redes EVM suportadas
     "SUPPORTED_CHAINS": {
         "polygon": {
             "rpc": "https://polygon-rpc.com",
@@ -612,7 +611,7 @@ def scheduled_delete(sid: int) -> bool:
 # STORAGE GROUP handlers
 # =========================
 def header_key(chat_id: int, message_id: int) -> int:
-    # diferenciando headers de VIP e FREE
+    # Diferencia headers de VIP e FREE
     if chat_id == STORAGE_GROUP_ID:
         return int(message_id)          # VIP
     if chat_id == STORAGE_GROUP_FREE_ID:
@@ -726,6 +725,34 @@ async def storage_media_handler(update: Update, context: ContextTypes.DEFAULT_TY
 # =========================
 # ENVIO DO PACK
 # =========================
+async def _send_all_preview_photos_to_free(context: ContextTypes.DEFAULT_TYPE, p: 'Pack', previews: List['PackFile']):
+    """Envia TODAS as fotos de preview do pack VIP para o grupo FREE, em lotes de até 10."""
+    photo_ids = [f.file_id for f in previews if f.file_type == "photo"]
+    if not photo_ids:
+        return
+    try:
+        first_caption_sent = False
+        for batch in chunked(photo_ids, 10):
+            media = []
+            for i, fid in enumerate(batch):
+                if not first_caption_sent and i == 0:
+                    media.append(InputMediaPhoto(media=fid, caption=f"Prévia VIP: {p.title}"))
+                    first_caption_sent = True
+                else:
+                    media.append(InputMediaPhoto(media=fid))
+            try:
+                await context.application.bot.send_media_group(chat_id=GROUP_FREE_ID, media=media)
+            except Exception as e:
+                logging.warning(f"Falha send_media_group FREE: {e}. Enviando individual.")
+                for i, fid in enumerate(batch):
+                    cap = f"Prévia VIP: {p.title}" if not first_caption_sent and i == 0 else None
+                    await context.application.bot.send_photo(chat_id=GROUP_FREE_ID, photo=fid, caption=cap)
+                    if cap:
+                        first_caption_sent = True
+        logging.info(f"Previews (fotos) do pack VIP '{p.title}' enviados para FREE.")
+    except Exception as e:
+        logging.exception(f"Erro ao enviar previews para FREE: {e}")
+
 async def enviar_pack_job(context: ContextTypes.DEFAULT_TYPE, tier: str, target_chat_id: int) -> str:
     try:
         pack = get_next_unsent_pack(tier=tier)
@@ -751,6 +778,7 @@ async def enviar_pack_job(context: ContextTypes.DEFAULT_TYPE, tier: str, target_
         sent_first = False
         sent_counts = {"photos": 0, "videos": 0, "animations": 0, "docs": 0, "audios": 0, "voices": 0}
 
+        # --- PREVIEWS (fotos) para o TIER alvo ---
         photo_ids = [f.file_id for f in previews if f.file_type == "photo"]
         if photo_ids:
             media = []
@@ -771,6 +799,7 @@ async def enviar_pack_job(context: ContextTypes.DEFAULT_TYPE, tier: str, target_
                     sent_first = True
                     sent_counts["photos"] += 1
 
+        # --- PREVIEWS (vídeo/animation) ---
         for f in [f for f in previews if f.file_type in ("video", "animation")]:
             cap = p.title if not sent_first else None
             try:
@@ -784,6 +813,7 @@ async def enviar_pack_job(context: ContextTypes.DEFAULT_TYPE, tier: str, target_
             except Exception as e:
                 logging.warning(f"Erro enviando preview {f.id}: {e}")
 
+        # --- ARQUIVOS ---
         for f in docs:
             try:
                 cap = p.title if not sent_first else None
@@ -802,6 +832,10 @@ async def enviar_pack_job(context: ContextTypes.DEFAULT_TYPE, tier: str, target_
                 sent_first = True
             except Exception as e:
                 logging.warning(f"Erro enviando arquivo {f.file_name or f.id}: {e}")
+
+        # --- EXTRA: Se o envio foi VIP, replica TODAS as FOTOS de preview no FREE ---
+        if tier == "vip":
+            await _send_all_preview_photos_to_free(context, p, previews)
 
         mark_pack_sent(p.id)
         logging.info(f"Pack enviado: {p.title} ({tier})")
@@ -827,7 +861,7 @@ async def enviar_pack_free_job(context: ContextTypes.DEFAULT_TYPE) -> str:
 async def _heartbeat_job(context: ContextTypes.DEFAULT_TYPE):
     try:
         logging.info("❤️ heartbeat: bot ativo")
-        info = await context.application.bot.get_webhook_info()  # ping leve à API do Telegram
+        info = await context.application.bot.get_webhook_info()
         logging.debug(f"Webhook set: {bool(info.url)}")
     except Exception as e:
         logging.warning(f"heartbeat erro: {e}")
@@ -1731,7 +1765,7 @@ async def _list_msgs_tier(update: Update, context: ContextTypes.DEFAULT_TYPE, ti
         return
     msgs = scheduled_all(tier=tier)
     if not msgs:
-        await update.effective_message.reply_text(f"Não há mensagens agendadas ({tier.upper()}).")
+        await update.effective_message.reply_text(f"Não há mensagens agendadas ({tier.UPPER()}).")
         return
     lines = [f"🕒 <b>Mensagens agendadas — {tier.upper()}</b>"]
     for m in msgs:
