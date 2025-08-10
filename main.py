@@ -9,11 +9,9 @@ import html
 from decimal import Decimal
 
 import pytz
-from dotenv import load_dotenv
 
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import PlainTextResponse, JSONResponse
-
 import uvicorn
 
 from telegram import Update, InputMediaPhoto
@@ -61,31 +59,98 @@ def to_dec(amount_wei: int, decimals: int) -> Decimal:
     return Decimal(int(amount_wei)) / q
 
 # =========================
-# ENV / CONFIG
+# CONFIG FIXA (sem .env)
 # =========================
-load_dotenv()
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-WEBHOOK_URL = os.getenv("WEBHOOK_URL")
+CONFIG: Dict[str, Any] = {
+    # --- Telegram ---
+    "BOT_TOKEN": "COLE_SEU_BOT_TOKEN_AQUI",
+    # Exemplo: "https://seuapp.onrender.com/webhook"
+    "WEBHOOK_URL": "COLE_SUA_URL_PUBLICA_AQUI/webhook",
 
-# VIP storage (grupo privado de cadastro)
-STORAGE_GROUP_ID = int(os.getenv("STORAGE_GROUP_ID", "-4806334341"))
-# VIP envio (grupo público VIP)
-GROUP_VIP_ID     = int(os.getenv("GROUP_VIP_ID", "-1002791988432"))
+    # IDs de grupos
+    # Grupo de armazenamento VIP (onde você cadastra título/itens do pack VIP)
+    "STORAGE_GROUP_ID": -4806334341,
+    # Grupo VIP (onde será enviado o pack VIP)
+    "GROUP_VIP_ID": -1002791988432,
 
-# FREE storage (grupo privado de cadastro)
-STORAGE_GROUP_FREE_ID = int(os.getenv("STORAGE_GROUP_FREE_ID", "-1002509364079"))
-# FREE envio (grupo público FREE) — se for o mesmo do storage, pode deixar igual
-GROUP_FREE_ID         = int(os.getenv("GROUP_FREE_ID", "-1002509364079"))
+    # Grupo de armazenamento FREE (onde você cadastra packs free)
+    "STORAGE_GROUP_FREE_ID": -1002509364079,
+    # Grupo FREE (onde será enviado o pack FREE)
+    "GROUP_FREE_ID": -1002509364079,
 
-PORT = int(os.getenv("PORT", 8000))
+    # Database (pode usar sqlite local ou Postgres)
+    "DATABASE_URL": "sqlite:///./bot_data.db",
 
-# Pagamento cripto (multi-rede)
-WALLET_ADDRESS = os.getenv("WALLET_ADDRESS", "").strip()  # seu endereço (mesmo em todas as redes EVM)
-SUPPORTED_CHAINS_JSON = os.getenv("SUPPORTED_CHAINS_JSON", "{}")
-REQUIRED_CONFIRMATIONS_DEFAULT = int(os.getenv("REQUIRED_CONFIRMATIONS", "3"))
+    # Carteira EVM que vai receber (sua carteira)
+    "WALLET_ADDRESS": "0x40dDBD27F878d07808339F9965f013F1CBc2F812",
 
-if not BOT_TOKEN:
-    raise RuntimeError("BOT_TOKEN não definido no .env")
+    # Confirmações padrão (se a rede não especificar)
+    "REQUIRED_CONFIRMATIONS_DEFAULT": 3,
+
+    # Redes EVM suportadas (adicione/edite à vontade)
+    # LEMBRE de colocar sua chave de RPC onde indicado
+    "SUPPORTED_CHAINS": {
+        "polygon": {
+            "rpc": "https://polygon-mainnet.g.alchemy.com/v2/SUA_KEY_ALCHEMY",
+            "symbol": "MATIC",
+            "min_native": "5",         # mínimo em MATIC
+            "confirmations": 3,
+            "native_decimals": 18,
+            "tokens": [
+                {"symbol": "USDT", "address": "0xc2132D05D31c914a87C6611C10748AEb04B58e8F", "decimals": 6, "min": "10"},
+                {"symbol": "USDC", "address": "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174", "decimals": 6, "min": "10"},
+            ],
+        },
+        "ethereum": {
+            "rpc": "https://eth-mainnet.g.alchemy.com/v2/SUA_KEY_ALCHEMY",
+            "symbol": "ETH",
+            "min_native": "0.01",
+            "confirmations": 3,
+            "native_decimals": 18,
+            "tokens": [
+                {"symbol": "USDT", "address": "0xdAC17F958D2ee523a2206206994597C13D831ec7", "decimals": 6, "min": "10"},
+                {"symbol": "USDC", "address": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", "decimals": 6, "min": "10"},
+            ],
+        },
+        "bsc": {
+            "rpc": "https://bsc-dataseed.binance.org",
+            "symbol": "BNB",
+            "min_native": "0.05",
+            "confirmations": 3,
+            "native_decimals": 18,
+            "tokens": [
+                {"symbol": "USDT", "address": "0x55d398326f99059fF775485246999027B3197955", "decimals": 18, "min": "10"},
+                {"symbol": "USDC", "address": "0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d", "decimals": 18, "min": "10"},
+            ],
+        },
+    },
+}
+
+# Porta do Render: usa env da plataforma se existir; senão 10000
+PORT = int(os.environ.get("PORT", 10000))
+
+# =========================
+# Lê config
+# =========================
+BOT_TOKEN = CONFIG["BOT_TOKEN"]
+WEBHOOK_URL = CONFIG["WEBHOOK_URL"]
+
+STORAGE_GROUP_ID = int(CONFIG["STORAGE_GROUP_ID"])
+GROUP_VIP_ID     = int(CONFIG["GROUP_VIP_ID"])
+STORAGE_GROUP_FREE_ID = int(CONFIG["STORAGE_GROUP_FREE_ID"])
+GROUP_FREE_ID         = int(CONFIG["GROUP_FREE_ID"])
+
+DB_URL = CONFIG["DATABASE_URL"]
+WALLET_ADDRESS = CONFIG["WALLET_ADDRESS"].strip()
+REQUIRED_CONFIRMATIONS_DEFAULT = int(CONFIG["REQUIRED_CONFIRMATIONS_DEFAULT"])
+
+SUPPORTED_CHAINS_RAW = CONFIG["SUPPORTED_CHAINS"]
+
+if not BOT_TOKEN or "COLE_SEU_BOT_TOKEN_AQUI" in BOT_TOKEN:
+    raise RuntimeError("Defina BOT_TOKEN em CONFIG.")
+
+if not WEBHOOK_URL or "COLE_SUA_URL_PUBLICA_AQUI" in WEBHOOK_URL:
+    raise RuntimeError("Defina WEBHOOK_URL em CONFIG (ex: https://seuapp.onrender.com/webhook).")
 
 # =========================
 # FASTAPI + PTB
@@ -93,23 +158,16 @@ if not BOT_TOKEN:
 app = FastAPI()
 application = ApplicationBuilder().token(BOT_TOKEN).build()
 bot = None
-BOT_USERNAME = None  # preenchido no startup
+BOT_USERNAME = None
 
 # =========================
 # DB setup
 # =========================
-DB_URL = os.getenv("DATABASE_URL", "sqlite:///./bot_data.db")
 url = make_url(DB_URL)
-
 if url.get_backend_name().startswith("sqlite"):
     engine = create_engine(DB_URL, connect_args={"check_same_thread": False})
 else:
-    engine = create_engine(
-        DB_URL,
-        pool_pre_ping=True,
-        pool_size=5,
-        max_overflow=5,
-    )
+    engine = create_engine(DB_URL, pool_pre_ping=True, pool_size=5, max_overflow=5)
 
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 Base = declarative_base()
@@ -146,7 +204,7 @@ def cfg_set(key: str, value: Optional[str]):
 class Admin(Base):
     __tablename__ = "admins"
     id = Column(Integer, primary_key=True)
-    user_id = Column(BigInteger, unique=True, index=True)  # BIGINT
+    user_id = Column(BigInteger, unique=True, index=True)
     added_at = Column(DateTime, default=now_utc)
 
 # ---- Packs ----
@@ -176,7 +234,7 @@ class PackFile(Base):
 class Payment(Base):
     __tablename__ = "payments"
     id = Column(Integer, primary_key=True)
-    user_id = Column(BigInteger, index=True)  # BIGINT
+    user_id = Column(BigInteger, index=True)
     username = Column(String, nullable=True)
     tx_hash = Column(String, unique=True, index=True)
     chain = Column(String, default="")  # ex: polygon, ethereum, bsc
@@ -191,11 +249,11 @@ class Payment(Base):
 class ScheduledMessage(Base):
     __tablename__ = "scheduled_messages"
     id = Column(Integer, primary_key=True)
-    hhmm = Column(String, nullable=False)      # "HH:MM"
+    hhmm = Column(String, nullable=False)
     tz = Column(String, default="America/Sao_Paulo")
     text = Column(Text, nullable=False)
     enabled = Column(Boolean, default=True)
-    tier = Column(String, default="vip")       # 'vip' ou 'free'
+    tier = Column(String, default="vip")  # 'vip' ou 'free'
     created_at = Column(DateTime, default=now_utc)
     __table_args__ = (UniqueConstraint('id', name='uq_scheduled_messages_id'),)
 
@@ -237,16 +295,6 @@ def ensure_payment_token_symbol_column():
 
 def init_db():
     Base.metadata.create_all(bind=engine)
-    initial_admin_id = os.getenv("INITIAL_ADMIN_ID")
-    if initial_admin_id:
-        s = SessionLocal()
-        try:
-            uid = int(initial_admin_id)
-            if not s.query(Admin).filter(Admin.user_id == uid).first():
-                s.add(Admin(user_id=uid))
-                s.commit()
-        finally:
-            s.close()
     if not cfg_get("daily_pack_vip_hhmm"):
         cfg_set("daily_pack_vip_hhmm", "09:00")
     if not cfg_get("daily_pack_free_hhmm"):
@@ -260,49 +308,42 @@ init_db()
 # =========================
 # Chains registry (multi-rede)
 # =========================
-def parse_supported_chains(raw: str) -> Dict[str, Any]:
-    try:
-        data = json.loads(raw)
-        if not isinstance(data, dict):
-            return {}
-        reg = {}
-        for name, cfg in data.items():
-            rpc = (cfg.get("rpc") or "").strip()
-            if not rpc:
+def build_chains(raw_cfg: Dict[str, Any]) -> Dict[str, Any]:
+    reg = {}
+    for name, cfg in raw_cfg.items():
+        rpc = (cfg.get("rpc") or "").strip()
+        if not rpc:
+            continue
+        w3 = Web3(Web3.HTTPProvider(rpc))
+        if not w3.is_connected():
+            logging.warning(f"[chains] {name}: falhou conexão RPC ({rpc})")
+        symbol = (cfg.get("symbol") or name.upper()).strip()
+        min_native = Decimal(cfg.get("min_native") or "0")
+        confirms = int(cfg.get("confirmations") or REQUIRED_CONFIRMATIONS_DEFAULT)
+        native_decimals = int(cfg.get("native_decimals") or 18)
+        tokens = []
+        for t in (cfg.get("tokens") or []):
+            try:
+                tokens.append({
+                    "symbol": (t.get("symbol") or "").strip(),
+                    "address": Web3.to_checksum_address(t.get("address")),
+                    "decimals": int(t.get("decimals") or 18),
+                    "min": Decimal(t.get("min") or "0"),
+                })
+            except Exception:
                 continue
-            w3 = Web3(Web3.HTTPProvider(rpc))
-            if not w3.is_connected():
-                logging.warning(f"[chains] {name}: falhou conectar RPC")
-            symbol = (cfg.get("symbol") or "").strip() or name.upper()
-            min_native = Decimal(cfg.get("min_native") or "0")
-            confirms = int(cfg.get("confirmations") or REQUIRED_CONFIRMATIONS_DEFAULT)
-            tokens_cfg = cfg.get("tokens") or []
-            tokens = []
-            for t in tokens_cfg:
-                try:
-                    tokens.append({
-                        "symbol": (t.get("symbol") or "").strip(),
-                        "address": Web3.to_checksum_address(t.get("address")),
-                        "decimals": int(t.get("decimals") or 18),
-                        "min": Decimal(t.get("min") or "0"),
-                    })
-                except Exception:
-                    continue
-            reg[name.lower()] = {
-                "w3": w3,
-                "rpc": rpc,
-                "symbol": symbol,
-                "min_native": min_native,
-                "confirmations": confirms,
-                "tokens": tokens,
-                "native_decimals": 18,  # padrão EVM
-            }
-        return reg
-    except Exception as e:
-        logging.exception("Erro parse SUPPORTED_CHAINS_JSON")
-        return {}
+        reg[name.lower()] = {
+            "w3": w3,
+            "rpc": rpc,
+            "symbol": symbol,
+            "min_native": min_native,
+            "confirmations": confirms,
+            "tokens": tokens,
+            "native_decimals": native_decimals,
+        }
+    return reg
 
-CHAINS = parse_supported_chains(SUPPORTED_CHAINS_JSON)
+CHAINS = build_chains(SUPPORTED_CHAINS_RAW)
 TRANSFER_SIG = Web3.keccak(text="Transfer(address,address,uint256)").hex()
 
 def _get_confirmations(w3: Web3, receipt) -> int:
@@ -315,28 +356,17 @@ def _get_confirmations(w3: Web3, receipt) -> int:
         return 0
 
 def _verify_on_chain(chain_key: str, cfg: Dict[str, Any], tx_hash: str) -> Dict[str, Any]:
-    """
-    Tenta validar a tx para a rede informada.
-    Aceita:
-      - Moeda nativa (tx.to == WALLET_ADDRESS, value >= min_native)
-      - Qualquer token ERC-20 listado em cfg['tokens'] que faça Transfer(..., to=WALLET_ADDRESS, value>=min)
-    Retorna:
-      { ok, reason?, confirmations, chain, kind: 'native'|'erc20', token_symbol, amount_decimal }
-    """
     w3 = cfg["w3"]
     if not WALLET_ADDRESS:
         return {"ok": False, "reason": "WALLET_ADDRESS não configurado"}
-
     try:
         th = Web3.to_hex(tx_hash)
     except Exception:
         return {"ok": False, "reason": "hash inválido"}
-
     try:
         tx = w3.eth.get_transaction(th)
     except Exception as e:
         return {"ok": False, "reason": f"tx não encontrada ({e})"}
-
     try:
         receipt = w3.eth.get_transaction_receipt(th)
     except Exception as e:
@@ -344,17 +374,13 @@ def _verify_on_chain(chain_key: str, cfg: Dict[str, Any], tx_hash: str) -> Dict[
 
     confirmations = _get_confirmations(w3, receipt)
     need_conf = cfg["confirmations"]
-
     dest = Web3.to_checksum_address(WALLET_ADDRESS)
 
     # 1) Moeda nativa
     try:
         if tx["to"] and Web3.to_checksum_address(tx["to"]) == dest:
             amount_dec = to_dec(tx["value"], cfg["native_decimals"])
-            if amount_dec < cfg["min_native"]:
-                # segue para tentar tokens
-                pass
-            else:
+            if amount_dec >= cfg["min_native"]:
                 if confirmations < need_conf:
                     return {"ok": False, "reason": f"confirmações insuficientes ({confirmations}/{need_conf})",
                             "confirmations": confirmations, "chain": chain_key}
@@ -371,7 +397,6 @@ def _verify_on_chain(chain_key: str, cfg: Dict[str, Any], tx_hash: str) -> Dict[
         try:
             if lg["topics"] and lg["topics"][0].hex().lower() == TRANSFER_SIG.lower():
                 token_addr = Web3.to_checksum_address(lg["address"])
-                # checa se este token é aceito nesta rede
                 token_cfg = next((t for t in cfg["tokens"] if t["address"] == token_addr), None)
                 if not token_cfg:
                     continue
@@ -384,7 +409,6 @@ def _verify_on_chain(chain_key: str, cfg: Dict[str, Any], tx_hash: str) -> Dict[
         except Exception:
             continue
 
-    # escolhe o 1º token que atingir o mínimo
     for t in cfg["tokens"]:
         raw = total_by_token.get(t["address"])
         if not raw:
@@ -399,7 +423,6 @@ def _verify_on_chain(chain_key: str, cfg: Dict[str, Any], tx_hash: str) -> Dict[
                 "kind": "erc20", "token_symbol": t["symbol"], "amount_decimal": amount_dec
             }
 
-    # Se chegou aqui, nada bateu
     if cfg["tokens"]:
         return {"ok": False, "reason": "nenhuma transferência válida (nativo abaixo do mínimo ou tokens não encontrados)",
                 "confirmations": confirmations, "chain": chain_key}
@@ -408,10 +431,6 @@ def _verify_on_chain(chain_key: str, cfg: Dict[str, Any], tx_hash: str) -> Dict[
                 "confirmations": confirmations, "chain": chain_key}
 
 def verify_tx_multi(tx_hash: str, prefer_chain: Optional[str] = None) -> Dict[str, Any]:
-    """
-    Se prefer_chain informado, checa apenas ela; senão tenta todas as redes em CHAINS.
-    Retorna o 1º 'ok'. Se nenhum ok, retorna melhor tentativa (mais confirmações) para justificar o pending.
-    """
     if prefer_chain:
         ck = prefer_chain.lower()
         cfg = CHAINS.get(ck)
@@ -420,23 +439,19 @@ def verify_tx_multi(tx_hash: str, prefer_chain: Optional[str] = None) -> Dict[st
         return _verify_on_chain(ck, cfg, tx_hash)
 
     if not CHAINS:
-        return {"ok": False, "reason": "nenhuma rede configurada (SUPPORTED_CHAINS_JSON)"}
+        return {"ok": False, "reason": "nenhuma rede configurada"}
 
     best = None
     for ck, cfg in CHAINS.items():
         res = _verify_on_chain(ck, cfg, tx_hash)
         if res.get("ok"):
             return res
-        # guarda a com mais confirmações para feedback
-        if best is None:
+        if best is None or res.get("confirmations", 0) > best.get("confirmations", 0):
             best = res
-        else:
-            if res.get("confirmations", 0) > best.get("confirmations", 0):
-                best = res
     return best or {"ok": False, "reason": "falha ao verificar em todas as redes"}
 
 # =========================
-# DB helpers (demais)
+# DB helpers
 # =========================
 def is_admin(user_id: int) -> bool:
     s = SessionLocal()
@@ -821,7 +836,7 @@ async def enviar_pack_free_job(context: ContextTypes.DEFAULT_TYPE) -> str:
 async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.effective_message
     text = (
-        "Fala! Eu gerencio packs VIP/FREE, pagamentos cripto (MetaMask, várias redes) e mensagens agendadas.\n"
+        "Fala! Eu gerencio packs VIP/FREE, pagamentos cripto (MetaMask, multi-rede EVM) e mensagens agendadas.\n"
         "Use /comandos para ver tudo."
     )
     if msg:
@@ -841,8 +856,8 @@ async def comandos_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• /tx &lt;hash&gt; — auto-detectar rede",
         "• /tx &lt;rede&gt; &lt;hash&gt; — forçar rede (ex.: /tx polygon 0xabc...)",
         "",
-        "🧩 Packs (privado ou grupos de armazenamento):",
-        "• /novopack — pergunta VIP/FREE",
+        "🧩 Packs:",
+        "• /novopack — pergunta VIP/FREE (privado ou grupos de cadastro)",
         "• /novopackvip — atalho VIP (privado)",
         "• /novopackfree — atalho FREE (privado)",
         "",
@@ -889,7 +904,7 @@ async def getid_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ====== Admin utils ======
 async def mudar_nome_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not (update.effective_user and is_admin(update.effective_user.id)):
-        await update.effective_message.reply_text("Apenas admins podem usar este comando.")
+        await update.effective_message.reply_text("Apenas admins.")
         return
     if not context.args:
         await update.effective_message.reply_text("Uso: /mudar_nome <novo nome exibido do bot>")
@@ -904,7 +919,7 @@ async def mudar_nome_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def mudar_username_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     txt = (
         "⚠️ Alterar o <b>@username</b> do bot não é possível via API.\n"
-        "Siga no <b>@BotFather</b>: /mybots → Bot Settings → Edit Username."
+        "Use o <b>@BotFather</b>: /mybots → Bot Settings → Edit Username."
     )
     await update.effective_message.reply_text(txt, parse_mode="HTML")
 
@@ -983,8 +998,7 @@ async def simularvip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     status = await enviar_pack_vip_job(context)
     await update.effective_message.reply_text(status)
 
-async def simularfree_cmd(update: Update, Context: ContextTypes.DEFAULT_TYPE):
-    context = Context
+async def simularfree_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not (update.effective_user and is_admin(update.effective_user.id)):
         await update.effective_message.reply_text("Apenas admins.")
         return
@@ -1203,7 +1217,7 @@ async def set_enviadovip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await _set_sent_by_tier(update, context, tier="vip", sent=True)
 
 # =========================
-# NOVOPACK (privado + grupos cadastrados)
+# NOVOPACK (privado + grupos)
 # =========================
 CHOOSE_TIER, TITLE, CONFIRM_TITLE, PREVIEWS, FILES, CONFIRM_SAVE = range(6)
 
@@ -1439,10 +1453,10 @@ async def novopack_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # =========================
 async def pagar_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not WALLET_ADDRESS:
-        await update.effective_message.reply_text("Método de pagamento não configurado. (WALLET_ADDRESS ausente)")
+        await update.effective_message.reply_text("Método de pagamento não configurado (sem carteira).")
         return
     if not CHAINS:
-        await update.effective_message.reply_text("Nenhuma rede configurada. Defina SUPPORTED_CHAINS_JSON no .env")
+        await update.effective_message.reply_text("Nenhuma rede configurada. Edite SUPPORTED_CHAINS em CONFIG.")
         return
     lines = [
         f"💸 <b>Pagamento via MetaMask</b>",
@@ -1478,13 +1492,11 @@ async def tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         chain_key = None
         tx_hash = context.args[0].strip()
     else:
-        # tenta interpretar 1º como possível rede
         maybe_chain = context.args[0].lower()
         if maybe_chain in CHAINS:
             chain_key = maybe_chain
             tx_hash = context.args[1].strip()
         else:
-            # não reconheci rede; trata como hash único
             chain_key = None
             tx_hash = context.args[-1].strip()
 
@@ -1501,7 +1513,6 @@ async def tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     finally:
         s.close()
 
-    # verificação on-chain
     res = verify_tx_multi(tx_hash, prefer_chain=chain_key)
 
     status = "approved" if res.get("ok") else "pending"
@@ -1896,7 +1907,7 @@ async def crypto_webhook(request: Request):
     data = await request.json()
     uid = data.get("telegram_user_id")
     tx_hash = data.get("tx_hash")
-    chain = (data.get("chain") or "").lower()  # opcional
+    chain = (data.get("chain") or "").lower()
     if not uid or not tx_hash:
         return JSONResponse({"ok": False, "error": "telegram_user_id e tx_hash são obrigatórios"}, status_code=400)
 
@@ -1965,8 +1976,6 @@ async def on_startup():
     await application.start()
     bot = application.bot
 
-    if not WEBHOOK_URL:
-        raise RuntimeError("WEBHOOK_URL não definido no .env")
     await bot.set_webhook(url=WEBHOOK_URL)
 
     me = await bot.get_me()
@@ -2092,10 +2101,7 @@ async def on_startup():
     application.add_handler(CommandHandler("del_msg_vip", del_msg_vip_cmd), group=1)
     application.add_handler(CommandHandler("del_msg_free", del_msg_free_cmd), group=1)
 
-    # Set horário dos packs diários
-    application.add_handler(CommandHandler("set_pack_horario_vip", set_pack_horario_vip_cmd), group=1)
-    application.add_handler(CommandHandler("set_pack_horario_free", set_pack_horario_free_cmd), group=1)
-
+    # Jobs diários de packs e mensagens
     await _reschedule_daily_packs()
     _register_all_scheduled_messages(application.job_queue)
 
