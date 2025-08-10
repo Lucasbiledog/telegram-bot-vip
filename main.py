@@ -1,10 +1,12 @@
 # main.py
 import os
+import json
 import logging
 import asyncio
 import datetime as dt
 from typing import Optional, List, Dict, Any, Tuple
 import html
+from decimal import Decimal
 
 import pytz
 from dotenv import load_dotenv
@@ -32,6 +34,9 @@ from sqlalchemy import (
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship
 from sqlalchemy.engine import make_url
 
+# Web3
+from web3 import Web3
+
 # =========================
 # Helpers
 # =========================
@@ -50,6 +55,10 @@ def parse_hhmm(s: str) -> Tuple[int, int]:
     if not (0 <= h <= 23 and 0 <= m <= 59):
         raise ValueError("Hora fora do intervalo 00:00–23:59")
     return h, m
+
+def to_dec(amount_wei: int, decimals: int) -> Decimal:
+    q = Decimal(10) ** decimals
+    return Decimal(int(amount_wei)) / q
 
 # =========================
 # ENV / CONFIG
@@ -70,9 +79,10 @@ GROUP_FREE_ID         = int(os.getenv("GROUP_FREE_ID", "-1002509364079"))
 
 PORT = int(os.getenv("PORT", 8000))
 
-# Pagamento cripto
-WALLET_ADDRESS = os.getenv("WALLET_ADDRESS", "").strip()
-CHAIN_NAME = os.getenv("CHAIN_NAME", "Polygon").strip()
+# Pagamento cripto (multi-rede)
+WALLET_ADDRESS = os.getenv("WALLET_ADDRESS", "").strip()  # seu endereço (mesmo em todas as redes EVM)
+SUPPORTED_CHAINS_JSON = os.getenv("SUPPORTED_CHAINS_JSON", "{}")
+REQUIRED_CONFIRMATIONS_DEFAULT = int(os.getenv("REQUIRED_CONFIRMATIONS", "3"))
 
 if not BOT_TOKEN:
     raise RuntimeError("BOT_TOKEN não definido no .env")
@@ -144,7 +154,6 @@ class Pack(Base):
     __tablename__ = "packs"
     id = Column(Integer, primary_key=True, index=True)
     title = Column(String, nullable=False)
-    # header_message_id único (ver header_key)
     header_message_id = Column(Integer, nullable=True, unique=True)
     created_at = Column(DateTime, default=now_utc)
     sent = Column(Boolean, default=False)
@@ -170,8 +179,9 @@ class Payment(Base):
     user_id = Column(BigInteger, index=True)  # BIGINT
     username = Column(String, nullable=True)
     tx_hash = Column(String, unique=True, index=True)
-    chain = Column(String, default=CHAIN_NAME)
-    amount = Column(String, nullable=True)
+    chain = Column(String, default="")  # ex: polygon, ethereum, bsc
+    token_symbol = Column(String, nullable=True)  # ex: MATIC, ETH, USDT...
+    amount = Column(String, nullable=True)  # em unidades humanas (str)
     status = Column(String, default="pending")  # pending | approved | rejected
     notes = Column(Text, nullable=True)
     created_at = Column(DateTime, default=now_utc)
@@ -190,24 +200,18 @@ class ScheduledMessage(Base):
     __table_args__ = (UniqueConstraint('id', name='uq_scheduled_messages_id'),)
 
 def ensure_bigint_columns():
-    """Migra colunas user_id para BIGINT no Postgres (safe idempotente)."""
     if not url.get_backend_name().startswith("postgresql"):
         return
     try:
         with engine.begin() as conn:
-            try:
-                conn.execute(text("ALTER TABLE admins   ALTER COLUMN user_id TYPE BIGINT USING user_id::bigint"))
-            except Exception:
-                pass
-            try:
-                conn.execute(text("ALTER TABLE payments ALTER COLUMN user_id TYPE BIGINT USING user_id::bigint"))
-            except Exception:
-                pass
+            try: conn.execute(text("ALTER TABLE admins   ALTER COLUMN user_id TYPE BIGINT USING user_id::bigint"))
+            except Exception: pass
+            try: conn.execute(text("ALTER TABLE payments ALTER COLUMN user_id TYPE BIGINT USING user_id::bigint"))
+            except Exception: pass
     except Exception as e:
         logging.warning("Falha em ensure_bigint_columns: %s", e)
 
 def ensure_pack_tier_column():
-    """Garante coluna tier em packs e scheduled_messages."""
     try:
         with engine.begin() as conn:
             try: conn.execute(text("ALTER TABLE packs ADD COLUMN tier VARCHAR"))
@@ -217,6 +221,16 @@ def ensure_pack_tier_column():
             try: conn.execute(text("ALTER TABLE scheduled_messages ADD COLUMN tier VARCHAR"))
             except Exception: pass
             try: conn.execute(text("UPDATE scheduled_messages SET tier='vip' WHERE tier IS NULL"))
+            except Exception: pass
+    except Exception:
+        pass
+
+def ensure_payment_token_symbol_column():
+    try:
+        with engine.begin() as conn:
+            try: conn.execute(text("ALTER TABLE payments ADD COLUMN token_symbol VARCHAR"))
+            except Exception: pass
+            try: conn.execute(text("ALTER TABLE payments ADD COLUMN chain VARCHAR"))
             except Exception: pass
     except Exception:
         pass
@@ -238,13 +252,191 @@ def init_db():
     if not cfg_get("daily_pack_free_hhmm"):
         cfg_set("daily_pack_free_hhmm", "09:30")
 
-# migração antes de criar metadata
 ensure_bigint_columns()
 ensure_pack_tier_column()
+ensure_payment_token_symbol_column()
 init_db()
 
 # =========================
-# DB helpers
+# Chains registry (multi-rede)
+# =========================
+def parse_supported_chains(raw: str) -> Dict[str, Any]:
+    try:
+        data = json.loads(raw)
+        if not isinstance(data, dict):
+            return {}
+        reg = {}
+        for name, cfg in data.items():
+            rpc = (cfg.get("rpc") or "").strip()
+            if not rpc:
+                continue
+            w3 = Web3(Web3.HTTPProvider(rpc))
+            if not w3.is_connected():
+                logging.warning(f"[chains] {name}: falhou conectar RPC")
+            symbol = (cfg.get("symbol") or "").strip() or name.upper()
+            min_native = Decimal(cfg.get("min_native") or "0")
+            confirms = int(cfg.get("confirmations") or REQUIRED_CONFIRMATIONS_DEFAULT)
+            tokens_cfg = cfg.get("tokens") or []
+            tokens = []
+            for t in tokens_cfg:
+                try:
+                    tokens.append({
+                        "symbol": (t.get("symbol") or "").strip(),
+                        "address": Web3.to_checksum_address(t.get("address")),
+                        "decimals": int(t.get("decimals") or 18),
+                        "min": Decimal(t.get("min") or "0"),
+                    })
+                except Exception:
+                    continue
+            reg[name.lower()] = {
+                "w3": w3,
+                "rpc": rpc,
+                "symbol": symbol,
+                "min_native": min_native,
+                "confirmations": confirms,
+                "tokens": tokens,
+                "native_decimals": 18,  # padrão EVM
+            }
+        return reg
+    except Exception as e:
+        logging.exception("Erro parse SUPPORTED_CHAINS_JSON")
+        return {}
+
+CHAINS = parse_supported_chains(SUPPORTED_CHAINS_JSON)
+TRANSFER_SIG = Web3.keccak(text="Transfer(address,address,uint256)").hex()
+
+def _get_confirmations(w3: Web3, receipt) -> int:
+    try:
+        current = w3.eth.block_number
+        if receipt and receipt.blockNumber is not None:
+            return max(0, current - receipt.blockNumber)
+        return 0
+    except Exception:
+        return 0
+
+def _verify_on_chain(chain_key: str, cfg: Dict[str, Any], tx_hash: str) -> Dict[str, Any]:
+    """
+    Tenta validar a tx para a rede informada.
+    Aceita:
+      - Moeda nativa (tx.to == WALLET_ADDRESS, value >= min_native)
+      - Qualquer token ERC-20 listado em cfg['tokens'] que faça Transfer(..., to=WALLET_ADDRESS, value>=min)
+    Retorna:
+      { ok, reason?, confirmations, chain, kind: 'native'|'erc20', token_symbol, amount_decimal }
+    """
+    w3 = cfg["w3"]
+    if not WALLET_ADDRESS:
+        return {"ok": False, "reason": "WALLET_ADDRESS não configurado"}
+
+    try:
+        th = Web3.to_hex(tx_hash)
+    except Exception:
+        return {"ok": False, "reason": "hash inválido"}
+
+    try:
+        tx = w3.eth.get_transaction(th)
+    except Exception as e:
+        return {"ok": False, "reason": f"tx não encontrada ({e})"}
+
+    try:
+        receipt = w3.eth.get_transaction_receipt(th)
+    except Exception as e:
+        return {"ok": False, "reason": f"receipt indisponível ({e})"}
+
+    confirmations = _get_confirmations(w3, receipt)
+    need_conf = cfg["confirmations"]
+
+    dest = Web3.to_checksum_address(WALLET_ADDRESS)
+
+    # 1) Moeda nativa
+    try:
+        if tx["to"] and Web3.to_checksum_address(tx["to"]) == dest:
+            amount_dec = to_dec(tx["value"], cfg["native_decimals"])
+            if amount_dec < cfg["min_native"]:
+                # segue para tentar tokens
+                pass
+            else:
+                if confirmations < need_conf:
+                    return {"ok": False, "reason": f"confirmações insuficientes ({confirmations}/{need_conf})",
+                            "confirmations": confirmations, "chain": chain_key}
+                return {
+                    "ok": True, "confirmations": confirmations, "chain": chain_key,
+                    "kind": "native", "token_symbol": cfg["symbol"], "amount_decimal": amount_dec
+                }
+    except Exception:
+        pass
+
+    # 2) Tokens ERC-20 (por logs)
+    total_by_token: Dict[str, int] = {}
+    for lg in receipt.logs or []:
+        try:
+            if lg["topics"] and lg["topics"][0].hex().lower() == TRANSFER_SIG.lower():
+                token_addr = Web3.to_checksum_address(lg["address"])
+                # checa se este token é aceito nesta rede
+                token_cfg = next((t for t in cfg["tokens"] if t["address"] == token_addr), None)
+                if not token_cfg:
+                    continue
+                to_topic = lg["topics"][2].hex()
+                to_addr = Web3.to_checksum_address("0x" + to_topic[-40:])
+                if to_addr != dest:
+                    continue
+                value = int(lg["data"], 16)
+                total_by_token[token_addr] = total_by_token.get(token_addr, 0) + value
+        except Exception:
+            continue
+
+    # escolhe o 1º token que atingir o mínimo
+    for t in cfg["tokens"]:
+        raw = total_by_token.get(t["address"])
+        if not raw:
+            continue
+        amount_dec = to_dec(raw, t["decimals"])
+        if amount_dec >= t["min"]:
+            if confirmations < need_conf:
+                return {"ok": False, "reason": f"confirmações insuficientes ({confirmations}/{need_conf})",
+                        "confirmations": confirmations, "chain": chain_key}
+            return {
+                "ok": True, "confirmations": confirmations, "chain": chain_key,
+                "kind": "erc20", "token_symbol": t["symbol"], "amount_decimal": amount_dec
+            }
+
+    # Se chegou aqui, nada bateu
+    if cfg["tokens"]:
+        return {"ok": False, "reason": "nenhuma transferência válida (nativo abaixo do mínimo ou tokens não encontrados)",
+                "confirmations": confirmations, "chain": chain_key}
+    else:
+        return {"ok": False, "reason": "valor nativo abaixo do mínimo ou destinatário diferente",
+                "confirmations": confirmations, "chain": chain_key}
+
+def verify_tx_multi(tx_hash: str, prefer_chain: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Se prefer_chain informado, checa apenas ela; senão tenta todas as redes em CHAINS.
+    Retorna o 1º 'ok'. Se nenhum ok, retorna melhor tentativa (mais confirmações) para justificar o pending.
+    """
+    if prefer_chain:
+        ck = prefer_chain.lower()
+        cfg = CHAINS.get(ck)
+        if not cfg:
+            return {"ok": False, "reason": f"rede '{prefer_chain}' não configurada"}
+        return _verify_on_chain(ck, cfg, tx_hash)
+
+    if not CHAINS:
+        return {"ok": False, "reason": "nenhuma rede configurada (SUPPORTED_CHAINS_JSON)"}
+
+    best = None
+    for ck, cfg in CHAINS.items():
+        res = _verify_on_chain(ck, cfg, tx_hash)
+        if res.get("ok"):
+            return res
+        # guarda a com mais confirmações para feedback
+        if best is None:
+            best = res
+        else:
+            if res.get("confirmations", 0) > best.get("confirmations", 0):
+                best = res
+    return best or {"ok": False, "reason": "falha ao verificar em todas as redes"}
+
+# =========================
+# DB helpers (demais)
 # =========================
 def is_admin(user_id: int) -> bool:
     s = SessionLocal()
@@ -414,13 +606,7 @@ def scheduled_delete(sid: int) -> bool:
 # =========================
 # STORAGE GROUP handlers
 # =========================
-
 def header_key(chat_id: int, message_id: int) -> int:
-    """
-    Evita colisão entre grupos diferentes:
-    - VIP storage usa +message_id
-    - FREE storage usa -message_id
-    """
     if chat_id == STORAGE_GROUP_ID:
         return int(message_id)
     if chat_id == STORAGE_GROUP_FREE_ID:
@@ -431,19 +617,15 @@ async def storage_text_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     msg = update.effective_message
     if not msg or msg.chat.id not in {STORAGE_GROUP_ID, STORAGE_GROUP_FREE_ID}:
         return
-
     if msg.reply_to_message:
         return
-
     title = (msg.text or "").strip()
     if not title:
         return
-
     lower = title.lower()
     banned = {"sim", "não", "nao", "/proximo", "/finalizar", "/cancelar"}
     if lower in banned or title.startswith("/") or len(title) < 4:
         return
-
     words = title.split()
     looks_like_title = (
         len(words) >= 2
@@ -454,7 +636,6 @@ async def storage_text_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     )
     if not looks_like_title:
         return
-
     if update.effective_user and not is_admin(update.effective_user.id):
         return
 
@@ -533,7 +714,7 @@ async def storage_media_handler(update: Update, context: ContextTypes.DEFAULT_TY
         await msg.reply_text("Tipo de mídia não suportado.", parse_mode="HTML")
         return
 
-    add_file_to_pack(pack_id=pack.id, file_id=file_id, file_unique_id=file_unique_id, file_type=file_type, role=role, file_name=visible_name)
+    add_file_to_pack(pack.id, file_id, file_unique_id, file_type, role, visible_name)
     await msg.reply_text(f"Item adicionado ao pack <b>{esc(pack.title)}</b> — <i>{pack.tier.upper()}</i>.", parse_mode="HTML")
 
 # =========================
@@ -638,10 +819,9 @@ async def enviar_pack_free_job(context: ContextTypes.DEFAULT_TYPE) -> str:
 # COMMANDS BÁSICOS & ADMIN
 # =========================
 async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # trata deep-link /start novopack pelo ConversationHandler (ver startup)
     msg = update.effective_message
     text = (
-        "Fala! Eu gerencio packs VIP/FREE, pagamentos via MetaMask e mensagens agendadas.\n"
+        "Fala! Eu gerencio packs VIP/FREE, pagamentos cripto (MetaMask, várias redes) e mensagens agendadas.\n"
         "Use /comandos para ver tudo."
     )
     if msg:
@@ -656,18 +836,18 @@ async def comandos_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• /listar_comandos — (alias)",
         "• /getid — mostra seus IDs",
         "",
-        "💸 Pagamento (MetaMask):",
-        "• /pagar — instruções",
-        "• /tx &lt;hash&gt; — registrar a transação",
+        "💸 Pagamento (MetaMask, multi-rede):",
+        "• /pagar — instruções e redes aceitas",
+        "• /tx &lt;hash&gt; — auto-detectar rede",
+        "• /tx &lt;rede&gt; &lt;hash&gt; — forçar rede (ex.: /tx polygon 0xabc...)",
         "",
-        "🧩 Packs (privado ou grupo de armazenamento):",
-        "• /novopack — perguntar VIP/FREE e iniciar fluxo",
-        "• /novopackvip — atalho direto para VIP (privado)",
-        "• /novopackfree — atalho direto para FREE (privado)",
+        "🧩 Packs (privado ou grupos de armazenamento):",
+        "• /novopack — pergunta VIP/FREE",
+        "• /novopackvip — atalho VIP (privado)",
+        "• /novopackfree — atalho FREE (privado)",
         "",
         "🕒 Mensagens agendadas:",
-        "• /add_msg_vip HH:MM &lt;texto&gt;",
-        "• /add_msg_free HH:MM &lt;texto&gt;",
+        "• /add_msg_vip HH:MM &lt;texto&gt; | /add_msg_free HH:MM &lt;texto&gt;",
         "• /list_msgs_vip | /list_msgs_free",
         "• /edit_msg_vip &lt;id&gt; [HH:MM] [novo texto]",
         "• /edit_msg_free &lt;id&gt; [HH:MM] [novo texto]",
@@ -677,28 +857,21 @@ async def comandos_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     adm = [
         "",
         "🛠 <b>Admin</b>",
-        "• /simularvip — envia o próximo pack VIP pendente agora",
-        "• /simularfree — envia o próximo pack FREE pendente agora",
+        "• /simularvip — envia o próximo pack VIP",
+        "• /simularfree — envia o próximo pack FREE",
         "• /listar_packsvip — lista packs VIP",
         "• /listar_packsfree — lista packs FREE",
         "• /pack_info &lt;id&gt; — detalhes do pack",
         "• /excluir_item &lt;id_item&gt; — remove item do pack",
-        "• /excluir_pack [&lt;id&gt;] — remove pack (com confirmação)",
-        "• /set_pendentevip &lt;id&gt; — marca pack VIP como pendente",
-        "• /set_pendentefree &lt;id&gt; — marca pack FREE como pendente",
-        "• /set_enviadovip &lt;id&gt; — marca pack VIP como enviado",
-        "• /set_enviadofree &lt;id&gt; — marca pack FREE como enviado",
-        "• /set_pack_horario_vip HH:MM — define o horário diário dos packs VIP",
-        "• /set_pack_horario_free HH:MM — define o horário diário dos packs FREE",
-        "• /limpar_chat &lt;N&gt; — apaga últimas N mensagens (melhor esforço)",
-        "• /mudar_nome &lt;novo nome&gt; — muda o nome exibido do bot",
-        "• /mudar_username — instruções para mudar o @username (BotFather)",
-        "• /add_admin &lt;user_id&gt; — adiciona admin",
-        "• /rem_admin &lt;user_id&gt; — remove admin",
-        "• /listar_admins — lista admins",
+        "• /excluir_pack [&lt;id&gt;] — remove pack (confirmação)",
+        "• /set_pendentevip &lt;id&gt; | /set_pendentefree &lt;id&gt;",
+        "• /set_enviadovip &lt;id&gt; | /set_enviadofree &lt;id&gt;",
+        "• /set_pack_horario_vip HH:MM | /set_pack_horario_free HH:MM",
+        "• /limpar_chat &lt;N&gt; — apaga últimas N mensagens",
+        "• /mudar_nome &lt;novo nome&gt; | /mudar_username",
+        "• /add_admin &lt;user_id&gt; | /rem_admin &lt;user_id&gt; | /listar_admins",
         "• /listar_pendentes — pagamentos pendentes",
-        "• /aprovar_tx &lt;user_id&gt; — aprova e envia convite VIP",
-        "• /rejeitar_tx &lt;user_id&gt; [motivo] — rejeita pagamento",
+        "• /aprovar_tx &lt;user_id&gt; | /rejeitar_tx &lt;user_id&gt; [motivo]",
     ]
     lines = base + (adm if isadm else [])
     await update.effective_message.reply_text("\n".join(lines), parse_mode="HTML")
@@ -731,16 +904,13 @@ async def mudar_nome_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def mudar_username_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     txt = (
         "⚠️ Alterar o <b>@username</b> do bot não é possível via API.\n"
-        "Siga no <b>@BotFather</b>:\n"
-        "1) /mybots → selecione seu bot\n"
-        "2) Bot Settings → Edit Username → informe o novo @username disponível\n"
-        "Obs.: o nome exibido (não o @) você pode mudar com /mudar_nome aqui."
+        "Siga no <b>@BotFather</b>: /mybots → Bot Settings → Edit Username."
     )
     await update.effective_message.reply_text(txt, parse_mode="HTML")
 
 async def limpar_chat_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not (update.effective_user and is_admin(update.effective_user.id)):
-        await update.effective_message.reply_text("Apenas admins podem usar este comando.")
+        await update.effective_message.reply_text("Apenas admins.")
         return
     if not context.args:
         await update.effective_message.reply_text("Uso: /limpar_chat <N>")
@@ -753,7 +923,6 @@ async def limpar_chat_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except:
         await update.effective_message.reply_text("Número inválido.")
         return
-
     chat_id = update.effective_chat.id
     current_id = update.effective_message.message_id
     deleted = 0
@@ -768,7 +937,7 @@ async def limpar_chat_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def listar_admins_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not (update.effective_user and is_admin(update.effective_user.id)):
-        await update.effective_message.reply_text("Apenas admins podem usar este comando.")
+        await update.effective_message.reply_text("Apenas admins.")
         return
     ids = list_admin_ids()
     if not ids:
@@ -778,7 +947,7 @@ async def listar_admins_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def add_admin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not (update.effective_user and is_admin(update.effective_user.id)):
-        await update.effective_message.reply_text("Apenas admins podem usar este comando.")
+        await update.effective_message.reply_text("Apenas admins.")
         return
     if not context.args:
         await update.effective_message.reply_text("Uso: /add_admin <user_id>")
@@ -793,7 +962,7 @@ async def add_admin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def rem_admin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not (update.effective_user and is_admin(update.effective_user.id)):
-        await update.effective_message.reply_text("Apenas admins podem usar este comando.")
+        await update.effective_message.reply_text("Apenas admins.")
         return
     if not context.args:
         await update.effective_message.reply_text("Uso: /rem_admin <user_id>")
@@ -809,23 +978,22 @@ async def rem_admin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ====== Packs admin ======
 async def simularvip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not (update.effective_user and is_admin(update.effective_user.id)):
-        await update.effective_message.reply_text("Apenas admins podem usar este comando.")
+        await update.effective_message.reply_text("Apenas admins.")
         return
     status = await enviar_pack_vip_job(context)
     await update.effective_message.reply_text(status)
 
 async def simularfree_cmd(update: Update, Context: ContextTypes.DEFAULT_TYPE):
-    # PTB passa 'context', mas manter assinatura igual às demais
-    context = Context  # compat
+    context = Context
     if not (update.effective_user and is_admin(update.effective_user.id)):
-        await update.effective_message.reply_text("Apenas admins podem usar este comando.")
+        await update.effective_message.reply_text("Apenas admins.")
         return
     status = await enviar_pack_free_job(context)
     await update.effective_message.reply_text(status)
 
 async def listar_packsvip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not (update.effective_user and is_admin(update.effective_user.id)):
-        await update.effective_message.reply_text("Apenas admins podem usar este comando.")
+        await update.effective_message.reply_text("Apenas admins.")
         return
     s = SessionLocal()
     try:
@@ -845,7 +1013,7 @@ async def listar_packsvip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 async def listar_packsfree_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not (update.effective_user and is_admin(update.effective_user.id)):
-        await update.effective_message.reply_text("Apenas admins podem usar este comando.")
+        await update.effective_message.reply_text("Apenas admins.")
         return
     s = SessionLocal()
     try:
@@ -865,7 +1033,7 @@ async def listar_packsfree_cmd(update: Update, context: ContextTypes.DEFAULT_TYP
 
 async def pack_info_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not (update.effective_user and is_admin(update.effective_user.id)):
-        await update.effective_message.reply_text("Apenas admins podem usar este comando.")
+        await update.effective_message.reply_text("Apenas admins.")
         return
     if not context.args:
         await update.effective_message.reply_text("Uso: /pack_info <id>")
@@ -895,7 +1063,7 @@ async def pack_info_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def excluir_item_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not (update.effective_user and is_admin(update.effective_user.id)):
-        await update.effective_message.reply_text("Apenas admins podem usar este comando.")
+        await update.effective_message.reply_text("Apenas admins.")
         return
     if not context.args:
         await update.effective_message.reply_text("Uso: /excluir_item <id_item>")
@@ -928,7 +1096,7 @@ DELETE_PACK_CONFIRM = range(1)
 
 async def excluir_pack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not (update.effective_user and is_admin(update.effective_user.id)):
-        await update.effective_message.reply_text("Apenas admins podem usar este comando.")
+        await update.effective_message.reply_text("Apenas admins.")
         return ConversationHandler.END
 
     if not context.args:
@@ -994,7 +1162,7 @@ async def excluir_pack_confirm(update: Update, context: ContextTypes.DEFAULT_TYP
 # ===== SET PENDENTE / SET ENVIADO por tier =====
 async def _set_sent_by_tier(update: Update, context: ContextTypes.DEFAULT_TYPE, tier: str, sent: bool):
     if not (update.effective_user and is_admin(update.effective_user.id)):
-        await update.effective_message.reply_text("Apenas admins podem usar este comando.")
+        await update.effective_message.reply_text("Apenas admins.")
         return
     if not context.args:
         await update.effective_message.reply_text(f"Uso: /{'set_enviado' if sent else 'set_pendente'}{tier} <id_do_pack>")
@@ -1090,40 +1258,28 @@ async def hint_files(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 def _is_allowed_group(chat_id: int) -> bool:
-    """Permite iniciar o /novopack também dentro dos grupos cadastrados de armazenamento (VIP/FREE)."""
     return chat_id in {STORAGE_GROUP_ID, STORAGE_GROUP_FREE_ID}
 
 async def novopack_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Entrada única: /novopack → pergunta VIP/FREE e inicia fluxo.
-       Funciona no privado e nos grupos cadastrados de armazenamento.
-       Se for qualquer outro grupo, envia deep-link pro privado.
-    """
     if not _require_admin(update):
         await update.effective_message.reply_text("Apenas admins podem usar este comando.")
         return ConversationHandler.END
 
     chat = update.effective_chat
     if chat.type != "private" and not _is_allowed_group(chat.id):
-        # empurra para o privado com deep-link
         try:
             username = BOT_USERNAME or (await application.bot.get_me()).username
         except Exception:
             username = None
         if username:
             link = f"https://t.me/{username}?start=novopack"
-            await update.effective_message.reply_text(
-                "Use este comando no privado comigo, por favor.\n" + link
-            )
+            await update.effective_message.reply_text("Use este comando no privado comigo, por favor.\n" + link)
         else:
             await update.effective_message.reply_text("Use este comando no privado comigo, por favor.")
         return ConversationHandler.END
 
-    # privado OU grupo permitido: inicia fluxo
     context.user_data.clear()
-    await update.effective_message.reply_text(
-        "Quer cadastrar em qual tier? Responda <b>vip</b> ou <b>free</b>.",
-        parse_mode="HTML"
-    )
+    await update.effective_message.reply_text("Quer cadastrar em qual tier? Responda <b>vip</b> ou <b>free</b>.", parse_mode="HTML")
     return CHOOSE_TIER
 
 async def novopack_choose_tier(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1133,22 +1289,15 @@ async def novopack_choose_tier(update: Update, context: ContextTypes.DEFAULT_TYP
     elif answer in ("free", "f", "gratis", "grátis"):
         context.user_data["tier"] = "free"
     else:
-        await update.effective_message.reply_text(
-            "Não entendi. Responda <b>vip</b> ou <b>free</b> 🙂",
-            parse_mode="HTML"
-        )
+        await update.effective_message.reply_text("Não entendi. Responda <b>vip</b> ou <b>free</b> 🙂", parse_mode="HTML")
         return CHOOSE_TIER
 
-    await update.effective_message.reply_text(
-        f"🧩 Novo pack <b>{context.user_data['tier'].upper()}</b> — envie o <b>título</b>.",
-        parse_mode="HTML"
-    )
+    await update.effective_message.reply_text(f"🧩 Novo pack <b>{context.user_data['tier'].upper()}</b> — envie o <b>título</b>.", parse_mode="HTML")
     return TITLE
 
-# atalhos (privado)
 async def novopackvip_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not _require_admin(update):
-        await update.effective_message.reply_text("Apenas admins podem usar este comando.")
+        await update.effective_message.reply_text("Apenas admins.")
         return ConversationHandler.END
     if update.effective_chat.type != "private":
         await update.effective_message.reply_text("Use este comando no privado comigo, por favor.")
@@ -1160,7 +1309,7 @@ async def novopackvip_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def novopackfree_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not _require_admin(update):
-        await update.effective_message.reply_text("Apenas admins podem usar este comando.")
+        await update.effective_message.reply_text("Apenas admins.")
         return ConversationHandler.END
     if update.effective_chat.type != "private":
         await update.effective_message.reply_text("Use este comando no privado comigo, por favor.")
@@ -1191,8 +1340,7 @@ async def novopack_confirm_title(update: Update, context: ContextTypes.DEFAULT_T
     context.user_data["previews"] = []
     context.user_data["files"] = []
     await update.effective_message.reply_text(
-        "2) Envie as <b>PREVIEWS</b> (📷 fotos / 🎞 vídeos / 🎞 animações).\n"
-        "Envie quantas quiser. Quando terminar, mande /proximo.",
+        "2) Envie as <b>PREVIEWS</b> (📷 fotos / 🎞 vídeos / 🎞 animações).\nEnvie quantas quiser. Quando terminar, mande /proximo.",
         parse_mode="HTML"
     )
     return PREVIEWS
@@ -1203,29 +1351,14 @@ async def novopack_collect_previews(update: Update, context: ContextTypes.DEFAUL
 
     if msg.photo:
         biggest = msg.photo[-1]
-        previews.append({
-            "file_id": biggest.file_id,
-            "file_type": "photo",
-            "file_name": (msg.caption or "").strip() or None,
-        })
+        previews.append({"file_id": biggest.file_id, "file_type": "photo", "file_name": (msg.caption or "").strip() or None})
         await msg.reply_text("✅ <b>Foto cadastrada</b>. Envie mais ou /proximo.", parse_mode="HTML")
-
     elif msg.video:
-        previews.append({
-            "file_id": msg.video.file_id,
-            "file_type": "video",
-            "file_name": (msg.caption or "").strip() or None,
-        })
+        previews.append({"file_id": msg.video.file_id, "file_type": "video", "file_name": (msg.caption or "").strip() or None})
         await msg.reply_text("✅ <b>Preview (vídeo) cadastrado</b>. Envie mais ou /proximo.", parse_mode="HTML")
-
     elif msg.animation:
-        previews.append({
-            "file_id": msg.animation.file_id,
-            "file_type": "animation",
-            "file_name": (msg.caption or "").strip() or None,
-        })
+        previews.append({"file_id": msg.animation.file_id, "file_type": "animation", "file_name": (msg.caption or "").strip() or None})
         await msg.reply_text("✅ <b>Preview (animação) cadastrado</b>. Envie mais ou /proximo.", parse_mode="HTML")
-
     else:
         await hint_previews(update, context)
         return PREVIEWS
@@ -1238,8 +1371,7 @@ async def novopack_next_to_files(update: Update, context: ContextTypes.DEFAULT_T
         await update.effective_message.reply_text("Título não encontrado. Use /cancelar e recomece com /novopack.")
         return ConversationHandler.END
     await update.effective_message.reply_text(
-        "3) Agora envie os <b>ARQUIVOS</b> (📄 documentos / 🎵 áudio / 🎙 voice).\n"
-        "Envie quantos quiser. Quando terminar, mande /finalizar.",
+        "3) Agora envie os <b>ARQUIVOS</b> (📄 documentos / 🎵 áudio / 🎙 voice).\nEnvie quantos quiser. Quando terminar, mande /finalizar.",
         parse_mode="HTML"
     )
     return FILES
@@ -1249,29 +1381,17 @@ async def novopack_collect_files(update: Update, context: ContextTypes.DEFAULT_T
     files: List[Dict[str, Any]] = context.user_data.get("files", [])
 
     if msg.document:
-        files.append({
-            "file_id": msg.document.file_id,
-            "file_type": "document",
-            "file_name": getattr(msg.document, "file_name", None) or (msg.caption or "").strip() or None,
-        })
+        files.append({"file_id": msg.document.file_id, "file_type": "document",
+                      "file_name": getattr(msg.document, "file_name", None) or (msg.caption or "").strip() or None})
         await msg.reply_text("✅ <b>Arquivo cadastrado</b>. Envie mais ou /finalizar.", parse_mode="HTML")
-
     elif msg.audio:
-        files.append({
-            "file_id": msg.audio.file_id,
-            "file_type": "audio",
-            "file_name": getattr(msg.audio, "file_name", None) or (msg.caption or "").strip() or None,
-        })
+        files.append({"file_id": msg.audio.file_id, "file_type": "audio",
+                      "file_name": getattr(msg.audio, "file_name", None) or (msg.caption or "").strip() or None})
         await msg.reply_text("✅ <b>Áudio cadastrado</b>. Envie mais ou /finalizar.", parse_mode="HTML")
-
     elif msg.voice:
-        files.append({
-            "file_id": msg.voice.file_id,
-            "file_type": "voice",
-            "file_name": (msg.caption or "").strip() or None,
-        })
+        files.append({"file_id": msg.voice.file_id, "file_type": "voice",
+                      "file_name": (msg.caption or "").strip() or None})
         await msg.reply_text("✅ <b>Voice cadastrado</b>. Envie mais ou /finalizar.", parse_mode="HTML")
-
     else:
         await hint_files(update, context)
         return FILES
@@ -1301,23 +1421,9 @@ async def novopack_confirm_save(update: Update, context: ContextTypes.DEFAULT_TY
 
     p = create_pack(title=title, header_message_id=None, tier=tier)
     for it in previews:
-        add_file_to_pack(
-            pack_id=p.id,
-            file_id=it["file_id"],
-            file_unique_id=None,
-            file_type=it["file_type"],
-            role="preview",
-            file_name=it.get("file_name"),
-        )
+        add_file_to_pack(p.id, it["file_id"], None, it["file_type"], "preview", it.get("file_name"))
     for it in files:
-        add_file_to_pack(
-            pack_id=p.id,
-            file_id=it["file_id"],
-            file_unique_id=None,
-            file_type=it["file_type"],
-            role="file",
-            file_name=it.get("file_name"),
-        )
+        add_file_to_pack(p.id, it["file_id"], None, it["file_type"], "file", it.get("file_name"))
 
     context.user_data.clear()
     await update.effective_message.reply_text(f"🎉 <b>{esc(title)}</b> cadastrado com sucesso em <b>{tier.upper()}</b>!", parse_mode="HTML")
@@ -1329,53 +1435,122 @@ async def novopack_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 # =========================
-# Pagamento por MetaMask - Fluxo
+# Pagamento por MetaMask - Multi-rede
 # =========================
 async def pagar_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not WALLET_ADDRESS:
         await update.effective_message.reply_text("Método de pagamento não configurado. (WALLET_ADDRESS ausente)")
         return
-    texto = (
-        f"💸 <b>Pagamento via MetaMask</b>\n"
-        f"1) Envie o valor para a carteira (<b>{esc(CHAIN_NAME)}</b>):\n"
-        f"<code>{esc(WALLET_ADDRESS)}</code>\n"
-        f"2) Após pagar, me envie: <code>/tx &lt;hash_da_transacao&gt;</code>\n\n"
-        f"A equipe valida e libera o VIP. Se tiver automação externa, também aceitamos POST em /crypto_webhook."
-    )
-    await update.effective_message.reply_text(texto, parse_mode="HTML")
+    if not CHAINS:
+        await update.effective_message.reply_text("Nenhuma rede configurada. Defina SUPPORTED_CHAINS_JSON no .env")
+        return
+    lines = [
+        f"💸 <b>Pagamento via MetaMask</b>",
+        f"Carteira de destino:",
+        f"<code>{esc(WALLET_ADDRESS)}</code>",
+        "",
+        "Redes/moedas aceitas:"
+    ]
+    for name, cfg in CHAINS.items():
+        sym = cfg["symbol"]
+        min_nat = cfg["min_native"]
+        conf = cfg["confirmations"]
+        lines.append(f"• <b>{name}</b> — nativo: <b>{min_nat} {sym}</b>, confs: <b>{conf}</b>")
+        if cfg["tokens"]:
+            toks = ", ".join([f"{t['symbol']} (min {t['min']})" for t in cfg["tokens"]])
+            lines.append(f"  Tokens: {toks}")
+    lines += [
+        "",
+        "Após pagar, envie:",
+        "<code>/tx &lt;hash&gt;</code> (detecta rede) ou",
+        "<code>/tx &lt;rede&gt; &lt;hash&gt;</code> (ex.: /tx polygon 0xABC...)"
+    ]
+    await update.effective_message.reply_text("\n".join(lines), parse_mode="HTML")
 
 async def tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.effective_message
     user = update.effective_user
     if not context.args:
-        await msg.reply_text("Uso: /tx <hash_da_transacao>")
+        await msg.reply_text("Uso: /tx <hash>  |  ou  /tx <rede> <hash>")
         return
-    tx_hash = context.args[0].strip()
+
+    if len(context.args) == 1:
+        chain_key = None
+        tx_hash = context.args[0].strip()
+    else:
+        # tenta interpretar 1º como possível rede
+        maybe_chain = context.args[0].lower()
+        if maybe_chain in CHAINS:
+            chain_key = maybe_chain
+            tx_hash = context.args[1].strip()
+        else:
+            # não reconheci rede; trata como hash único
+            chain_key = None
+            tx_hash = context.args[-1].strip()
+
     if not tx_hash or len(tx_hash) < 10:
         await msg.reply_text("Hash inválido.")
         return
 
+    # evita duplicidade
     s = SessionLocal()
     try:
         if s.query(Payment).filter(Payment.tx_hash == tx_hash).first():
             await msg.reply_text("Esse hash já foi registrado. Aguarde aprovação.")
             return
+    finally:
+        s.close()
+
+    # verificação on-chain
+    res = verify_tx_multi(tx_hash, prefer_chain=chain_key)
+
+    status = "approved" if res.get("ok") else "pending"
+    amount_str = str(res.get("amount_decimal")) if res.get("amount_decimal") is not None else None
+    token_symbol = res.get("token_symbol")
+    chain = res.get("chain") or (chain_key or "")
+
+    s = SessionLocal()
+    try:
         p = Payment(
             user_id=user.id,
             username=user.username,
             tx_hash=tx_hash,
-            chain=CHAIN_NAME,
-            status="pending",
+            chain=chain,
+            token_symbol=token_symbol,
+            amount=amount_str,
+            status=status,
+            notes=res.get("reason")
         )
+        if status == "approved":
+            p.decided_at = now_utc()
         s.add(p)
         s.commit()
-        await msg.reply_text("✅ Recebi seu hash! Assim que for aprovado, te envio o convite do VIP.")
     finally:
         s.close()
 
+    if res.get("ok"):
+        try:
+            invite = await application.bot.export_chat_invite_link(chat_id=GROUP_VIP_ID)
+            await application.bot.send_message(
+                chat_id=user.id,
+                text=f"✅ Pagamento confirmado ({amount_str} {token_symbol} em {chain}).\nEntre no VIP: {invite}"
+            )
+            await msg.reply_text("✅ Pagamento confirmado automaticamente. Convite enviado no seu privado.")
+        except Exception as e:
+            logging.exception("Erro enviando invite")
+            await msg.reply_text(f"✅ Pagamento confirmado. Falhou ao enviar convite automático: {e}")
+    else:
+        reason = res.get("reason") or "Em análise"
+        confs = res.get("confirmations")
+        need = None
+        if chain and chain in CHAINS:
+            need = CHAINS[chain]["confirmations"]
+        extra = f" | confirmações: {confs}/{need}" if confs is not None and need is not None else ""
+        await msg.reply_text(f"⏳ Recebi seu hash. Status: pendente ({reason}{extra}).")
+
 async def listar_pendentes_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not (update.effective_user and is_admin(update.effective_user.id)):
-        await update.effective_message.reply_text("Apenas admins podem usar este comando.")
+        await update.effective_message.reply_text("Apenas admins.")
         return
     s = SessionLocal()
     try:
@@ -1385,14 +1560,14 @@ async def listar_pendentes_cmd(update: Update, context: ContextTypes.DEFAULT_TYP
             return
         lines = ["⏳ <b>Pendentes</b>"]
         for p in pend:
-            lines.append(f"- user_id:{p.user_id} @{p.username or '-'} | {p.tx_hash} | {p.chain} | {p.created_at.strftime('%d/%m %H:%M')}")
+            lines.append(f"- user_id:{p.user_id} @{p.username or '-'} | {p.tx_hash} | {p.chain}/{p.token_symbol or '?'} | {p.created_at.strftime('%d/%m %H:%M')}")
         await update.effective_message.reply_text("\n".join(lines), parse_mode="HTML")
     finally:
         s.close()
 
 async def aprovar_tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not (update.effective_user and is_admin(update.effective_user.id)):
-        await update.effective_message.reply_text("Apenas admins podem usar este comando.")
+        await update.effective_message.reply_text("Apenas admins.")
         return
     if not context.args:
         await update.effective_message.reply_text("Uso: /aprovar_tx <user_id>")
@@ -1425,7 +1600,7 @@ async def aprovar_tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def rejeitar_tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not (update.effective_user and is_admin(update.effective_user.id)):
-        await update.effective_message.reply_text("Apenas admins podem usar este comando.")
+        await update.effective_message.reply_text("Apenas admins.")
         return
     if not context.args:
         await update.effective_message.reply_text("Uso: /rejeitar_tx <user_id> [motivo]")
@@ -1481,11 +1656,9 @@ async def _scheduled_message_job(context: ContextTypes.DEFAULT_TYPE):
         logging.warning(f"Falha ao enviar scheduled_message id={sid}: {e}")
 
 def _register_all_scheduled_messages(job_queue: JobQueue):
-    # limpa todos os jobs antigos (mensagens + packs)
     for j in list(job_queue.jobs()):
         if j.name and (j.name.startswith(JOB_PREFIX_SM) or j.name in {"daily_pack_vip", "daily_pack_free"}):
             j.schedule_removal()
-    # re-registra mensagens por tier
     msgs = scheduled_all()
     for m in msgs:
         try:
@@ -1493,14 +1666,9 @@ def _register_all_scheduled_messages(job_queue: JobQueue):
         except Exception:
             continue
         tz = _tz(m.tz)
-        job_queue.run_daily(
-            _scheduled_message_job,
-            time=dt.time(hour=h, minute=k, tzinfo=tz),
-            name=f"{JOB_PREFIX_SM}{m.id}",
-        )
+        job_queue.run_daily(_scheduled_message_job, time=dt.time(hour=h, minute=k, tzinfo=tz), name=f"{JOB_PREFIX_SM}{m.id}")
 
 async def _reschedule_daily_packs():
-    # remove existentes
     for j in list(application.job_queue.jobs()):
         if j.name in {"daily_pack_vip", "daily_pack_free"}:
             j.schedule_removal()
@@ -1537,11 +1705,7 @@ async def _add_msg_tier(update: Update, context: ContextTypes.DEFAULT_TYPE, tier
     m = scheduled_create(hhmm, texto, tier=tier)
     tz = _tz(m.tz)
     h, k = parse_hhmm(m.hhmm)
-    application.job_queue.run_daily(
-        _scheduled_message_job,
-        time=dt.time(hour=h, minute=k, tzinfo=tz),
-        name=f"{JOB_PREFIX_SM}{m.id}",
-    )
+    application.job_queue.run_daily(_scheduled_message_job, time=dt.time(hour=h, minute=k, tzinfo=tz), name=f"{JOB_PREFIX_SM}{m.id}")
     await update.effective_message.reply_text(f"✅ Mensagem #{m.id} ({tier.upper()}) criada para {m.hhmm} (diária).")
 
 async def add_msg_vip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1617,11 +1781,7 @@ async def _edit_msg_tier(update: Update, context: ContextTypes.DEFAULT_TYPE, tie
     if m:
         tz = _tz(m.tz)
         h, k = parse_hhmm(m.hhmm)
-        context.job_queue.run_daily(
-            _scheduled_message_job,
-            time=dt.time(hour=h, minute=k, tzinfo=tz),
-            name=f"{JOB_PREFIX_SM}{m.id}",
-        )
+        context.job_queue.run_daily(_scheduled_message_job, time=dt.time(hour=h, minute=k, tzinfo=tz), name=f"{JOB_PREFIX_SM}{m.id}")
     await update.effective_message.reply_text("✅ Mensagem atualizada.")
 
 async def edit_msg_vip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1736,32 +1896,49 @@ async def crypto_webhook(request: Request):
     data = await request.json()
     uid = data.get("telegram_user_id")
     tx_hash = data.get("tx_hash")
-    amount = data.get("amount")
-    chain = data.get("chain") or CHAIN_NAME
-
+    chain = (data.get("chain") or "").lower()  # opcional
     if not uid or not tx_hash:
         return JSONResponse({"ok": False, "error": "telegram_user_id e tx_hash são obrigatórios"}, status_code=400)
+
+    res = verify_tx_multi(tx_hash, prefer_chain=chain if chain in CHAINS else None)
+    status = "approved" if res.get("ok") else "pending"
 
     s = SessionLocal()
     try:
         pay = s.query(Payment).filter(Payment.tx_hash == tx_hash).first()
         if not pay:
-            pay = Payment(user_id=int(uid), tx_hash=tx_hash, amount=amount, chain=chain, status="approved", decided_at=now_utc())
+            pay = Payment(
+                user_id=int(uid),
+                username=None,
+                tx_hash=tx_hash,
+                chain=res.get("chain") or chain,
+                token_symbol=res.get("token_symbol"),
+                amount=(str(res.get("amount_decimal")) if res.get("amount_decimal") is not None else None),
+                status=status,
+                notes=res.get("reason"),
+                decided_at=now_utc() if status == "approved" else None
+            )
             s.add(pay)
         else:
-            pay.status = "approved"
-            pay.decided_at = now_utc()
+            pay.chain = res.get("chain") or chain or pay.chain
+            pay.token_symbol = res.get("token_symbol") or pay.token_symbol
+            pay.amount = (str(res.get("amount_decimal")) if res.get("amount_decimal") is not None else pay.amount)
+            pay.status = status
+            pay.notes = res.get("reason")
+            if status == "approved":
+                pay.decided_at = now_utc()
         s.commit()
     finally:
         s.close()
 
-    try:
-        invite = await application.bot.export_chat_invite_link(chat_id=GROUP_VIP_ID)
-        await application.bot.send_message(chat_id=int(uid), text=f"✅ Pagamento confirmado! Entre no VIP: {invite}")
-    except Exception:
-        logging.exception("Erro enviando invite")
+    if res.get("ok"):
+        try:
+            invite = await application.bot.export_chat_invite_link(chat_id=GROUP_VIP_ID)
+            await application.bot.send_message(chat_id=int(uid), text=f"✅ Pagamento confirmado! Entre no VIP: {invite}")
+        except Exception:
+            logging.exception("Erro enviando invite")
 
-    return JSONResponse({"ok": True})
+    return JSONResponse({"ok": True, "status": status})
 
 @app.post("/webhook")
 async def telegram_webhook(request: Request):
@@ -1776,7 +1953,7 @@ async def telegram_webhook(request: Request):
 
 @app.get("/")
 async def root():
-    return {"status": "online", "message": "Bot ready (crypto + schedules + VIP/FREE)"}
+    return {"status": "online", "message": "Bot ready (packs VIP/FREE + pagamentos multi-rede EVM)"}
 
 # =========================
 # Startup: register handlers & jobs
@@ -1796,7 +1973,7 @@ async def on_startup():
     BOT_USERNAME = me.username
 
     logging.basicConfig(level=logging.INFO)
-    logging.info("Bot iniciado (cripto + schedules + VIP/FREE).")
+    logging.info("Bot iniciado (packs + pagamentos multi-rede).")
 
     # ===== Error handler =====
     application.add_error_handler(error_handler)
@@ -1818,7 +1995,6 @@ async def on_startup():
         CONFIRM_SAVE: [MessageHandler(filters.TEXT & ~filters.COMMAND, novopack_confirm_save)],
     }
 
-    # Handler principal: /novopack (privado ou grupos cadastrados) + /start novopack (privado via deep-link)
     conv_main = ConversationHandler(
         entry_points=[
             CommandHandler("novopack", novopack_start),
@@ -1833,7 +2009,6 @@ async def on_startup():
     )
     application.add_handler(conv_main, group=0)
 
-    # Atalhos (opcionais, só privado)
     conv_vip = ConversationHandler(
         entry_points=[CommandHandler("novopackvip", novopackvip_start, filters=filters.ChatType.PRIVATE)],
         states=states_map,
@@ -1850,7 +2025,6 @@ async def on_startup():
     )
     application.add_handler(conv_free, group=0)
 
-    # ===== Conversa /excluir_pack (com confirmação) =====
     excluir_conv = ConversationHandler(
         entry_points=[CommandHandler("excluir_pack", excluir_pack_cmd)],
         states={DELETE_PACK_CONFIRM: [MessageHandler(filters.TEXT & ~filters.COMMAND, excluir_pack_confirm)]},
@@ -1869,14 +2043,7 @@ async def on_startup():
     )
     media_filter = (
         (filters.Chat(STORAGE_GROUP_ID) | filters.Chat(STORAGE_GROUP_FREE_ID))
-        & (
-            filters.PHOTO
-            | filters.VIDEO
-            | filters.ANIMATION
-            | filters.AUDIO
-            | filters.Document.ALL
-            | filters.VOICE
-        )
+        & (filters.PHOTO | filters.VIDEO | filters.ANIMATION | filters.AUDIO | filters.Document.ALL | filters.VOICE)
     )
     application.add_handler(MessageHandler(media_filter, storage_media_handler), group=1)
 
@@ -1929,10 +2096,7 @@ async def on_startup():
     application.add_handler(CommandHandler("set_pack_horario_vip", set_pack_horario_vip_cmd), group=1)
     application.add_handler(CommandHandler("set_pack_horario_free", set_pack_horario_free_cmd), group=1)
 
-    # Jobs diários de packs
     await _reschedule_daily_packs()
-
-    # (Re)registrar todas as mensagens agendadas existentes
     _register_all_scheduled_messages(application.job_queue)
 
     logging.info("Handlers e jobs registrados.")
