@@ -83,6 +83,7 @@ if not BOT_TOKEN:
 app = FastAPI()
 application = ApplicationBuilder().token(BOT_TOKEN).build()
 bot = None
+BOT_USERNAME = None  # preenchido no startup
 
 # =========================
 # DB setup
@@ -143,8 +144,7 @@ class Pack(Base):
     __tablename__ = "packs"
     id = Column(Integer, primary_key=True, index=True)
     title = Column(String, nullable=False)
-    # OBS: Para evitar colisão entre chats diferentes, usamos um "header key"
-    # VIP storage usa +message_id; FREE storage usa -message_id
+    # header_message_id único (ver header_key)
     header_message_id = Column(Integer, nullable=True, unique=True)
     created_at = Column(DateTime, default=now_utc)
     sent = Column(Boolean, default=False)
@@ -197,37 +197,27 @@ def ensure_bigint_columns():
         with engine.begin() as conn:
             try:
                 conn.execute(text("ALTER TABLE admins   ALTER COLUMN user_id TYPE BIGINT USING user_id::bigint"))
-                logging.info("Migrado: admins.user_id -> BIGINT")
-            except Exception as e:
-                logging.info("Admin user_id já ok ou tabela ausente: %s", e)
+            except Exception:
+                pass
             try:
                 conn.execute(text("ALTER TABLE payments ALTER COLUMN user_id TYPE BIGINT USING user_id::bigint"))
-                logging.info("Migrado: payments.user_id -> BIGINT")
-            except Exception as e:
-                logging.info("Payment user_id já ok ou tabela ausente: %s", e)
+            except Exception:
+                pass
     except Exception as e:
         logging.warning("Falha em ensure_bigint_columns: %s", e)
 
 def ensure_pack_tier_column():
-    """Adiciona coluna tier em packs e scheduled_messages, se não existir."""
+    """Garante coluna tier em packs e scheduled_messages."""
     try:
         with engine.begin() as conn:
-            try:
-                conn.execute(text("ALTER TABLE packs ADD COLUMN tier VARCHAR"))
-            except Exception:
-                pass
-            try:
-                conn.execute(text("UPDATE packs SET tier='vip' WHERE tier IS NULL"))
-            except Exception:
-                pass
-            try:
-                conn.execute(text("ALTER TABLE scheduled_messages ADD COLUMN tier VARCHAR"))
-            except Exception:
-                pass
-            try:
-                conn.execute(text("UPDATE scheduled_messages SET tier='vip' WHERE tier IS NULL"))
-            except Exception:
-                pass
+            try: conn.execute(text("ALTER TABLE packs ADD COLUMN tier VARCHAR"))
+            except Exception: pass
+            try: conn.execute(text("UPDATE packs SET tier='vip' WHERE tier IS NULL"))
+            except Exception: pass
+            try: conn.execute(text("ALTER TABLE scheduled_messages ADD COLUMN tier VARCHAR"))
+            except Exception: pass
+            try: conn.execute(text("UPDATE scheduled_messages SET tier='vip' WHERE tier IS NULL"))
+            except Exception: pass
     except Exception:
         pass
 
@@ -346,13 +336,6 @@ def mark_pack_sent(pack_id: int):
     finally:
         s.close()
 
-def list_packs_db():
-    s = SessionLocal()
-    try:
-        return s.query(Pack).order_by(Pack.created_at.desc()).all()
-    finally:
-        s.close()
-
 def list_packs_by_tier(tier: str):
     s = SessionLocal()
     try:
@@ -434,7 +417,7 @@ def scheduled_delete(sid: int) -> bool:
 
 def header_key(chat_id: int, message_id: int) -> int:
     """
-    Evita colisão entre grupos diferentes sem migrar schema:
+    Evita colisão entre grupos diferentes:
     - VIP storage usa +message_id
     - FREE storage usa -message_id
     """
@@ -475,9 +458,7 @@ async def storage_text_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     if update.effective_user and not is_admin(update.effective_user.id):
         return
 
-    # header único por chat via "chave" com sinal
     hkey = header_key(msg.chat.id, msg.message_id)
-
     if get_pack_by_header(hkey):
         await msg.reply_text("Pack já registrado.")
         return
@@ -499,7 +480,6 @@ async def storage_media_handler(update: Update, context: ContextTypes.DEFAULT_TY
         await msg.reply_text("Envie este arquivo como <b>resposta</b> ao título do pack.", parse_mode="HTML")
         return
 
-    # achar pack pelo header "chaveado"
     hkey = header_key(update.effective_chat.id, reply.message_id)
     pack = get_pack_by_header(hkey)
     if not pack:
@@ -648,7 +628,6 @@ async def enviar_pack_job(context: ContextTypes.DEFAULT_TYPE, tier: str, target_
         logging.exception("Erro no enviar_pack_job")
         return f"❌ Erro no envio ({tier}): {e!r}"
 
-# Wrappers p/ jobs/comandos
 async def enviar_pack_vip_job(context: ContextTypes.DEFAULT_TYPE) -> str:
     return await enviar_pack_job(context, tier="vip",  target_chat_id=GROUP_VIP_ID)
 
@@ -708,6 +687,8 @@ async def comandos_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• /set_pendentefree &lt;id&gt; — marca pack FREE como pendente",
         "• /set_enviadovip &lt;id&gt; — marca pack VIP como enviado",
         "• /set_enviadofree &lt;id&gt; — marca pack FREE como enviado",
+        "• /set_pack_horario_vip HH:MM — define o horário diário dos packs VIP",
+        "• /set_pack_horario_free HH:MM — define o horário diário dos packs FREE",
         "• /limpar_chat &lt;N&gt; — apaga últimas N mensagens (melhor esforço)",
         "• /mudar_nome &lt;novo nome&gt; — muda o nome exibido do bot",
         "• /mudar_username — instruções para mudar o @username (BotFather)",
@@ -717,8 +698,6 @@ async def comandos_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• /listar_pendentes — pagamentos pendentes",
         "• /aprovar_tx &lt;user_id&gt; — aprova e envia convite VIP",
         "• /rejeitar_tx &lt;user_id&gt; [motivo] — rejeita pagamento",
-        "• /set_pack_horario_vip HH:MM — define o horário diário dos packs VIP",
-        "• /set_pack_horario_free HH:MM — define o horário diário dos packs FREE",
     ]
     lines = base + (adm if isadm else [])
     await update.effective_message.reply_text("\n".join(lines), parse_mode="HTML")
@@ -841,27 +820,6 @@ async def simularfree_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     status = await enviar_pack_free_job(context)
     await update.effective_message.reply_text(status)
 
-async def listar_packs_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Mantido para compatibilidade (lista ambos)
-    if not (update.effective_user and is_admin(update.effective_user.id)):
-        await update.effective_message.reply_text("Apenas admins podem usar este comando.")
-        return
-    s = SessionLocal()
-    try:
-        packs = s.query(Pack).order_by(Pack.created_at.desc()).all()
-        if not packs:
-            await update.effective_message.reply_text("Nenhum pack registrado.")
-            return
-        lines = []
-        for p in packs:
-            previews = s.query(PackFile).filter(PackFile.pack_id == p.id, PackFile.role == "preview").count()
-            docs    = s.query(PackFile).filter(PackFile.pack_id == p.id, PackFile.role == "file").count()
-            status = "ENVIADO" if p.sent else "PENDENTE"
-            lines.append(f"[{p.id}] {esc(p.title)} — {status} — {p.tier.upper()} — previews:{previews} arquivos:{docs} — {p.created_at.strftime('%d/%m %H:%M')}")
-        await update.effective_message.reply_text("\n".join(lines))
-    finally:
-        s.close()
-
 async def listar_packsvip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not (update.effective_user and is_admin(update.effective_user.id)):
         await update.effective_message.reply_text("Apenas admins podem usar este comando.")
@@ -973,7 +931,7 @@ async def excluir_pack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         s = SessionLocal()
         try:
-            packs = s.query(Pack).order_by(Pack.created_at.desc()).all()
+            packs = list_packs_by_tier("vip") + list_packs_by_tier("free")
             if not packs:
                 await update.effective_message.reply_text("Nenhum pack registrado.")
                 return ConversationHandler.END
@@ -1129,14 +1087,28 @@ async def hint_files(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def novopack_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Entrada única: /novopack → pergunta VIP ou FREE, depois fluxo normal."""
+    """Entrada única: /novopack (qualquer chat) ou /start novopack (privado) → pergunta VIP/FREE."""
     if not _require_admin(update):
         await update.effective_message.reply_text("Apenas admins podem usar este comando.")
         return ConversationHandler.END
-    if update.effective_chat.type != "private":
-        await update.effective_message.reply_text("Use este comando no privado comigo, por favor.")
+
+    chat = update.effective_chat
+    if chat.type != "private":
+        # empurra para o privado com deep-link
+        try:
+            username = BOT_USERNAME or (await application.bot.get_me()).username
+        except Exception:
+            username = None
+        if username:
+            link = f"https://t.me/{username}?start=novopack"
+            await update.effective_message.reply_text(
+                "Use este comando no privado comigo, por favor.\n" + link
+            )
+        else:
+            await update.effective_message.reply_text("Use este comando no privado comigo, por favor.")
         return ConversationHandler.END
 
+    # privado: inicia fluxo
     context.user_data.clear()
     await update.effective_message.reply_text(
         "Quer cadastrar em qual tier? Responda <b>vip</b> ou <b>free</b>.",
@@ -1163,7 +1135,7 @@ async def novopack_choose_tier(update: Update, context: ContextTypes.DEFAULT_TYP
     )
     return TITLE
 
-# atalhos opcionais continuam funcionando
+# atalhos opcionais
 async def novopackvip_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not _require_admin(update):
         await update.effective_message.reply_text("Apenas admins podem usar este comando.")
@@ -1535,7 +1507,6 @@ async def _reschedule_daily_packs():
     logging.info(f"Job VIP agendado para {hhmm_vip}; FREE para {hhmm_free} (America/Sao_Paulo)")
 
 # ----- Comandos de mensagens (VIP/FREE) -----
-
 async def _add_msg_tier(update: Update, context: ContextTypes.DEFAULT_TYPE, tier: str):
     if not (update.effective_user and is_admin(update.effective_user.id)):
         await update.effective_message.reply_text("Apenas admins.")
@@ -1620,7 +1591,6 @@ async def _edit_msg_tier(update: Update, context: ContextTypes.DEFAULT_TYPE, tie
         await update.effective_message.reply_text("Nada para alterar. Informe HH:MM e/ou novo texto.")
         return
 
-    # valida se pertence ao tier
     m_current = scheduled_get(sid)
     if not m_current or m_current.tier != tier:
         await update.effective_message.reply_text(f"Mensagem não encontrada no tier {tier.upper()}.")
@@ -1630,7 +1600,6 @@ async def _edit_msg_tier(update: Update, context: ContextTypes.DEFAULT_TYPE, tie
     if not ok:
         await update.effective_message.reply_text("Mensagem não encontrada.")
         return
-    # re-agenda job unitário
     for j in list(context.job_queue.jobs()):
         if j.name == f"{JOB_PREFIX_SM}{sid}":
             j.schedule_removal()
@@ -1710,6 +1679,39 @@ async def del_msg_vip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def del_msg_free_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await _del_msg_tier(update, context, "free")
 
+# ====== Set horário dos jobs diários (VIP/FREE) ======
+async def set_pack_horario_vip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not (update.effective_user and is_admin(update.effective_user.id)):
+        await update.effective_message.reply_text("Apenas admins.")
+        return
+    if not context.args:
+        await update.effective_message.reply_text("Uso: /set_pack_horario_vip HH:MM")
+        return
+    try:
+        hhmm = context.args[0]
+        parse_hhmm(hhmm)
+        cfg_set("daily_pack_vip_hhmm", hhmm)
+        await _reschedule_daily_packs()
+        await update.effective_message.reply_text(f"✅ Horário diário dos packs VIP definido para {hhmm}.")
+    except Exception as e:
+        await update.effective_message.reply_text(f"Hora inválida: {e}")
+
+async def set_pack_horario_free_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not (update.effective_user and is_admin(update.effective_user.id)):
+        await update.effective_message.reply_text("Apenas admins.")
+        return
+    if not context.args:
+        await update.effective_message.reply_text("Uso: /set_pack_horario_free HH:MM")
+        return
+    try:
+        hhmm = context.args[0]
+        parse_hhmm(hhmm)
+        cfg_set("daily_pack_free_hhmm", hhmm)
+        await _reschedule_daily_packs()
+        await update.effective_message.reply_text(f"✅ Horário diário dos packs FREE definido para {hhmm}.")
+    except Exception as e:
+        await update.effective_message.reply_text(f"Hora inválida: {e}")
+
 # =========================
 # Error handler global
 # =========================
@@ -1771,7 +1773,7 @@ async def root():
 # =========================
 @app.on_event("startup")
 async def on_startup():
-    global bot
+    global bot, BOT_USERNAME
     await application.initialize()
     await application.start()
     bot = application.bot
@@ -1780,13 +1782,16 @@ async def on_startup():
         raise RuntimeError("WEBHOOK_URL não definido no .env")
     await bot.set_webhook(url=WEBHOOK_URL)
 
+    me = await bot.get_me()
+    BOT_USERNAME = me.username
+
     logging.basicConfig(level=logging.INFO)
     logging.info("Bot iniciado (cripto + schedules + VIP/FREE).")
 
     # ===== Error handler =====
     application.add_error_handler(error_handler)
 
-    # ===== Conversas do NOVOPACK (privado; group=0) =====
+    # ===== Conversas do NOVOPACK (group=0) =====
     states_map = {
         TITLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, novopack_title)],
         CONFIRM_TITLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, novopack_confirm_title)],
@@ -1803,9 +1808,12 @@ async def on_startup():
         CONFIRM_SAVE: [MessageHandler(filters.TEXT & ~filters.COMMAND, novopack_confirm_save)],
     }
 
-    # Handler principal: /novopack pergunta o tier
+    # Handler principal: /novopack (qualquer chat) + /start novopack (privado via deep-link)
     conv_main = ConversationHandler(
-        entry_points=[CommandHandler("novopack", novopack_start, filters=filters.ChatType.PRIVATE)],
+        entry_points=[
+            CommandHandler("novopack", novopack_start),
+            CommandHandler("start", novopack_start, filters=filters.ChatType.PRIVATE & filters.Regex(r"^/start\s+novopack(\s|$)")),
+        ],
         states={
             CHOOSE_TIER: [MessageHandler(filters.TEXT & ~filters.COMMAND, novopack_choose_tier)],
             **states_map,
@@ -1815,7 +1823,7 @@ async def on_startup():
     )
     application.add_handler(conv_main, group=0)
 
-    # Atalhos (opcionais) mantidos
+    # Atalhos (opcionais)
     conv_vip = ConversationHandler(
         entry_points=[CommandHandler("novopackvip", novopackvip_start, filters=filters.ChatType.PRIVATE)],
         states=states_map,
@@ -1871,7 +1879,6 @@ async def on_startup():
     # Packs & admin
     application.add_handler(CommandHandler("simularvip", simularvip_cmd), group=1)
     application.add_handler(CommandHandler("simularfree", simularfree_cmd), group=1)
-    application.add_handler(CommandHandler("listar_packs", listar_packs_cmd), group=1)  # ambos
     application.add_handler(CommandHandler("listar_packsvip", listar_packsvip_cmd), group=1)
     application.add_handler(CommandHandler("listar_packsfree", listar_packsfree_cmd), group=1)
     application.add_handler(CommandHandler("pack_info", pack_info_cmd), group=1)
@@ -1907,6 +1914,10 @@ async def on_startup():
     application.add_handler(CommandHandler("toggle_msg_free", toggle_msg_free_cmd), group=1)
     application.add_handler(CommandHandler("del_msg_vip", del_msg_vip_cmd), group=1)
     application.add_handler(CommandHandler("del_msg_free", del_msg_free_cmd), group=1)
+
+    # Set horário dos packs diários
+    application.add_handler(CommandHandler("set_pack_horario_vip", set_pack_horario_vip_cmd), group=1)
+    application.add_handler(CommandHandler("set_pack_horario_free", set_pack_horario_free_cmd), group=1)
 
     # Jobs diários de packs
     await _reschedule_daily_packs()
