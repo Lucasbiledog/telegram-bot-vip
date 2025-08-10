@@ -638,6 +638,7 @@ async def enviar_pack_free_job(context: ContextTypes.DEFAULT_TYPE) -> str:
 # COMMANDS BÁSICOS & ADMIN
 # =========================
 async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # trata deep-link /start novopack pelo ConversationHandler (ver startup)
     msg = update.effective_message
     text = (
         "Fala! Eu gerencio packs VIP/FREE, pagamentos via MetaMask e mensagens agendadas.\n"
@@ -659,10 +660,10 @@ async def comandos_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• /pagar — instruções",
         "• /tx &lt;hash&gt; — registrar a transação",
         "",
-        "🧩 Packs (privado):",
-        "• /novopack — cadastrar pack (pergunta VIP/FREE, depois título, previews e arquivos)",
-        "• /novopackvip — atalho direto para VIP",
-        "• /novopackfree — atalho direto para FREE",
+        "🧩 Packs (privado ou grupo de armazenamento):",
+        "• /novopack — perguntar VIP/FREE e iniciar fluxo",
+        "• /novopackvip — atalho direto para VIP (privado)",
+        "• /novopackfree — atalho direto para FREE (privado)",
         "",
         "🕒 Mensagens agendadas:",
         "• /add_msg_vip HH:MM &lt;texto&gt;",
@@ -813,7 +814,9 @@ async def simularvip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     status = await enviar_pack_vip_job(context)
     await update.effective_message.reply_text(status)
 
-async def simularfree_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def simularfree_cmd(update: Update, Context: ContextTypes.DEFAULT_TYPE):
+    # PTB passa 'context', mas manter assinatura igual às demais
+    context = Context  # compat
     if not (update.effective_user and is_admin(update.effective_user.id)):
         await update.effective_message.reply_text("Apenas admins podem usar este comando.")
         return
@@ -1032,7 +1035,7 @@ async def set_enviadovip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await _set_sent_by_tier(update, context, tier="vip", sent=True)
 
 # =========================
-# NOVOPACK (privado) — fluxo unificado
+# NOVOPACK (privado + grupos cadastrados)
 # =========================
 CHOOSE_TIER, TITLE, CONFIRM_TITLE, PREVIEWS, FILES, CONFIRM_SAVE = range(6)
 
@@ -1086,14 +1089,21 @@ async def hint_files(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Agora envie ARQUIVOS (📄 documento / 🎵 áudio / 🎙 voice) ou use /finalizar para revisar e salvar."
     )
 
+def _is_allowed_group(chat_id: int) -> bool:
+    """Permite iniciar o /novopack também dentro dos grupos cadastrados de armazenamento (VIP/FREE)."""
+    return chat_id in {STORAGE_GROUP_ID, STORAGE_GROUP_FREE_ID}
+
 async def novopack_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Entrada única: /novopack (qualquer chat) ou /start novopack (privado) → pergunta VIP/FREE."""
+    """Entrada única: /novopack → pergunta VIP/FREE e inicia fluxo.
+       Funciona no privado e nos grupos cadastrados de armazenamento.
+       Se for qualquer outro grupo, envia deep-link pro privado.
+    """
     if not _require_admin(update):
         await update.effective_message.reply_text("Apenas admins podem usar este comando.")
         return ConversationHandler.END
 
     chat = update.effective_chat
-    if chat.type != "private":
+    if chat.type != "private" and not _is_allowed_group(chat.id):
         # empurra para o privado com deep-link
         try:
             username = BOT_USERNAME or (await application.bot.get_me()).username
@@ -1108,7 +1118,7 @@ async def novopack_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.effective_message.reply_text("Use este comando no privado comigo, por favor.")
         return ConversationHandler.END
 
-    # privado: inicia fluxo
+    # privado OU grupo permitido: inicia fluxo
     context.user_data.clear()
     await update.effective_message.reply_text(
         "Quer cadastrar em qual tier? Responda <b>vip</b> ou <b>free</b>.",
@@ -1135,7 +1145,7 @@ async def novopack_choose_tier(update: Update, context: ContextTypes.DEFAULT_TYP
     )
     return TITLE
 
-# atalhos opcionais
+# atalhos (privado)
 async def novopackvip_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not _require_admin(update):
         await update.effective_message.reply_text("Apenas admins podem usar este comando.")
@@ -1808,7 +1818,7 @@ async def on_startup():
         CONFIRM_SAVE: [MessageHandler(filters.TEXT & ~filters.COMMAND, novopack_confirm_save)],
     }
 
-    # Handler principal: /novopack (qualquer chat) + /start novopack (privado via deep-link)
+    # Handler principal: /novopack (privado ou grupos cadastrados) + /start novopack (privado via deep-link)
     conv_main = ConversationHandler(
         entry_points=[
             CommandHandler("novopack", novopack_start),
@@ -1823,7 +1833,7 @@ async def on_startup():
     )
     application.add_handler(conv_main, group=0)
 
-    # Atalhos (opcionais)
+    # Atalhos (opcionais, só privado)
     conv_vip = ConversationHandler(
         entry_points=[CommandHandler("novopackvip", novopackvip_start, filters=filters.ChatType.PRIVATE)],
         states=states_map,
