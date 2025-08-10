@@ -1,4 +1,9 @@
-# main.py — Bot Telegram (VIP/FREE) + MetaMask (multi-rede), sem .env
+# main.py — Bot Telegram (VIP/FREE) + Pagamento via MetaMask (multi-rede EVM)
+# - Sem .env: BOT_TOKEN vem das Env Vars do Render
+# - Packs VIP e FREE (armazenamento e envio)
+# - Mensagens agendadas para VIP e FREE
+# - Heartbeat anti-idle (log + ping Telegram) a cada 2 min
+
 import os
 import json
 import logging
@@ -27,6 +32,7 @@ from telegram.ext import (
 from sqlalchemy import (
     create_engine, Column, Integer, String, DateTime, Boolean, ForeignKey, Text, BigInteger, UniqueConstraint, text
 )
+    # pyright: reportMissingImports=false
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship
 from sqlalchemy.engine import make_url
 
@@ -59,11 +65,7 @@ def to_dec(amount_wei: int, decimals: int) -> Decimal:
 # CONFIG FIXA (sem .env)
 # =========================
 CONFIG: Dict[str, Any] = {
-    # --- Telegram ---
-    # 🔐 COLE AQUI O TOKEN VERDADEIRO DO SEU BOT!
-    "BOT_TOKEN": "PASTE_BOT_TOKEN_HERE",
-
-    # Se sua URL do Render for outra, troque aqui.
+    # Se sua URL do Render for outra, troque aqui (ou defina WEBHOOK_URL no Render)
     "WEBHOOK_URL": "https://telegram-bot-vip-hfn7.onrender.com/webhook",
 
     # Grupos
@@ -127,11 +129,10 @@ CONFIG: Dict[str, Any] = {
 PORT = int(os.environ.get("PORT", 10000))
 
 # =========================
-# Lê config
+# Lê config (BOT_TOKEN só do Render)
 # =========================
-# permite usar variável de ambiente BOT_TOKEN como fallback, se quiser
-BOT_TOKEN = CONFIG.get("BOT_TOKEN") or os.environ.get("BOT_TOKEN", "")
-WEBHOOK_URL = CONFIG["WEBHOOK_URL"]
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "").strip()  # defina no Render (Env Vars)
+WEBHOOK_URL = os.environ.get("WEBHOOK_URL", CONFIG.get("WEBHOOK_URL", "")).strip()
 
 STORAGE_GROUP_ID = int(CONFIG["STORAGE_GROUP_ID"])
 GROUP_VIP_ID     = int(CONFIG["GROUP_VIP_ID"])
@@ -143,11 +144,10 @@ WALLET_ADDRESS = CONFIG["WALLET_ADDRESS"].strip()
 REQUIRED_CONFIRMATIONS_DEFAULT = int(CONFIG["REQUIRED_CONFIRMATIONS_DEFAULT"])
 SUPPORTED_CHAINS_RAW = CONFIG["SUPPORTED_CHAINS"]
 
-if not BOT_TOKEN or BOT_TOKEN == "PASTE_BOT_TOKEN_HERE":
-    raise RuntimeError("Defina BOT_TOKEN em CONFIG['BOT_TOKEN'] (ou em env BOT_TOKEN).")
-
+if not BOT_TOKEN:
+    raise RuntimeError("Defina a env BOT_TOKEN no Render (Environment > Env Vars).")
 if not WEBHOOK_URL:
-    raise RuntimeError("Defina WEBHOOK_URL em CONFIG.")
+    raise RuntimeError("Defina WEBHOOK_URL no Render ou edite CONFIG['WEBHOOK_URL'].")
 
 # =========================
 # FASTAPI + PTB
@@ -612,10 +612,11 @@ def scheduled_delete(sid: int) -> bool:
 # STORAGE GROUP handlers
 # =========================
 def header_key(chat_id: int, message_id: int) -> int:
+    # diferenciando headers de VIP e FREE
     if chat_id == STORAGE_GROUP_ID:
-        return int(message_id)
+        return int(message_id)          # VIP
     if chat_id == STORAGE_GROUP_FREE_ID:
-        return int(-message_id)
+        return int(-message_id)         # FREE (nega para não colidir)
     return int(message_id)
 
 async def storage_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -821,6 +822,17 @@ async def enviar_pack_free_job(context: ContextTypes.DEFAULT_TYPE) -> str:
     return await enviar_pack_job(context, tier="free", target_chat_id=GROUP_FREE_ID)
 
 # =========================
+# Heartbeat (anti-idle no Render)
+# =========================
+async def _heartbeat_job(context: ContextTypes.DEFAULT_TYPE):
+    try:
+        logging.info("❤️ heartbeat: bot ativo")
+        info = await context.application.bot.get_webhook_info()  # ping leve à API do Telegram
+        logging.debug(f"Webhook set: {bool(info.url)}")
+    except Exception as e:
+        logging.warning(f"heartbeat erro: {e}")
+
+# =========================
 # COMMANDS
 # =========================
 async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -847,7 +859,7 @@ async def comandos_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• /tx &lt;rede&gt; &lt;hash&gt; — força rede (ex.: /tx polygon 0xabc...)",
         "",
         "🧩 Packs:",
-        "• /novopack — pergunta VIP/FREE (privado ou grupos de cadastro)",
+        "• /novopack — pergunta VIP/FREE (privado ou nos grupos de cadastro)",
         "• /novopackvip — atalho VIP (privado)",
         "• /novopackfree — atalho FREE (privado)",
         "",
@@ -1269,6 +1281,7 @@ async def novopack_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ConversationHandler.END
 
     chat = update.effective_chat
+    # Permitido no privado e também nos grupos de armazenamento
     if chat.type != "private" and not _is_allowed_group(chat.id):
         try:
             username = BOT_USERNAME or (await application.bot.get_me()).username
@@ -1950,6 +1963,10 @@ async def telegram_webhook(request: Request):
 async def root():
     return {"status": "online", "message": "Bot ready (packs VIP/FREE + pagamentos multi-rede EVM)"}
 
+@app.get("/health")
+async def health():
+    return {"ok": True, "ts": now_utc().isoformat()}
+
 # =========================
 # Startup
 # =========================
@@ -1970,6 +1987,7 @@ async def on_startup():
 
     application.add_error_handler(error_handler)
 
+    # Conversas /novopack
     states_map = {
         TITLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, novopack_title)],
         CONFIRM_TITLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, novopack_confirm_title)],
@@ -2016,6 +2034,7 @@ async def on_startup():
     )
     application.add_handler(conv_free, group=0)
 
+    # Conversa excluir pack
     excluir_conv = ConversationHandler(
         entry_points=[CommandHandler("excluir_pack", excluir_pack_cmd)],
         states={DELETE_PACK_CONFIRM: [MessageHandler(filters.TEXT & ~filters.COMMAND, excluir_pack_confirm)]},
@@ -2024,6 +2043,7 @@ async def on_startup():
     )
     application.add_handler(excluir_conv, group=0)
 
+    # Handlers dos grupos de armazenamento
     application.add_handler(
         MessageHandler(
             (filters.Chat(STORAGE_GROUP_ID) | filters.Chat(STORAGE_GROUP_FREE_ID)) & filters.TEXT & ~filters.COMMAND,
@@ -2037,13 +2057,13 @@ async def on_startup():
     )
     application.add_handler(MessageHandler(media_filter, storage_media_handler), group=1)
 
-    # gerais
+    # Comandos gerais
     application.add_handler(CommandHandler("start", start_cmd), group=1)
     application.add_handler(CommandHandler("comandos", comandos_cmd), group=1)
     application.add_handler(CommandHandler("listar_comandos", comandos_cmd), group=1)
     application.add_handler(CommandHandler("getid", getid_cmd), group=1)
 
-    # packs & admin
+    # Packs & admin
     application.add_handler(CommandHandler("simularvip", simularvip_cmd), group=1)
     application.add_handler(CommandHandler("simularfree", simularfree_cmd), group=1)
     application.add_handler(CommandHandler("listar_packsvip", listar_packsvip_cmd), group=1)
@@ -2055,7 +2075,7 @@ async def on_startup():
     application.add_handler(CommandHandler("set_enviadovip", set_enviadovip_cmd), group=1)
     application.add_handler(CommandHandler("set_enviadofree", set_enviadofree_cmd), group=1)
 
-    # admin mgmt
+    # Admin mgmt
     application.add_handler(CommandHandler("listar_admins", listar_admins_cmd), group=1)
     application.add_handler(CommandHandler("add_admin", add_admin_cmd), group=1)
     application.add_handler(CommandHandler("rem_admin", rem_admin_cmd), group=1)
@@ -2063,14 +2083,14 @@ async def on_startup():
     application.add_handler(CommandHandler("mudar_username", mudar_username_cmd), group=1)
     application.add_handler(CommandHandler("limpar_chat", limpar_chat_cmd), group=1)
 
-    # pagamentos
+    # Pagamentos
     application.add_handler(CommandHandler("pagar", pagar_cmd), group=1)
     application.add_handler(CommandHandler("tx", tx_cmd), group=1)
     application.add_handler(CommandHandler("listar_pendentes", listar_pendentes_cmd), group=1)
     application.add_handler(CommandHandler("aprovar_tx", aprovar_tx_cmd), group=1)
     application.add_handler(CommandHandler("rejeitar_tx", rejeitar_tx_cmd), group=1)
 
-    # mensagens agendadas
+    # Mensagens agendadas
     application.add_handler(CommandHandler("add_msg_vip", add_msg_vip_cmd), group=1)
     application.add_handler(CommandHandler("add_msg_free", add_msg_free_cmd), group=1)
     application.add_handler(CommandHandler("list_msgs_vip", list_msgs_vip_cmd), group=1)
@@ -2082,9 +2102,12 @@ async def on_startup():
     application.add_handler(CommandHandler("del_msg_vip", del_msg_vip_cmd), group=1)
     application.add_handler(CommandHandler("del_msg_free", del_msg_free_cmd), group=1)
 
-    # Jobs
+    # Jobs de packs + mensagens agendadas
     await _reschedule_daily_packs()
     _register_all_scheduled_messages(application.job_queue)
+
+    # 🔁 Heartbeat a cada 2 minutos
+    application.job_queue.run_repeating(_heartbeat_job, interval=120, first=10, name="heartbeat")
 
     logging.info("Handlers e jobs registrados.")
 
