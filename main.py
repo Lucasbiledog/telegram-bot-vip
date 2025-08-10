@@ -1,4 +1,4 @@
-# main.py
+# main.py — Bot Telegram (VIP/FREE) + MetaMask (multi-rede), sem .env
 import os
 import json
 import logging
@@ -9,7 +9,6 @@ import html
 from decimal import Decimal
 
 import pytz
-
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import PlainTextResponse, JSONResponse
 import uvicorn
@@ -25,14 +24,12 @@ from telegram.ext import (
     filters,
 )
 
-# SQLAlchemy
 from sqlalchemy import (
     create_engine, Column, Integer, String, DateTime, Boolean, ForeignKey, Text, BigInteger, UniqueConstraint, text
 )
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship
 from sqlalchemy.engine import make_url
 
-# Web3
 from web3 import Web3
 
 # =========================
@@ -63,37 +60,38 @@ def to_dec(amount_wei: int, decimals: int) -> Decimal:
 # =========================
 CONFIG: Dict[str, Any] = {
     # --- Telegram ---
-    "BOT_TOKEN": "COLE_SEU_BOT_TOKEN_AQUI",
-    # Exemplo: "https://seuapp.onrender.com/webhook"
-    "WEBHOOK_URL": "COLE_SUA_URL_PUBLICA_AQUI/webhook",
+    # 🔐 COLE AQUI O TOKEN VERDADEIRO DO SEU BOT!
+    "BOT_TOKEN": "PASTE_BOT_TOKEN_HERE",
 
-    # IDs de grupos
-    # Grupo de armazenamento VIP (onde você cadastra título/itens do pack VIP)
+    # Se sua URL do Render for outra, troque aqui.
+    "WEBHOOK_URL": "https://telegram-bot-vip-hfn7.onrender.com/webhook",
+
+    # Grupos
+    # Grupo de armazenamento VIP (títulos/itens dos packs VIP):
     "STORAGE_GROUP_ID": -4806334341,
-    # Grupo VIP (onde será enviado o pack VIP)
+    # Grupo VIP (destino dos packs VIP):
     "GROUP_VIP_ID": -1002791988432,
 
-    # Grupo de armazenamento FREE (onde você cadastra packs free)
+    # Grupo de armazenamento FREE (títulos/itens dos packs FREE):
     "STORAGE_GROUP_FREE_ID": -1002509364079,
-    # Grupo FREE (onde será enviado o pack FREE)
+    # Grupo FREE (destino dos packs FREE):
     "GROUP_FREE_ID": -1002509364079,
 
-    # Database (pode usar sqlite local ou Postgres)
+    # Banco (sqlite local por padrão)
     "DATABASE_URL": "sqlite:///./bot_data.db",
 
-    # Carteira EVM que vai receber (sua carteira)
+    # Carteira que recebe (sua MetaMask)
     "WALLET_ADDRESS": "0x40dDBD27F878d07808339F9965f013F1CBc2F812",
 
-    # Confirmações padrão (se a rede não especificar)
+    # Confirmações padrão
     "REQUIRED_CONFIRMATIONS_DEFAULT": 3,
 
-    # Redes EVM suportadas (adicione/edite à vontade)
-    # LEMBRE de colocar sua chave de RPC onde indicado
+    # Redes EVM suportadas (RPCs públicos para rodar sem chave)
     "SUPPORTED_CHAINS": {
         "polygon": {
-            "rpc": "https://polygon-mainnet.g.alchemy.com/v2/SUA_KEY_ALCHEMY",
+            "rpc": "https://polygon-rpc.com",
             "symbol": "MATIC",
-            "min_native": "5",         # mínimo em MATIC
+            "min_native": "5",
             "confirmations": 3,
             "native_decimals": 18,
             "tokens": [
@@ -102,7 +100,7 @@ CONFIG: Dict[str, Any] = {
             ],
         },
         "ethereum": {
-            "rpc": "https://eth-mainnet.g.alchemy.com/v2/SUA_KEY_ALCHEMY",
+            "rpc": "https://eth.llamarpc.com",
             "symbol": "ETH",
             "min_native": "0.01",
             "confirmations": 3,
@@ -126,13 +124,13 @@ CONFIG: Dict[str, Any] = {
     },
 }
 
-# Porta do Render: usa env da plataforma se existir; senão 10000
 PORT = int(os.environ.get("PORT", 10000))
 
 # =========================
 # Lê config
 # =========================
-BOT_TOKEN = CONFIG["BOT_TOKEN"]
+# permite usar variável de ambiente BOT_TOKEN como fallback, se quiser
+BOT_TOKEN = CONFIG.get("BOT_TOKEN") or os.environ.get("BOT_TOKEN", "")
 WEBHOOK_URL = CONFIG["WEBHOOK_URL"]
 
 STORAGE_GROUP_ID = int(CONFIG["STORAGE_GROUP_ID"])
@@ -143,14 +141,13 @@ GROUP_FREE_ID         = int(CONFIG["GROUP_FREE_ID"])
 DB_URL = CONFIG["DATABASE_URL"]
 WALLET_ADDRESS = CONFIG["WALLET_ADDRESS"].strip()
 REQUIRED_CONFIRMATIONS_DEFAULT = int(CONFIG["REQUIRED_CONFIRMATIONS_DEFAULT"])
-
 SUPPORTED_CHAINS_RAW = CONFIG["SUPPORTED_CHAINS"]
 
-if not BOT_TOKEN or "COLE_SEU_BOT_TOKEN_AQUI" in BOT_TOKEN:
-    raise RuntimeError("Defina BOT_TOKEN em CONFIG.")
+if not BOT_TOKEN or BOT_TOKEN == "PASTE_BOT_TOKEN_HERE":
+    raise RuntimeError("Defina BOT_TOKEN em CONFIG['BOT_TOKEN'] (ou em env BOT_TOKEN).")
 
-if not WEBHOOK_URL or "COLE_SUA_URL_PUBLICA_AQUI" in WEBHOOK_URL:
-    raise RuntimeError("Defina WEBHOOK_URL em CONFIG (ex: https://seuapp.onrender.com/webhook).")
+if not WEBHOOK_URL:
+    raise RuntimeError("Defina WEBHOOK_URL em CONFIG.")
 
 # =========================
 # FASTAPI + PTB
@@ -172,7 +169,6 @@ else:
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 Base = declarative_base()
 
-# ---- Config chave/valor persistente ----
 class ConfigKV(Base):
     __tablename__ = "config_kv"
     key = Column(String, primary_key=True)
@@ -200,14 +196,12 @@ def cfg_set(key: str, value: Optional[str]):
     finally:
         s.close()
 
-# ---- Admins ----
 class Admin(Base):
     __tablename__ = "admins"
     id = Column(Integer, primary_key=True)
     user_id = Column(BigInteger, unique=True, index=True)
     added_at = Column(DateTime, default=now_utc)
 
-# ---- Packs ----
 class Pack(Base):
     __tablename__ = "packs"
     id = Column(Integer, primary_key=True, index=True)
@@ -215,7 +209,7 @@ class Pack(Base):
     header_message_id = Column(Integer, nullable=True, unique=True)
     created_at = Column(DateTime, default=now_utc)
     sent = Column(Boolean, default=False)
-    tier = Column(String, default="vip")  # 'vip' ou 'free'
+    tier = Column(String, default="vip")  # vip | free
     files = relationship("PackFile", back_populates="pack", cascade="all, delete-orphan")
 
 class PackFile(Base):
@@ -230,22 +224,20 @@ class PackFile(Base):
     added_at = Column(DateTime, default=now_utc)
     pack = relationship("Pack", back_populates="files")
 
-# ---- Pagamentos ----
 class Payment(Base):
     __tablename__ = "payments"
     id = Column(Integer, primary_key=True)
     user_id = Column(BigInteger, index=True)
     username = Column(String, nullable=True)
     tx_hash = Column(String, unique=True, index=True)
-    chain = Column(String, default="")  # ex: polygon, ethereum, bsc
-    token_symbol = Column(String, nullable=True)  # ex: MATIC, ETH, USDT...
-    amount = Column(String, nullable=True)  # em unidades humanas (str)
+    chain = Column(String, default="")
+    token_symbol = Column(String, nullable=True)
+    amount = Column(String, nullable=True)
     status = Column(String, default="pending")  # pending | approved | rejected
     notes = Column(Text, nullable=True)
     created_at = Column(DateTime, default=now_utc)
     decided_at = Column(DateTime, nullable=True)
 
-# ---- Mensagens agendadas (por tier) ----
 class ScheduledMessage(Base):
     __tablename__ = "scheduled_messages"
     id = Column(Integer, primary_key=True)
@@ -253,7 +245,7 @@ class ScheduledMessage(Base):
     tz = Column(String, default="America/Sao_Paulo")
     text = Column(Text, nullable=False)
     enabled = Column(Boolean, default=True)
-    tier = Column(String, default="vip")  # 'vip' ou 'free'
+    tier = Column(String, default="vip")  # vip | free
     created_at = Column(DateTime, default=now_utc)
     __table_args__ = (UniqueConstraint('id', name='uq_scheduled_messages_id'),)
 
@@ -262,7 +254,7 @@ def ensure_bigint_columns():
         return
     try:
         with engine.begin() as conn:
-            try: conn.execute(text("ALTER TABLE admins   ALTER COLUMN user_id TYPE BIGINT USING user_id::bigint"))
+            try: conn.execute(text("ALTER TABLE admins ALTER COLUMN user_id TYPE BIGINT USING user_id::bigint"))
             except Exception: pass
             try: conn.execute(text("ALTER TABLE payments ALTER COLUMN user_id TYPE BIGINT USING user_id::bigint"))
             except Exception: pass
@@ -306,7 +298,7 @@ ensure_payment_token_symbol_column()
 init_db()
 
 # =========================
-# Chains registry (multi-rede)
+# Chains (multi-rede)
 # =========================
 def build_chains(raw_cfg: Dict[str, Any]) -> Dict[str, Any]:
     reg = {}
@@ -314,7 +306,7 @@ def build_chains(raw_cfg: Dict[str, Any]) -> Dict[str, Any]:
         rpc = (cfg.get("rpc") or "").strip()
         if not rpc:
             continue
-        w3 = Web3(Web3.HTTPProvider(rpc))
+        w3 = Web3(Web3.HTTPProvider(rpc, request_kwargs={"timeout": 20}))
         if not w3.is_connected():
             logging.warning(f"[chains] {name}: falhou conexão RPC ({rpc})")
         symbol = (cfg.get("symbol") or name.upper()).strip()
@@ -376,7 +368,7 @@ def _verify_on_chain(chain_key: str, cfg: Dict[str, Any], tx_hash: str) -> Dict[
     need_conf = cfg["confirmations"]
     dest = Web3.to_checksum_address(WALLET_ADDRESS)
 
-    # 1) Moeda nativa
+    # 1) Nativo
     try:
         if tx["to"] and Web3.to_checksum_address(tx["to"]) == dest:
             amount_dec = to_dec(tx["value"], cfg["native_decimals"])
@@ -391,7 +383,7 @@ def _verify_on_chain(chain_key: str, cfg: Dict[str, Any], tx_hash: str) -> Dict[
     except Exception:
         pass
 
-    # 2) Tokens ERC-20 (por logs)
+    # 2) ERC-20 (logs Transfer)
     total_by_token: Dict[str, int] = {}
     for lg in receipt.logs or []:
         try:
@@ -437,10 +429,8 @@ def verify_tx_multi(tx_hash: str, prefer_chain: Optional[str] = None) -> Dict[st
         if not cfg:
             return {"ok": False, "reason": f"rede '{prefer_chain}' não configurada"}
         return _verify_on_chain(ck, cfg, tx_hash)
-
     if not CHAINS:
         return {"ok": False, "reason": "nenhuma rede configurada"}
-
     best = None
     for ck, cfg in CHAINS.items():
         res = _verify_on_chain(ck, cfg, tx_hash)
@@ -733,7 +723,7 @@ async def storage_media_handler(update: Update, context: ContextTypes.DEFAULT_TY
     await msg.reply_text(f"Item adicionado ao pack <b>{esc(pack.title)}</b> — <i>{pack.tier.upper()}</i>.", parse_mode="HTML")
 
 # =========================
-# ENVIO DO PACK (JobQueue)
+# ENVIO DO PACK
 # =========================
 async def enviar_pack_job(context: ContextTypes.DEFAULT_TYPE, tier: str, target_chat_id: int) -> str:
     try:
@@ -831,7 +821,7 @@ async def enviar_pack_free_job(context: ContextTypes.DEFAULT_TYPE) -> str:
     return await enviar_pack_job(context, tier="free", target_chat_id=GROUP_FREE_ID)
 
 # =========================
-# COMMANDS BÁSICOS & ADMIN
+# COMMANDS
 # =========================
 async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.effective_message
@@ -853,8 +843,8 @@ async def comandos_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "",
         "💸 Pagamento (MetaMask, multi-rede):",
         "• /pagar — instruções e redes aceitas",
-        "• /tx &lt;hash&gt; — auto-detectar rede",
-        "• /tx &lt;rede&gt; &lt;hash&gt; — forçar rede (ex.: /tx polygon 0xabc...)",
+        "• /tx &lt;hash&gt; — auto-detecta rede",
+        "• /tx &lt;rede&gt; &lt;hash&gt; — força rede (ex.: /tx polygon 0xabc...)",
         "",
         "🧩 Packs:",
         "• /novopack — pergunta VIP/FREE (privado ou grupos de cadastro)",
@@ -901,7 +891,6 @@ async def getid_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="HTML"
         )
 
-# ====== Admin utils ======
 async def mudar_nome_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not (update.effective_user and is_admin(update.effective_user.id)):
         await update.effective_message.reply_text("Apenas admins.")
@@ -990,7 +979,7 @@ async def rem_admin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ok = remove_admin_db(uid)
     await update.effective_message.reply_text("✅ Admin removido." if ok else "Este user não é admin.")
 
-# ====== Packs admin ======
+# ===== Packs admin =====
 async def simularvip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not (update.effective_user and is_admin(update.effective_user.id)):
         await update.effective_message.reply_text("Apenas admins.")
@@ -1105,7 +1094,7 @@ async def excluir_item_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     finally:
         s.close()
 
-# ===== EXCLUIR PACK (lista + confirmação) =====
+# ===== EXCLUIR PACK (confirmação) =====
 DELETE_PACK_CONFIRM = range(1)
 
 async def excluir_pack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1173,7 +1162,7 @@ async def excluir_pack_confirm(update: Update, context: ContextTypes.DEFAULT_TYP
 
     return ConversationHandler.END
 
-# ===== SET PENDENTE / SET ENVIADO por tier =====
+# ===== SET PENDENTE/ENVIADO por tier =====
 async def _set_sent_by_tier(update: Update, context: ContextTypes.DEFAULT_TYPE, tier: str, sent: bool):
     if not (update.effective_user and is_admin(update.effective_user.id)):
         await update.effective_message.reply_text("Apenas admins.")
@@ -1449,7 +1438,7 @@ async def novopack_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 # =========================
-# Pagamento por MetaMask - Multi-rede
+# Pagamento (MetaMask)
 # =========================
 async def pagar_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not WALLET_ADDRESS:
@@ -1504,7 +1493,6 @@ async def tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await msg.reply_text("Hash inválido.")
         return
 
-    # evita duplicidade
     s = SessionLocal()
     try:
         if s.query(Payment).filter(Payment.tx_hash == tx_hash).first():
@@ -1695,7 +1683,6 @@ async def _reschedule_daily_packs():
 
     logging.info(f"Job VIP agendado para {hhmm_vip}; FREE para {hhmm_free} (America/Sao_Paulo)")
 
-# ----- Comandos de mensagens (VIP/FREE) -----
 async def _add_msg_tier(update: Update, context: ContextTypes.DEFAULT_TYPE, tier: str):
     if not (update.effective_user and is_admin(update.effective_user.id)):
         await update.effective_message.reply_text("Apenas admins.")
@@ -1775,12 +1762,10 @@ async def _edit_msg_tier(update: Update, context: ContextTypes.DEFAULT_TYPE, tie
     if hhmm is None and new_text is None:
         await update.effective_message.reply_text("Nada para alterar. Informe HH:MM e/ou novo texto.")
         return
-
     m_current = scheduled_get(sid)
     if not m_current or m_current.tier != tier:
         await update.effective_message.reply_text(f"Mensagem não encontrada no tier {tier.upper()}.")
         return
-
     ok = scheduled_update(sid, hhmm, new_text)
     if not ok:
         await update.effective_message.reply_text("Mensagem não encontrada.")
@@ -1860,7 +1845,6 @@ async def del_msg_vip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def del_msg_free_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await _del_msg_tier(update, context, "free")
 
-# ====== Set horário dos jobs diários (VIP/FREE) ======
 async def set_pack_horario_vip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not (update.effective_user and is_admin(update.effective_user.id)):
         await update.effective_message.reply_text("Apenas admins.")
@@ -1967,7 +1951,7 @@ async def root():
     return {"status": "online", "message": "Bot ready (packs VIP/FREE + pagamentos multi-rede EVM)"}
 
 # =========================
-# Startup: register handlers & jobs
+# Startup
 # =========================
 @app.on_event("startup")
 async def on_startup():
@@ -1984,10 +1968,8 @@ async def on_startup():
     logging.basicConfig(level=logging.INFO)
     logging.info("Bot iniciado (packs + pagamentos multi-rede).")
 
-    # ===== Error handler =====
     application.add_error_handler(error_handler)
 
-    # ===== Conversas do NOVOPACK (group=0) =====
     states_map = {
         TITLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, novopack_title)],
         CONFIRM_TITLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, novopack_confirm_title)],
@@ -2042,7 +2024,6 @@ async def on_startup():
     )
     application.add_handler(excluir_conv, group=0)
 
-    # ===== Handlers do grupo de armazenamento (group=1) =====
     application.add_handler(
         MessageHandler(
             (filters.Chat(STORAGE_GROUP_ID) | filters.Chat(STORAGE_GROUP_FREE_ID)) & filters.TEXT & ~filters.COMMAND,
@@ -2056,13 +2037,13 @@ async def on_startup():
     )
     application.add_handler(MessageHandler(media_filter, storage_media_handler), group=1)
 
-    # ===== Comandos gerais (group=1) =====
+    # gerais
     application.add_handler(CommandHandler("start", start_cmd), group=1)
     application.add_handler(CommandHandler("comandos", comandos_cmd), group=1)
     application.add_handler(CommandHandler("listar_comandos", comandos_cmd), group=1)
     application.add_handler(CommandHandler("getid", getid_cmd), group=1)
 
-    # Packs & admin
+    # packs & admin
     application.add_handler(CommandHandler("simularvip", simularvip_cmd), group=1)
     application.add_handler(CommandHandler("simularfree", simularfree_cmd), group=1)
     application.add_handler(CommandHandler("listar_packsvip", listar_packsvip_cmd), group=1)
@@ -2074,7 +2055,7 @@ async def on_startup():
     application.add_handler(CommandHandler("set_enviadovip", set_enviadovip_cmd), group=1)
     application.add_handler(CommandHandler("set_enviadofree", set_enviadofree_cmd), group=1)
 
-    # Admin mgmt & util
+    # admin mgmt
     application.add_handler(CommandHandler("listar_admins", listar_admins_cmd), group=1)
     application.add_handler(CommandHandler("add_admin", add_admin_cmd), group=1)
     application.add_handler(CommandHandler("rem_admin", rem_admin_cmd), group=1)
@@ -2082,14 +2063,14 @@ async def on_startup():
     application.add_handler(CommandHandler("mudar_username", mudar_username_cmd), group=1)
     application.add_handler(CommandHandler("limpar_chat", limpar_chat_cmd), group=1)
 
-    # Pagamentos cripto
+    # pagamentos
     application.add_handler(CommandHandler("pagar", pagar_cmd), group=1)
     application.add_handler(CommandHandler("tx", tx_cmd), group=1)
     application.add_handler(CommandHandler("listar_pendentes", listar_pendentes_cmd), group=1)
     application.add_handler(CommandHandler("aprovar_tx", aprovar_tx_cmd), group=1)
     application.add_handler(CommandHandler("rejeitar_tx", rejeitar_tx_cmd), group=1)
 
-    # Mensagens agendadas (por tier)
+    # mensagens agendadas
     application.add_handler(CommandHandler("add_msg_vip", add_msg_vip_cmd), group=1)
     application.add_handler(CommandHandler("add_msg_free", add_msg_free_cmd), group=1)
     application.add_handler(CommandHandler("list_msgs_vip", list_msgs_vip_cmd), group=1)
@@ -2101,7 +2082,7 @@ async def on_startup():
     application.add_handler(CommandHandler("del_msg_vip", del_msg_vip_cmd), group=1)
     application.add_handler(CommandHandler("del_msg_free", del_msg_free_cmd), group=1)
 
-    # Jobs diários de packs e mensagens
+    # Jobs
     await _reschedule_daily_packs()
     _register_all_scheduled_messages(application.job_queue)
 
