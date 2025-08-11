@@ -87,7 +87,7 @@ engine = create_engine(
     **({"connect_args": {"check_same_thread": False}} if url.get_backend_name().startswith("sqlite") else
        {"pool_pre_ping": True, "pool_size": 5, "max_overflow": 5})
 )
-# expire_on_commit=False evita DetachedInstanceError em leituras após commit
+# evita DetachedInstanceError
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
 Base = declarative_base()
 
@@ -181,7 +181,7 @@ def ensure_bigint_columns():
         logging.warning("Falha ensure_bigint_columns: %s", e)
 
 def ensure_schema_migrations():
-    """Migrações mínimas idempotentes (sem Alembic)."""
+    """Migrações mínimas idempotentes."""
     insp = inspect(engine)
     # scheduled_messages.audience
     try:
@@ -219,7 +219,7 @@ def init_db():
 
 ensure_bigint_columns()
 init_db()
-ensure_schema_migrations()  # <- corrige sua exceção e dados legados
+ensure_schema_migrations()
 
 # ---------------------------
 # DB helpers
@@ -269,6 +269,11 @@ def mark_pack_sent(pack_id: int):
         p = s.query(Pack).filter_by(id=pack_id).first()
         if p: p.sent = True
 
+def mark_pack_pending(pack_id: int):
+    with session_scope() as s:
+        p = s.query(Pack).filter(Pack.id == pack_id).first()
+        if p: p.sent = False
+
 def packs_detail_for_list() -> List[str]:
     with session_scope() as s:
         items = s.query(Pack).order_by(Pack.created_at.desc()).all()
@@ -280,6 +285,14 @@ def packs_detail_for_list() -> List[str]:
             aud = ((p.audience or "vip").upper())
             lines.append(f"[{p.id}] {esc(p.title)} — {aud} — {status} — previews:{previews} arquivos:{docs} — {p.created_at.strftime('%d/%m %H:%M')}")
         return lines
+
+def list_pending_packs_lines() -> List[str]:
+    with session_scope() as s:
+        q = s.query(Pack).filter((Pack.sent == False) | (Pack.sent.is_(None))).order_by(Pack.created_at.asc()).all()
+        out = []
+        for p in q:
+            out.append(f"[{p.id}] {esc(p.title)} — {(p.audience or 'vip').upper()} — criado {p.created_at.strftime('%d/%m %H:%M')}")
+        return out
 
 def pending_payments_lines() -> List[str]:
     with session_scope() as s:
@@ -483,14 +496,19 @@ async def enviar_pack_vip_job(context: ContextTypes.DEFAULT_TYPE) -> str:
         return f"❌ Erro no envio: {e!r}"
 
 # ---------------------------
-# KEEPALIVE
+# KEEPALIVE (robusto)
 # ---------------------------
 async def keepalive_job(context: ContextTypes.DEFAULT_TYPE):
     try:
         import httpx
-        url = f"{BASE_URL}/ping" if BASE_URL else "http://127.0.0.1"
-        async with httpx.AsyncClient(timeout=10) as cli: await cli.get(url)
-        logging.info("[keepalive] tick")
+        if BASE_URL:
+            url = f"{BASE_URL.rstrip('/')}/ping"
+        else:
+            url = f"http://127.0.0.1:{PORT}/ping"
+        async with httpx.AsyncClient(timeout=10) as cli:
+            r = await cli.get(url)
+            r.raise_for_status()
+        logging.info("[keepalive] ok %s", url)
     except Exception as e:
         logging.warning(f"[keepalive] erro: {e}")
 
@@ -514,7 +532,7 @@ async def comandos_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "",
         "🧩 Packs:",
         "• /novopack (fluxo guiado) | /novopackvip | /novopackfree | /cancelar",
-        "• /listar_packs | /simularvip",
+        "• /listar_packs | /packs_pendentes | /marcar_pendente &lt;id&gt; | /marcar_enviado &lt;id&gt; | /simularvip",
         "",
         "🕒 Mensagens agendadas:",
         "• /add_msg_vip HH:MM &lt;texto&gt; | /add_msg_free HH:MM &lt;texto&gt;",
@@ -527,7 +545,7 @@ async def comandos_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• /set_pack_horario HH:MM | /set_preco VALOR MOEDA | /ver_preco | /set_free_teaser &lt;texto com {title}&gt;",
         "• /add_admin &lt;id&gt; | /rem_admin &lt;id&gt; | /listar_admins",
         "• /listar_pendentes | /aprovar_tx &lt;user_id&gt; | /rejeitar_tx &lt;user_id&gt; [motivo]",
-        "• /grupovip",
+        "• /grupovip | /diag | /fix_legacy",
         f"\nRedes aceitas: {esc(chains)}"
     ]
     for ch in chunk_text(lines): await update.effective_message.reply_text(ch, parse_mode=ParseMode.HTML)
@@ -564,6 +582,29 @@ async def listar_packs_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not _is_admin_or_storage(update): return await update.effective_message.reply_text("Apenas admins (ou use nos grupos de storage).")
     lines = packs_detail_for_list()
     for ch in chunk_text(lines or ["Nenhum pack registrado."]): await update.effective_message.reply_text(ch, parse_mode=ParseMode.HTML)
+
+async def packs_pendentes_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not _is_admin_or_storage(update): return await update.effective_message.reply_text("Apenas admins (ou use nos grupos de storage).")
+    lines = list_pending_packs_lines()
+    if not lines: return await update.effective_message.reply_text("Nenhum pack pendente.")
+    for ch in chunk_text(["🟡 <b>Packs pendentes</b>"] + lines):
+        await update.effective_message.reply_text(ch, parse_mode=ParseMode.HTML)
+
+async def marcar_pendente_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not (update.effective_user and is_admin(update.effective_user.id)): return await update.effective_message.reply_text("Apenas admins.")
+    if not context.args: return await update.effective_message.reply_text("Uso: /marcar_pendente <pack_id>")
+    try: pid = int(context.args[0])
+    except: return await update.effective_message.reply_text("ID inválido.")
+    mark_pack_pending(pid)
+    await update.effective_message.reply_text(f"✅ Pack {pid} marcado como PENDENTE.")
+
+async def marcar_enviado_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not (update.effective_user and is_admin(update.effective_user.id)): return await update.effective_message.reply_text("Apenas admins.")
+    if not context.args: return await update.effective_message.reply_text("Uso: /marcar_enviado <pack_id>")
+    try: pid = int(context.args[0])
+    except: return await update.effective_message.reply_text("ID inválido.")
+    mark_pack_sent(pid)
+    await update.effective_message.reply_text(f"✅ Pack {pid} marcado como ENVIADO.")
 
 async def simularvip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not (update.effective_user and is_admin(update.effective_user.id)): return await update.effective_message.reply_text("Apenas admins.")
@@ -829,7 +870,7 @@ async def del_msg_vip_cmd(u,c):   await del_msg_generic(u,c,"vip")
 async def del_msg_free_cmd(u,c):  await del_msg_generic(u,c,"free")
 
 # ---------------------------
-# Ferramentas de diagnóstico/admin extra
+# Diag / Fix
 # ---------------------------
 async def diag_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not (update.effective_user and is_admin(update.effective_user.id)):
@@ -844,7 +885,6 @@ async def diag_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pf_c    = s.query(PackFile).count()
         pay_c   = s.query(Payment).count()
         sm_c    = s.query(ScheduledMessage).count()
-        # sanity: colunas audience existem?
         insp = inspect(engine)
         packs_cols = {c["name"] for c in insp.get_columns("packs")}
         sched_cols = {c["name"] for c in insp.get_columns("scheduled_messages")}
@@ -911,6 +951,13 @@ async def telegram_webhook(request: Request):
 @app.get("/ping")
 async def ping(): return {"ok": True, "time": now_utc().isoformat()}
 
+@app.get("/healthz")
+async def healthz(): return {"ok": True}
+
+@app.head("/")
+async def head_root():
+    return PlainTextResponse("", status_code=200)
+
 @app.get("/")
 async def root(): return {"status": "online", "message": "Bot ready (crypto + schedules + packs)"}
 
@@ -935,7 +982,7 @@ async def on_startup():
     bot = application.bot
 
     if BASE_URL:
-        try: await bot.set_webhook(url=f"{BASE_URL}/webhook")
+        try: await bot.set_webhook(url=f"{BASE_URL.rstrip('/')}/webhook")
         except Exception as e: logging.warning(f"Falha set_webhook: {e}")
     logging.info("Bot iniciado (cripto + schedules + packs).")
 
@@ -971,9 +1018,10 @@ async def on_startup():
         ), group=1)
 
     # Comandos gerais
-    for cmd, fn in {
+    handlers = {
         "start": start_cmd, "comandos": comandos_cmd, "listar_comandos": listar_comandos_cmd, "getid": getid_cmd,
-        "listar_packs": listar_packs_cmd, "simularvip": simularvip_cmd,
+        "listar_packs": listar_packs_cmd, "packs_pendentes": packs_pendentes_cmd,
+        "marcar_pendente": marcar_pendente_cmd, "marcar_enviado": marcar_enviado_cmd, "simularvip": simularvip_cmd,
         "listar_admins": listar_admins_cmd, "add_admin": add_admin_cmd, "rem_admin": rem_admin_cmd,
         "set_preco": set_preco_cmd, "ver_preco": ver_preco_cmd, "set_free_teaser": set_free_teaser_cmd, "set_pack_horario": set_pack_horario_cmd,
         "grupovip": grupovip_cmd, "pagar": pagar_cmd, "tx": tx_cmd,
@@ -984,7 +1032,8 @@ async def on_startup():
         "toggle_msg_vip": toggle_msg_vip_cmd, "toggle_msg_free": toggle_msg_free_cmd,
         "del_msg_vip": del_msg_vip_cmd, "del_msg_free": del_msg_free_cmd,
         "diag": diag_cmd, "fix_legacy": fix_legacy_cmd,
-    }.items():
+    }
+    for cmd, fn in handlers.items():
         application.add_handler(CommandHandler(cmd, fn), group=1)
 
     # Jobs
