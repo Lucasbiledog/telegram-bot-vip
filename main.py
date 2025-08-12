@@ -65,7 +65,7 @@ GROUP_VIP_ID     = int(os.getenv("GROUP_VIP_ID", "-1002791988432"))
 
 # FREE storage (grupo privado de cadastro)
 STORAGE_GROUP_FREE_ID = int(os.getenv("STORAGE_GROUP_FREE_ID", "-1002509364079"))
-# FREE envio (grupo público FREE) — se for o mesmo do storage, pode deixar igual
+# FREE envio (grupo público FREE)
 GROUP_FREE_ID         = int(os.getenv("GROUP_FREE_ID", "-1002509364079"))
 
 PORT = int(os.getenv("PORT", 8000))
@@ -101,7 +101,8 @@ else:
         max_overflow=5,
     )
 
-SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+# <<< ajuste para evitar DetachedInstanceError >>>
+SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
 Base = declarative_base()
 
 # ---- Config chave/valor persistente ----
@@ -115,7 +116,7 @@ def cfg_get(key: str, default: Optional[str] = None) -> Optional[str]:
     s = SessionLocal()
     try:
         row = s.query(ConfigKV).filter(ConfigKV.key == key).first()
-        return row.value if row else default
+        return row.value if row and row.value is not None else default
     finally:
         s.close()
 
@@ -237,6 +238,14 @@ def init_db():
         cfg_set("daily_pack_vip_hhmm", "09:00")
     if not cfg_get("daily_pack_free_hhmm"):
         cfg_set("daily_pack_free_hhmm", "09:30")
+
+    # defaults da prévia FREE vinculada ao VIP
+    if cfg_get("free_preview_enabled") is None:
+        cfg_set("free_preview_enabled", "1")
+    if cfg_get("free_preview_text_before") is None:
+        cfg_set("free_preview_text_before", "🎁 <b>Prévia do pack VIP de hoje</b> — <b>{title}</b> 👇")
+    if cfg_get("free_preview_text_after") is None:
+        cfg_set("free_preview_text_after", "📦 Quer o pack completo? Entre no VIP: {invite}")
 
 # migração antes de criar metadata
 ensure_bigint_columns()
@@ -539,6 +548,81 @@ async def storage_media_handler(update: Update, context: ContextTypes.DEFAULT_TY
 # =========================
 # ENVIO DO PACK (JobQueue)
 # =========================
+
+async def _get_vip_invite_link() -> Optional[str]:
+    try:
+        return await application.bot.export_chat_invite_link(chat_id=GROUP_VIP_ID)
+    except Exception as e:
+        logging.warning(f"Falha ao obter invite VIP: {e}")
+        return None
+
+async def _send_free_preview_from_vip(context: ContextTypes.DEFAULT_TYPE, p, previews: List['PackFile']) -> None:
+    """Envia a PRÉVIA do pack VIP ao grupo FREE, com textos configuráveis."""
+    enabled = cfg_get("free_preview_enabled", "1") == "1"
+    if not enabled or not previews:
+        return
+
+    # textos
+    before_tpl = cfg_get("free_preview_text_before", "") or ""
+    after_tpl  = cfg_get("free_preview_text_after", "") or ""
+
+    # placeholders
+    invite = await _get_vip_invite_link()
+    title_html = esc(p.title)
+
+    before_text = before_tpl.replace("{title}", title_html).replace("{invite}", invite or "")
+    after_text  = after_tpl.replace("{title}", title_html).replace("{invite}", invite or "")
+
+    # 1) mensagem antes (se houver)
+    if before_text.strip():
+        try:
+            await context.application.bot.send_message(chat_id=GROUP_FREE_ID, text=before_text, parse_mode="HTML")
+        except Exception as e:
+            logging.warning(f"[FREE preview before] erro ao enviar: {e}")
+
+    # 2) previews (fotos em grupo + vídeos/animações avulsos)
+    photo_ids = [f.file_id for f in previews if f.file_type == "photo"]
+    sent_first = False
+
+    if photo_ids:
+        media = []
+        for i, fid in enumerate(photo_ids):
+            if i == 0:
+                media.append(InputMediaPhoto(media=fid, caption=p.title))
+            else:
+                media.append(InputMediaPhoto(media=fid))
+        try:
+            await context.application.bot.send_media_group(chat_id=GROUP_FREE_ID, media=media)
+            sent_first = True
+        except Exception as e:
+            logging.warning(f"[FREE preview photos] falha em media_group: {e}. Enviando individual.")
+            for i, fid in enumerate(photo_ids):
+                cap = p.title if i == 0 else None
+                try:
+                    await context.application.bot.send_photo(chat_id=GROUP_FREE_ID, photo=fid, caption=cap)
+                    sent_first = True
+                except Exception as ee:
+                    logging.warning(f"[FREE preview photo] erro: {ee}")
+
+    # vídeos/animações
+    for f in [f for f in previews if f.file_type in ("video", "animation")]:
+        cap = p.title if not sent_first else None
+        try:
+            if f.file_type == "video":
+                await context.application.bot.send_video(chat_id=GROUP_FREE_ID, video=f.file_id, caption=cap)
+            else:
+                await context.application.bot.send_animation(chat_id=GROUP_FREE_ID, animation=f.file_id, caption=cap)
+            sent_first = True
+        except Exception as e:
+            logging.warning(f"[FREE preview video/animation] erro: {e}")
+
+    # 3) mensagem depois (se houver)
+    if after_text.strip():
+        try:
+            await context.application.bot.send_message(chat_id=GROUP_FREE_ID, text=after_text, parse_mode="HTML")
+        except Exception as e:
+            logging.warning(f"[FREE preview after] erro ao enviar: {e}")
+
 async def enviar_pack_job(context: ContextTypes.DEFAULT_TYPE, tier: str, target_chat_id: int) -> str:
     try:
         pack = get_next_unsent_pack(tier=tier)
@@ -561,9 +645,17 @@ async def enviar_pack_job(context: ContextTypes.DEFAULT_TYPE, tier: str, target_
         previews = [f for f in files if f.role == "preview"]
         docs     = [f for f in files if f.role == "file"]
 
+        # >>> NOVO: se for VIP, espelha PREVIEW no FREE no MESMO horário
+        if tier == "vip":
+            try:
+                await _send_free_preview_from_vip(context, p, previews)
+            except Exception:
+                logging.exception("Erro ao enviar prévia FREE a partir do VIP")
+
         sent_first = False
         sent_counts = {"photos": 0, "videos": 0, "animations": 0, "docs": 0, "audios": 0, "voices": 0}
 
+        # Previews para o próprio tier alvo
         photo_ids = [f.file_id for f in previews if f.file_type == "photo"]
         if photo_ids:
             media = []
@@ -597,6 +689,7 @@ async def enviar_pack_job(context: ContextTypes.DEFAULT_TYPE, tier: str, target_
             except Exception as e:
                 logging.warning(f"Erro enviando preview {f.id}: {e}")
 
+        # Envia os arquivos (somente para o tier alvo; FREE recebe só a prévia quando espelhado)
         for f in docs:
             try:
                 cap = p.title if not sent_first else None
@@ -638,7 +731,6 @@ async def enviar_pack_free_job(context: ContextTypes.DEFAULT_TYPE) -> str:
 # COMMANDS BÁSICOS & ADMIN
 # =========================
 async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # trata deep-link /start novopack pelo ConversationHandler (ver startup)
     msg = update.effective_message
     text = (
         "Fala! Eu gerencio packs VIP/FREE, pagamentos via MetaMask e mensagens agendadas.\n"
@@ -699,6 +791,12 @@ async def comandos_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• /listar_pendentes — pagamentos pendentes",
         "• /aprovar_tx &lt;user_id&gt; — aprova e envia convite VIP",
         "• /rejeitar_tx &lt;user_id&gt; [motivo] — rejeita pagamento",
+        "",
+        "🔁 Prévia FREE no horário do VIP:",
+        "• /set_free_preview_on | /set_free_preview_off",
+        "• /set_free_preview_before &lt;texto&gt;",
+        "• /set_free_preview_after &lt;texto&gt;",
+        "• /show_free_preview",
     ]
     lines = base + (adm if isadm else [])
     await update.effective_message.reply_text("\n".join(lines), parse_mode="HTML")
@@ -815,8 +913,7 @@ async def simularvip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.effective_message.reply_text(status)
 
 async def simularfree_cmd(update: Update, Context: ContextTypes.DEFAULT_TYPE):
-    # PTB passa 'context', mas manter assinatura igual às demais
-    context = Context  # compat
+    context = Context
     if not (update.effective_user and is_admin(update.effective_user.id)):
         await update.effective_message.reply_text("Apenas admins podem usar este comando.")
         return
@@ -1094,17 +1191,12 @@ def _is_allowed_group(chat_id: int) -> bool:
     return chat_id in {STORAGE_GROUP_ID, STORAGE_GROUP_FREE_ID}
 
 async def novopack_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Entrada única: /novopack → pergunta VIP/FREE e inicia fluxo.
-       Funciona no privado e nos grupos cadastrados de armazenamento.
-       Se for qualquer outro grupo, envia deep-link pro privado.
-    """
     if not _require_admin(update):
         await update.effective_message.reply_text("Apenas admins podem usar este comando.")
         return ConversationHandler.END
 
     chat = update.effective_chat
     if chat.type != "private" and not _is_allowed_group(chat.id):
-        # empurra para o privado com deep-link
         try:
             username = BOT_USERNAME or (await application.bot.get_me()).username
         except Exception:
@@ -1118,7 +1210,6 @@ async def novopack_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.effective_message.reply_text("Use este comando no privado comigo, por favor.")
         return ConversationHandler.END
 
-    # privado OU grupo permitido: inicia fluxo
     context.user_data.clear()
     await update.effective_message.reply_text(
         "Quer cadastrar em qual tier? Responda <b>vip</b> ou <b>free</b>.",
@@ -1481,11 +1572,9 @@ async def _scheduled_message_job(context: ContextTypes.DEFAULT_TYPE):
         logging.warning(f"Falha ao enviar scheduled_message id={sid}: {e}")
 
 def _register_all_scheduled_messages(job_queue: JobQueue):
-    # limpa todos os jobs antigos (mensagens + packs)
     for j in list(job_queue.jobs()):
         if j.name and (j.name.startswith(JOB_PREFIX_SM) or j.name in {"daily_pack_vip", "daily_pack_free"}):
             j.schedule_removal()
-    # re-registra mensagens por tier
     msgs = scheduled_all()
     for m in msgs:
         try:
@@ -1500,7 +1589,6 @@ def _register_all_scheduled_messages(job_queue: JobQueue):
         )
 
 async def _reschedule_daily_packs():
-    # remove existentes
     for j in list(application.job_queue.jobs()):
         if j.name in {"daily_pack_vip", "daily_pack_free"}:
             j.schedule_removal()
@@ -1650,7 +1738,7 @@ async def _toggle_msg_tier(update: Update, context: ContextTypes.DEFAULT_TYPE, t
     if new_state is None:
         await update.effective_message.reply_text("Mensagem não encontrada.")
         return
-    await update.effective_message.reply_text(f"✅ Mensagem #{sid} ({tier.upper()}) agora está {'ON' if new_state else 'OFF'}.")
+    await update.effective_message.reply_text(f"✅ Mensagem #{sid} ({tier.UPPER()}) agora está {'ON' if new_state else 'OFF'}.")
 
 async def toggle_msg_vip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await _toggle_msg_tier(update, context, "vip")
@@ -1721,6 +1809,57 @@ async def set_pack_horario_free_cmd(update: Update, context: ContextTypes.DEFAUL
         await update.effective_message.reply_text(f"✅ Horário diário dos packs FREE definido para {hhmm}.")
     except Exception as e:
         await update.effective_message.reply_text(f"Hora inválida: {e}")
+
+# =========================
+# Prévia FREE configurável — comandos
+# =========================
+async def set_free_preview_on_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not (update.effective_user and is_admin(update.effective_user.id)):
+        return await update.effective_message.reply_text("Apenas admins.")
+    cfg_set("free_preview_enabled", "1")
+    await update.effective_message.reply_text("✅ Prévia FREE no horário do VIP: ON")
+
+async def set_free_preview_off_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not (update.effective_user and is_admin(update.effective_user.id)):
+        return await update.effective_message.reply_text("Apenas admins.")
+    cfg_set("free_preview_enabled", "0")
+    await update.effective_message.reply_text("✅ Prévia FREE no horário do VIP: OFF")
+
+async def set_free_preview_before_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not (update.effective_user and is_admin(update.effective_user.id)):
+        return await update.effective_message.reply_text("Apenas admins.")
+    if not context.args:
+        return await update.effective_message.reply_text(
+            "Uso: /set_free_preview_before <texto>\nPlaceholders: {title}, {invite}"
+        )
+    text_value = " ".join(context.args)
+    cfg_set("free_preview_text_before", text_value)
+    await update.effective_message.reply_text("✅ Texto (antes) atualizado.")
+
+async def set_free_preview_after_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not (update.effective_user and is_admin(update.effective_user.id)):
+        return await update.effective_message.reply_text("Apenas admins.")
+    if not context.args:
+        return await update.effective_message.reply_text(
+            "Uso: /set_free_preview_after <texto>\nPlaceholders: {title}, {invite}"
+        )
+    text_value = " ".join(context.args)
+    cfg_set("free_preview_text_after", text_value)
+    await update.effective_message.reply_text("✅ Texto (depois) atualizado.")
+
+async def show_free_preview_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not (update.effective_user and is_admin(update.effective_user.id)):
+        return await update.effective_message.reply_text("Apenas admins.")
+    state = "ON" if cfg_get("free_preview_enabled", "1") == "1" else "OFF"
+    before = cfg_get("free_preview_text_before", "") or ""
+    after  = cfg_get("free_preview_text_after", "") or ""
+    lines = [
+        f"🔁 Prévia FREE no horário do VIP: <b>{state}</b>",
+        f"• Antes: {esc(before)}",
+        f"• Depois: {esc(after)}",
+        "Placeholders: {title}, {invite}",
+    ]
+    await update.effective_message.reply_text("\n".join(lines), parse_mode="HTML")
 
 # =========================
 # Error handler global
@@ -1802,6 +1941,7 @@ async def on_startup():
     application.add_error_handler(error_handler)
 
     # ===== Conversas do NOVOPACK (group=0) =====
+    CHOOSE_TIER, TITLE, CONFIRM_TITLE, PREVIEWS, FILES, CONFIRM_SAVE = range(6)
     states_map = {
         TITLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, novopack_title)],
         CONFIRM_TITLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, novopack_confirm_title)],
@@ -1818,7 +1958,6 @@ async def on_startup():
         CONFIRM_SAVE: [MessageHandler(filters.TEXT & ~filters.COMMAND, novopack_confirm_save)],
     }
 
-    # Handler principal: /novopack (privado ou grupos cadastrados) + /start novopack (privado via deep-link)
     conv_main = ConversationHandler(
         entry_points=[
             CommandHandler("novopack", novopack_start),
@@ -1833,7 +1972,6 @@ async def on_startup():
     )
     application.add_handler(conv_main, group=0)
 
-    # Atalhos (opcionais, só privado)
     conv_vip = ConversationHandler(
         entry_points=[CommandHandler("novopackvip", novopackvip_start, filters=filters.ChatType.PRIVATE)],
         states=states_map,
@@ -1850,7 +1988,6 @@ async def on_startup():
     )
     application.add_handler(conv_free, group=0)
 
-    # ===== Conversa /excluir_pack (com confirmação) =====
     excluir_conv = ConversationHandler(
         entry_points=[CommandHandler("excluir_pack", excluir_pack_cmd)],
         states={DELETE_PACK_CONFIRM: [MessageHandler(filters.TEXT & ~filters.COMMAND, excluir_pack_confirm)]},
@@ -1925,9 +2062,12 @@ async def on_startup():
     application.add_handler(CommandHandler("del_msg_vip", del_msg_vip_cmd), group=1)
     application.add_handler(CommandHandler("del_msg_free", del_msg_free_cmd), group=1)
 
-    # Set horário dos packs diários
-    application.add_handler(CommandHandler("set_pack_horario_vip", set_pack_horario_vip_cmd), group=1)
-    application.add_handler(CommandHandler("set_pack_horario_free", set_pack_horario_free_cmd), group=1)
+    # Prévia FREE (config)
+    application.add_handler(CommandHandler("set_free_preview_on", set_free_preview_on_cmd), group=1)
+    application.add_handler(CommandHandler("set_free_preview_off", set_free_preview_off_cmd), group=1)
+    application.add_handler(CommandHandler("set_free_preview_before", set_free_preview_before_cmd), group=1)
+    application.add_handler(CommandHandler("set_free_preview_after", set_free_preview_after_cmd), group=1)
+    application.add_handler(CommandHandler("show_free_preview", show_free_preview_cmd), group=1)
 
     # Jobs diários de packs
     await _reschedule_daily_packs()
