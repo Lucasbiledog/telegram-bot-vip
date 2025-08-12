@@ -13,6 +13,7 @@ from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import PlainTextResponse, JSONResponse
 
 import uvicorn
+import httpx
 
 from telegram import Update, InputMediaPhoto
 from telegram.ext import (
@@ -57,6 +58,7 @@ def parse_hhmm(s: str) -> Tuple[int, int]:
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
+BASE_URL = os.getenv("BASE_URL")  # para keepalive (ex.: https://seu-servico.onrender.com)
 
 # VIP storage (grupo privado de cadastro)
 STORAGE_GROUP_ID = int(os.getenv("STORAGE_GROUP_ID", "-4806334341"))
@@ -69,10 +71,14 @@ STORAGE_GROUP_FREE_ID = int(os.getenv("STORAGE_GROUP_FREE_ID", "-1002509364079")
 GROUP_FREE_ID         = int(os.getenv("GROUP_FREE_ID", "-1002509364079"))
 
 PORT = int(os.getenv("PORT", 8000))
+KEEPALIVE_INTERVAL_SEC = int(os.getenv("KEEPALIVE_INTERVAL_SEC", "240"))
 
 # Pagamento cripto
 WALLET_ADDRESS = os.getenv("WALLET_ADDRESS", "").strip()
 CHAIN_NAME = os.getenv("CHAIN_NAME", "Polygon").strip()
+
+# Teaser FREE (para espelho de preview do VIP)
+DEFAULT_FREE_TEASER = os.getenv("DEFAULT_FREE_TEASER", "Hoje saiu no VIP: {title}\nPara entrar no VIP, use /pagar")
 
 if not BOT_TOKEN:
     raise RuntimeError("BOT_TOKEN não definido no .env")
@@ -101,7 +107,6 @@ else:
         max_overflow=5,
     )
 
-# <<< ajuste para evitar DetachedInstanceError >>>
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
 Base = declarative_base()
 
@@ -116,7 +121,7 @@ def cfg_get(key: str, default: Optional[str] = None) -> Optional[str]:
     s = SessionLocal()
     try:
         row = s.query(ConfigKV).filter(ConfigKV.key == key).first()
-        return row.value if row and row.value is not None else default
+        return row.value if row else default
     finally:
         s.close()
 
@@ -145,8 +150,7 @@ class Pack(Base):
     __tablename__ = "packs"
     id = Column(Integer, primary_key=True, index=True)
     title = Column(String, nullable=False)
-    # header_message_id único (ver header_key)
-    header_message_id = Column(Integer, nullable=True, unique=True)
+    header_message_id = Column(Integer, nullable=True, unique=True)  # chave do cabeçalho (por grupo)
     created_at = Column(DateTime, default=now_utc)
     sent = Column(Boolean, default=False)
     tier = Column(String, default="vip")  # 'vip' ou 'free'
@@ -238,14 +242,8 @@ def init_db():
         cfg_set("daily_pack_vip_hhmm", "09:00")
     if not cfg_get("daily_pack_free_hhmm"):
         cfg_set("daily_pack_free_hhmm", "09:30")
-
-    # defaults da prévia FREE vinculada ao VIP
-    if cfg_get("free_preview_enabled") is None:
-        cfg_set("free_preview_enabled", "1")
-    if cfg_get("free_preview_text_before") is None:
-        cfg_set("free_preview_text_before", "🎁 <b>Prévia do pack VIP de hoje</b> — <b>{title}</b> 👇")
-    if cfg_get("free_preview_text_after") is None:
-        cfg_set("free_preview_text_after", "📦 Quer o pack completo? Entre no VIP: {invite}")
+    if not cfg_get("free_teaser"):
+        cfg_set("free_teaser", DEFAULT_FREE_TEASER)
 
 # migração antes de criar metadata
 ensure_bigint_columns()
@@ -464,6 +462,7 @@ async def storage_text_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     if not looks_like_title:
         return
 
+    # Apenas admins podem registrar no storage
     if update.effective_user and not is_admin(update.effective_user.id):
         return
 
@@ -548,80 +547,36 @@ async def storage_media_handler(update: Update, context: ContextTypes.DEFAULT_TY
 # =========================
 # ENVIO DO PACK (JobQueue)
 # =========================
-
-async def _get_vip_invite_link() -> Optional[str]:
-    try:
-        return await application.bot.export_chat_invite_link(chat_id=GROUP_VIP_ID)
-    except Exception as e:
-        logging.warning(f"Falha ao obter invite VIP: {e}")
-        return None
-
-async def _send_free_preview_from_vip(context: ContextTypes.DEFAULT_TYPE, p, previews: List['PackFile']) -> None:
-    """Envia a PRÉVIA do pack VIP ao grupo FREE, com textos configuráveis."""
-    enabled = cfg_get("free_preview_enabled", "1") == "1"
-    if not enabled or not previews:
-        return
-
-    # textos
-    before_tpl = cfg_get("free_preview_text_before", "") or ""
-    after_tpl  = cfg_get("free_preview_text_after", "") or ""
-
-    # placeholders
-    invite = await _get_vip_invite_link()
-    title_html = esc(p.title)
-
-    before_text = before_tpl.replace("{title}", title_html).replace("{invite}", invite or "")
-    after_text  = after_tpl.replace("{title}", title_html).replace("{invite}", invite or "")
-
-    # 1) mensagem antes (se houver)
-    if before_text.strip():
-        try:
-            await context.application.bot.send_message(chat_id=GROUP_FREE_ID, text=before_text, parse_mode="HTML")
-        except Exception as e:
-            logging.warning(f"[FREE preview before] erro ao enviar: {e}")
-
-    # 2) previews (fotos em grupo + vídeos/animações avulsos)
-    photo_ids = [f.file_id for f in previews if f.file_type == "photo"]
+async def _send_previews_to_chat(context: ContextTypes.DEFAULT_TYPE, p: Pack, previews: List[PackFile], target_chat_id: int):
+    """Envia previews (fotos em grupo, depois vídeos/animações) para o chat alvo."""
     sent_first = False
-
+    # Fotos em media_group
+    photo_ids = [f.file_id for f in previews if f.file_type == "photo"]
     if photo_ids:
         media = []
         for i, fid in enumerate(photo_ids):
-            if i == 0:
-                media.append(InputMediaPhoto(media=fid, caption=p.title))
-            else:
-                media.append(InputMediaPhoto(media=fid))
+            media.append(InputMediaPhoto(media=fid, caption=p.title if i == 0 else None))
         try:
-            await context.application.bot.send_media_group(chat_id=GROUP_FREE_ID, media=media)
+            await context.application.bot.send_media_group(chat_id=target_chat_id, media=media)
             sent_first = True
         except Exception as e:
-            logging.warning(f"[FREE preview photos] falha em media_group: {e}. Enviando individual.")
+            logging.warning(f"Falha send_media_group: {e}. Enviando individual.")
             for i, fid in enumerate(photo_ids):
                 cap = p.title if i == 0 else None
-                try:
-                    await context.application.bot.send_photo(chat_id=GROUP_FREE_ID, photo=fid, caption=cap)
-                    sent_first = True
-                except Exception as ee:
-                    logging.warning(f"[FREE preview photo] erro: {ee}")
+                await context.application.bot.send_photo(chat_id=target_chat_id, photo=fid, caption=cap)
+                sent_first = True
 
-    # vídeos/animações
+    # Vídeos / animações
     for f in [f for f in previews if f.file_type in ("video", "animation")]:
         cap = p.title if not sent_first else None
         try:
             if f.file_type == "video":
-                await context.application.bot.send_video(chat_id=GROUP_FREE_ID, video=f.file_id, caption=cap)
+                await context.application.bot.send_video(chat_id=target_chat_id, video=f.file_id, caption=cap)
             else:
-                await context.application.bot.send_animation(chat_id=GROUP_FREE_ID, animation=f.file_id, caption=cap)
+                await context.application.bot.send_animation(chat_id=target_chat_id, animation=f.file_id, caption=cap)
             sent_first = True
         except Exception as e:
-            logging.warning(f"[FREE preview video/animation] erro: {e}")
-
-    # 3) mensagem depois (se houver)
-    if after_text.strip():
-        try:
-            await context.application.bot.send_message(chat_id=GROUP_FREE_ID, text=after_text, parse_mode="HTML")
-        except Exception as e:
-            logging.warning(f"[FREE preview after] erro ao enviar: {e}")
+            logging.warning(f"Erro enviando preview {f.id}: {e}")
 
 async def enviar_pack_job(context: ContextTypes.DEFAULT_TYPE, tier: str, target_chat_id: int) -> str:
     try:
@@ -645,78 +600,41 @@ async def enviar_pack_job(context: ContextTypes.DEFAULT_TYPE, tier: str, target_
         previews = [f for f in files if f.role == "preview"]
         docs     = [f for f in files if f.role == "file"]
 
-        # >>> NOVO: se for VIP, espelha PREVIEW no FREE no MESMO horário
-        if tier == "vip":
-            try:
-                await _send_free_preview_from_vip(context, p, previews)
-            except Exception:
-                logging.exception("Erro ao enviar prévia FREE a partir do VIP")
+        # 1) Envia PREVIEW no tier alvo
+        await _send_previews_to_chat(context, p, previews, target_chat_id)
 
-        sent_first = False
-        sent_counts = {"photos": 0, "videos": 0, "animations": 0, "docs": 0, "audios": 0, "voices": 0}
-
-        # Previews para o próprio tier alvo
-        photo_ids = [f.file_id for f in previews if f.file_type == "photo"]
-        if photo_ids:
-            media = []
-            for i, fid in enumerate(photo_ids):
-                if i == 0:
-                    media.append(InputMediaPhoto(media=fid, caption=p.title))
-                else:
-                    media.append(InputMediaPhoto(media=fid))
-            try:
-                await context.application.bot.send_media_group(chat_id=target_chat_id, media=media)
-                sent_first = True
-                sent_counts["photos"] += len(photo_ids)
-            except Exception as e:
-                logging.warning(f"Falha send_media_group: {e}. Enviando individual.")
-                for i, fid in enumerate(photo_ids):
-                    cap = p.title if i == 0 else None
-                    await context.application.bot.send_photo(chat_id=target_chat_id, photo=fid, caption=cap)
-                    sent_first = True
-                    sent_counts["photos"] += 1
-
-        for f in [f for f in previews if f.file_type in ("video", "animation")]:
-            cap = p.title if not sent_first else None
-            try:
-                if f.file_type == "video":
-                    await context.application.bot.send_video(chat_id=target_chat_id, video=f.file_id, caption=cap)
-                    sent_counts["videos"] += 1
-                elif f.file_type == "animation":
-                    await context.application.bot.send_animation(chat_id=target_chat_id, animation=f.file_id, caption=cap)
-                    sent_counts["animations"] += 1
-                sent_first = True
-            except Exception as e:
-                logging.warning(f"Erro enviando preview {f.id}: {e}")
-
-        # Envia os arquivos (somente para o tier alvo; FREE recebe só a prévia quando espelhado)
+        # 2) Envia ARQUIVOS (se for VIP/FREE pack real)
+        sent_first = True  # já usamos caption no preview
         for f in docs:
             try:
-                cap = p.title if not sent_first else None
+                cap = None
                 if f.file_type == "document":
                     await context.application.bot.send_document(chat_id=target_chat_id, document=f.file_id, caption=cap)
-                    sent_counts["docs"] += 1
                 elif f.file_type == "audio":
                     await context.application.bot.send_audio(chat_id=target_chat_id, audio=f.file_id, caption=cap)
-                    sent_counts["audios"] += 1
                 elif f.file_type == "voice":
                     await context.application.bot.send_voice(chat_id=target_chat_id, voice=f.file_id, caption=cap)
-                    sent_counts["voices"] += 1
                 else:
                     await context.application.bot.send_document(chat_id=target_chat_id, document=f.file_id, caption=cap)
-                    sent_counts["docs"] += 1
-                sent_first = True
             except Exception as e:
                 logging.warning(f"Erro enviando arquivo {f.file_name or f.id}: {e}")
 
+        # 3) Se tier == VIP, espelhar preview no FREE com teaser configurável
+        if tier == "vip":
+            teaser_tpl = cfg_get("free_teaser", DEFAULT_FREE_TEASER) or ""
+            teaser = (teaser_tpl.format(title=p.title)).strip()
+            if teaser:
+                try:
+                    await context.application.bot.send_message(chat_id=GROUP_FREE_ID, text=teaser)
+                except Exception as e:
+                    logging.warning(f"Erro enviando teaser FREE: {e}")
+            # Previews no FREE
+            if previews:
+                await _send_previews_to_chat(context, p, previews, GROUP_FREE_ID)
+
         mark_pack_sent(p.id)
         logging.info(f"Pack enviado: {p.title} ({tier})")
-
-        return (
-            f"✅ Enviado pack '{p.title}' ({tier}). "
-            f"Previews: {sent_counts['photos']} fotos, {sent_counts['videos']} vídeos, {sent_counts['animations']} animações. "
-            f"Arquivos: {sent_counts['docs']} docs, {sent_counts['audios']} áudios, {sent_counts['voices']} voices."
-        )
+        return f"✅ Enviado pack '{p.title}' ({tier})."
     except Exception as e:
         logging.exception("Erro no enviar_pack_job")
         return f"❌ Erro no envio ({tier}): {e!r}"
@@ -782,6 +700,8 @@ async def comandos_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• /set_enviadofree &lt;id&gt; — marca pack FREE como enviado",
         "• /set_pack_horario_vip HH:MM — define o horário diário dos packs VIP",
         "• /set_pack_horario_free HH:MM — define o horário diário dos packs FREE",
+        "• /set_free_teaser &lt;texto com {title}&gt; — define teaser do FREE",
+        "• /ver_free_teaser — exibe teaser atual",
         "• /limpar_chat &lt;N&gt; — apaga últimas N mensagens (melhor esforço)",
         "• /mudar_nome &lt;novo nome&gt; — muda o nome exibido do bot",
         "• /mudar_username — instruções para mudar o @username (BotFather)",
@@ -791,12 +711,6 @@ async def comandos_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• /listar_pendentes — pagamentos pendentes",
         "• /aprovar_tx &lt;user_id&gt; — aprova e envia convite VIP",
         "• /rejeitar_tx &lt;user_id&gt; [motivo] — rejeita pagamento",
-        "",
-        "🔁 Prévia FREE no horário do VIP:",
-        "• /set_free_preview_on | /set_free_preview_off",
-        "• /set_free_preview_before &lt;texto&gt;",
-        "• /set_free_preview_after &lt;texto&gt;",
-        "• /show_free_preview",
     ]
     lines = base + (adm if isadm else [])
     await update.effective_message.reply_text("\n".join(lines), parse_mode="HTML")
@@ -912,8 +826,7 @@ async def simularvip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     status = await enviar_pack_vip_job(context)
     await update.effective_message.reply_text(status)
 
-async def simularfree_cmd(update: Update, Context: ContextTypes.DEFAULT_TYPE):
-    context = Context
+async def simularfree_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not (update.effective_user and is_admin(update.effective_user.id)):
         await update.effective_message.reply_text("Apenas admins podem usar este comando.")
         return
@@ -1197,6 +1110,7 @@ async def novopack_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     chat = update.effective_chat
     if chat.type != "private" and not _is_allowed_group(chat.id):
+        # empurra para o privado com deep-link
         try:
             username = BOT_USERNAME or (await application.bot.get_me()).username
         except Exception:
@@ -1210,6 +1124,7 @@ async def novopack_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.effective_message.reply_text("Use este comando no privado comigo, por favor.")
         return ConversationHandler.END
 
+    # privado OU grupo permitido: inicia fluxo
     context.user_data.clear()
     await update.effective_message.reply_text(
         "Quer cadastrar em qual tier? Responda <b>vip</b> ou <b>free</b>.",
@@ -1572,8 +1487,9 @@ async def _scheduled_message_job(context: ContextTypes.DEFAULT_TYPE):
         logging.warning(f"Falha ao enviar scheduled_message id={sid}: {e}")
 
 def _register_all_scheduled_messages(job_queue: JobQueue):
+    # **Atenção**: só mexe nos jobs de mensagens; NÃO remove os jobs diários de packs!
     for j in list(job_queue.jobs()):
-        if j.name and (j.name.startswith(JOB_PREFIX_SM) or j.name in {"daily_pack_vip", "daily_pack_free"}):
+        if j.name and j.name.startswith(JOB_PREFIX_SM):
             j.schedule_removal()
     msgs = scheduled_all()
     for m in msgs:
@@ -1589,6 +1505,7 @@ def _register_all_scheduled_messages(job_queue: JobQueue):
         )
 
 async def _reschedule_daily_packs():
+    # remove existentes dos packs e recria
     for j in list(application.job_queue.jobs()):
         if j.name in {"daily_pack_vip", "daily_pack_free"}:
             j.schedule_removal()
@@ -1738,7 +1655,7 @@ async def _toggle_msg_tier(update: Update, context: ContextTypes.DEFAULT_TYPE, t
     if new_state is None:
         await update.effective_message.reply_text("Mensagem não encontrada.")
         return
-    await update.effective_message.reply_text(f"✅ Mensagem #{sid} ({tier.UPPER()}) agora está {'ON' if new_state else 'OFF'}.")
+    await update.effective_message.reply_text(f"✅ Mensagem #{sid} ({tier.upper()}) agora está {'ON' if new_state else 'OFF'}.")
 
 async def toggle_msg_vip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await _toggle_msg_tier(update, context, "vip")
@@ -1810,56 +1727,35 @@ async def set_pack_horario_free_cmd(update: Update, context: ContextTypes.DEFAUL
     except Exception as e:
         await update.effective_message.reply_text(f"Hora inválida: {e}")
 
+# ====== Teaser do FREE (preview espelhado do VIP) ======
+async def set_free_teaser_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not (update.effective_user and is_admin(update.effective_user.id)):
+        await update.effective_message.reply_text("Apenas admins.")
+        return
+    txt = " ".join(context.args).strip()
+    if not txt:
+        await update.effective_message.reply_text("Uso: /set_free_teaser <texto com {title}>")
+        return
+    cfg_set("free_teaser", txt)
+    await update.effective_message.reply_text("✅ Teaser do FREE atualizado.")
+
+async def ver_free_teaser_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    cur = cfg_get("free_teaser", DEFAULT_FREE_TEASER)
+    await update.effective_message.reply_text(f"Teaser atual:\n\n{cur}")
+
 # =========================
-# Prévia FREE configurável — comandos
+# KEEPALIVE (Render)
 # =========================
-async def set_free_preview_on_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not (update.effective_user and is_admin(update.effective_user.id)):
-        return await update.effective_message.reply_text("Apenas admins.")
-    cfg_set("free_preview_enabled", "1")
-    await update.effective_message.reply_text("✅ Prévia FREE no horário do VIP: ON")
-
-async def set_free_preview_off_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not (update.effective_user and is_admin(update.effective_user.id)):
-        return await update.effective_message.reply_text("Apenas admins.")
-    cfg_set("free_preview_enabled", "0")
-    await update.effective_message.reply_text("✅ Prévia FREE no horário do VIP: OFF")
-
-async def set_free_preview_before_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not (update.effective_user and is_admin(update.effective_user.id)):
-        return await update.effective_message.reply_text("Apenas admins.")
-    if not context.args:
-        return await update.effective_message.reply_text(
-            "Uso: /set_free_preview_before <texto>\nPlaceholders: {title}, {invite}"
-        )
-    text_value = " ".join(context.args)
-    cfg_set("free_preview_text_before", text_value)
-    await update.effective_message.reply_text("✅ Texto (antes) atualizado.")
-
-async def set_free_preview_after_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not (update.effective_user and is_admin(update.effective_user.id)):
-        return await update.effective_message.reply_text("Apenas admins.")
-    if not context.args:
-        return await update.effective_message.reply_text(
-            "Uso: /set_free_preview_after <texto>\nPlaceholders: {title}, {invite}"
-        )
-    text_value = " ".join(context.args)
-    cfg_set("free_preview_text_after", text_value)
-    await update.effective_message.reply_text("✅ Texto (depois) atualizado.")
-
-async def show_free_preview_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not (update.effective_user and is_admin(update.effective_user.id)):
-        return await update.effective_message.reply_text("Apenas admins.")
-    state = "ON" if cfg_get("free_preview_enabled", "1") == "1" else "OFF"
-    before = cfg_get("free_preview_text_before", "") or ""
-    after  = cfg_get("free_preview_text_after", "") or ""
-    lines = [
-        f"🔁 Prévia FREE no horário do VIP: <b>{state}</b>",
-        f"• Antes: {esc(before)}",
-        f"• Depois: {esc(after)}",
-        "Placeholders: {title}, {invite}",
-    ]
-    await update.effective_message.reply_text("\n".join(lines), parse_mode="HTML")
+async def keepalive_job(context: ContextTypes.DEFAULT_TYPE):
+    try:
+        url = f"{BASE_URL}/ping" if BASE_URL else None
+        if not url:
+            url = "http://127.0.0.1"  # fallback local (não deve ser usado no Render)
+        async with httpx.AsyncClient(timeout=10) as cli:
+            await cli.get(url)
+        logging.info("[keepalive] OK")
+    except Exception as e:
+        logging.warning(f"[keepalive] erro: {e}")
 
 # =========================
 # Error handler global
@@ -1913,9 +1809,13 @@ async def telegram_webhook(request: Request):
         raise HTTPException(status_code=400, detail="Invalid update")
     return PlainTextResponse("", status_code=200)
 
+@app.get("/ping")
+async def ping():
+    return {"ok": True, "time": now_utc().isoformat()}
+
 @app.get("/")
 async def root():
-    return {"status": "online", "message": "Bot ready (crypto + schedules + VIP/FREE)"}
+    return {"status": "online", "message": "Bot ready (crypto + schedules + VIP/FREE + keepalive)"}
 
 # =========================
 # Startup: register handlers & jobs
@@ -1923,6 +1823,8 @@ async def root():
 @app.on_event("startup")
 async def on_startup():
     global bot, BOT_USERNAME
+    logging.basicConfig(level=logging.INFO)
+
     await application.initialize()
     await application.start()
     bot = application.bot
@@ -1934,14 +1836,12 @@ async def on_startup():
     me = await bot.get_me()
     BOT_USERNAME = me.username
 
-    logging.basicConfig(level=logging.INFO)
     logging.info("Bot iniciado (cripto + schedules + VIP/FREE).")
 
     # ===== Error handler =====
     application.add_error_handler(error_handler)
 
     # ===== Conversas do NOVOPACK (group=0) =====
-    CHOOSE_TIER, TITLE, CONFIRM_TITLE, PREVIEWS, FILES, CONFIRM_SAVE = range(6)
     states_map = {
         TITLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, novopack_title)],
         CONFIRM_TITLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, novopack_confirm_title)],
@@ -1958,6 +1858,7 @@ async def on_startup():
         CONFIRM_SAVE: [MessageHandler(filters.TEXT & ~filters.COMMAND, novopack_confirm_save)],
     }
 
+    # Handler principal: /novopack (privado ou grupos cadastrados) + /start novopack (privado via deep-link)
     conv_main = ConversationHandler(
         entry_points=[
             CommandHandler("novopack", novopack_start),
@@ -1972,6 +1873,7 @@ async def on_startup():
     )
     application.add_handler(conv_main, group=0)
 
+    # Atalhos (opcionais, só privado)
     conv_vip = ConversationHandler(
         entry_points=[CommandHandler("novopackvip", novopackvip_start, filters=filters.ChatType.PRIVATE)],
         states=states_map,
@@ -1988,6 +1890,7 @@ async def on_startup():
     )
     application.add_handler(conv_free, group=0)
 
+    # ===== Conversa /excluir_pack (com confirmação) =====
     excluir_conv = ConversationHandler(
         entry_points=[CommandHandler("excluir_pack", excluir_pack_cmd)],
         states={DELETE_PACK_CONFIRM: [MessageHandler(filters.TEXT & ~filters.COMMAND, excluir_pack_confirm)]},
@@ -2062,18 +1965,22 @@ async def on_startup():
     application.add_handler(CommandHandler("del_msg_vip", del_msg_vip_cmd), group=1)
     application.add_handler(CommandHandler("del_msg_free", del_msg_free_cmd), group=1)
 
-    # Prévia FREE (config)
-    application.add_handler(CommandHandler("set_free_preview_on", set_free_preview_on_cmd), group=1)
-    application.add_handler(CommandHandler("set_free_preview_off", set_free_preview_off_cmd), group=1)
-    application.add_handler(CommandHandler("set_free_preview_before", set_free_preview_before_cmd), group=1)
-    application.add_handler(CommandHandler("set_free_preview_after", set_free_preview_after_cmd), group=1)
-    application.add_handler(CommandHandler("show_free_preview", show_free_preview_cmd), group=1)
+    # Set horário dos packs diários
+    application.add_handler(CommandHandler("set_pack_horario_vip", set_pack_horario_vip_cmd), group=1)
+    application.add_handler(CommandHandler("set_pack_horario_free", set_pack_horario_free_cmd), group=1)
+
+    # Teaser FREE
+    application.add_handler(CommandHandler("set_free_teaser", set_free_teaser_cmd), group=1)
+    application.add_handler(CommandHandler("ver_free_teaser", ver_free_teaser_cmd), group=1)
 
     # Jobs diários de packs
     await _reschedule_daily_packs()
 
-    # (Re)registrar todas as mensagens agendadas existentes
+    # (Re)registrar todas as mensagens agendadas existentes (não mexe nos jobs de packs)
     _register_all_scheduled_messages(application.job_queue)
+
+    # Keepalive para evitar hibernação no Render
+    application.job_queue.run_repeating(keepalive_job, interval=KEEPALIVE_INTERVAL_SEC, first=10, name="keepalive")
 
     logging.info("Handlers e jobs registrados.")
 
