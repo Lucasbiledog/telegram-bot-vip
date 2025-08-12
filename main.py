@@ -1,137 +1,154 @@
 # main.py
-import os, logging, asyncio, datetime as dt, html
-from contextlib import contextmanager
+import os
+import logging
+import asyncio
+import datetime as dt
 from typing import Optional, List, Dict, Any, Tuple
+import html
 
 import pytz
 from dotenv import load_dotenv
+
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import PlainTextResponse, JSONResponse
+
 import uvicorn
 
-from telegram import Update, InputMediaPhoto, ChatInviteLink
-from telegram.constants import ParseMode
+from telegram import Update, InputMediaPhoto
 from telegram.ext import (
-    ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes,
-    JobQueue, ConversationHandler, filters
+    ApplicationBuilder,
+    CommandHandler,
+    MessageHandler,
+    ContextTypes,
+    JobQueue,
+    ConversationHandler,
+    filters,
 )
 
-# === DB / ORM ===
+# SQLAlchemy
 from sqlalchemy import (
-    create_engine, Column, Integer, String, DateTime, Boolean, ForeignKey,
-    Text, BigInteger, UniqueConstraint, text, inspect
+    create_engine, Column, Integer, String, DateTime, Boolean, ForeignKey, Text, BigInteger, UniqueConstraint, text
 )
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship
 from sqlalchemy.engine import make_url
 
-# ---------------------------
+# =========================
 # Helpers
-# ---------------------------
-def esc(s): return html.escape(str(s) if s is not None else "")
-def now_utc(): return dt.datetime.utcnow()
+# =========================
+def esc(s):
+    return html.escape(str(s) if s is not None else "")
+
+def now_utc():
+    return dt.datetime.utcnow()
 
 def parse_hhmm(s: str) -> Tuple[int, int]:
     s = (s or "").strip()
-    if ":" not in s: raise ValueError("Formato inválido; use HH:MM")
-    h, m = map(int, s.split(":", 1))
-    if not (0 <= h <= 23 and 0 <= m <= 59): raise ValueError("Hora fora 00:00–23:59")
+    if ":" not in s:
+        raise ValueError("Formato inválido; use HH:MM")
+    hh, mm = s.split(":", 1)
+    h = int(hh); m = int(mm)
+    if not (0 <= h <= 23 and 0 <= m <= 59):
+        raise ValueError("Hora fora do intervalo 00:00–23:59")
     return h, m
 
-def chunk_text(lines: List[str], max_len: int = 3800) -> List[str]:
-    out, cur = [], ""
-    for ln in lines:
-        if len(cur) + len(ln) + 1 > max_len: out.append(cur); cur = ""
-        cur += ("" if not cur else "\n") + ln
-    if cur: out.append(cur)
-    return out
-
-# ---------------------------
-# ENV
-# ---------------------------
+# =========================
+# ENV / CONFIG
+# =========================
 load_dotenv()
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 
-BOT_TOKEN = os.getenv("BOT_TOKEN") or ""
-BASE_URL  = os.getenv("BASE_URL", "").strip()
-if not BOT_TOKEN: raise RuntimeError("BOT_TOKEN não definido.")
+# VIP storage (grupo privado de cadastro)
+STORAGE_GROUP_ID = int(os.getenv("STORAGE_GROUP_ID", "-4806334341"))
+# VIP envio (grupo público VIP)
+GROUP_VIP_ID     = int(os.getenv("GROUP_VIP_ID", "-1002791988432"))
 
-GROUP_VIP_ID           = int(os.getenv("GROUP_VIP_ID", "-1002791988432"))
-GROUP_FREE_ID          = int(os.getenv("GROUP_FREE_ID", "-1002509364079"))
-STORAGE_VIP_GROUP_ID   = int(os.getenv("STORAGE_VIP_GROUP_ID", "-4806334341"))
-STORAGE_FREE_GROUP_ID  = int(os.getenv("STORAGE_FREE_GROUP_ID", "-4806334342"))
+# FREE storage (grupo privado de cadastro)
+STORAGE_GROUP_FREE_ID = int(os.getenv("STORAGE_GROUP_FREE_ID", "-1002509364079"))
+# FREE envio (grupo público FREE) — se for o mesmo do storage, pode deixar igual
+GROUP_FREE_ID         = int(os.getenv("GROUP_FREE_ID", "-1002509364079"))
 
-PORT = int(os.getenv("PORT", "10000"))
+PORT = int(os.getenv("PORT", 8000))
 
-WALLET_ADDRESS = (os.getenv("WALLET_ADDRESS", "0x40dDBD27F878d07808339F9965f013F1CBc2F812")).strip()
-DEFAULT_CHAIN  = (os.getenv("DEFAULT_CHAIN", "polygon")).strip().lower()
+# Pagamento cripto
+WALLET_ADDRESS = os.getenv("WALLET_ADDRESS", "").strip()
+CHAIN_NAME = os.getenv("CHAIN_NAME", "Polygon").strip()
 
-DEFAULT_PRICE_AMOUNT   = os.getenv("DEFAULT_PRICE_AMOUNT", "50")
-DEFAULT_PRICE_CURRENCY = os.getenv("DEFAULT_PRICE_CURRENCY", "USDT")
-DEFAULT_FREE_TEASER    = os.getenv("DEFAULT_FREE_TEASER", "Hoje liberamos no VIP: {title}\nPara entrar no VIP digite /grupovip")
+if not BOT_TOKEN:
+    raise RuntimeError("BOT_TOKEN não definido no .env")
 
-KEEPALIVE_INTERVAL_SEC = int(os.getenv("KEEPALIVE_INTERVAL_SEC", "240"))
-
-# ---------------------------
-# FastAPI + PTB
-# ---------------------------
+# =========================
+# FASTAPI + PTB
+# =========================
 app = FastAPI()
 application = ApplicationBuilder().token(BOT_TOKEN).build()
 bot = None
+BOT_USERNAME = None  # preenchido no startup
 
-# ---------------------------
+# =========================
 # DB setup
-# ---------------------------
+# =========================
 DB_URL = os.getenv("DATABASE_URL", "sqlite:///./bot_data.db")
 url = make_url(DB_URL)
-engine = create_engine(
-    DB_URL,
-    **({"connect_args": {"check_same_thread": False}} if url.get_backend_name().startswith("sqlite") else
-       {"pool_pre_ping": True, "pool_size": 5, "max_overflow": 5})
-)
-# evita DetachedInstanceError
-SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, expire_on_commit=False)
+
+if url.get_backend_name().startswith("sqlite"):
+    engine = create_engine(DB_URL, connect_args={"check_same_thread": False})
+else:
+    engine = create_engine(
+        DB_URL,
+        pool_pre_ping=True,
+        pool_size=5,
+        max_overflow=5,
+    )
+
+SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 Base = declarative_base()
 
-@contextmanager
-def session_scope():
-    s = SessionLocal()
-    try:
-        yield s; s.commit()
-    except Exception:
-        s.rollback(); raise
-    finally:
-        s.close()
-
-# ---- Tabelas
+# ---- Config chave/valor persistente ----
 class ConfigKV(Base):
     __tablename__ = "config_kv"
     key = Column(String, primary_key=True)
-    value = Column(String)
+    value = Column(String, nullable=True)
     updated_at = Column(DateTime, default=now_utc, onupdate=now_utc)
 
 def cfg_get(key: str, default: Optional[str] = None) -> Optional[str]:
-    with session_scope() as s:
-        row = s.query(ConfigKV).filter_by(key=key).first()
+    s = SessionLocal()
+    try:
+        row = s.query(ConfigKV).filter(ConfigKV.key == key).first()
         return row.value if row else default
+    finally:
+        s.close()
 
 def cfg_set(key: str, value: Optional[str]):
-    with session_scope() as s:
-        row = s.query(ConfigKV).filter_by(key=key).first()
-        (setattr(row, "value", value) if row else s.add(ConfigKV(key=key, value=value)))
+    s = SessionLocal()
+    try:
+        row = s.query(ConfigKV).filter(ConfigKV.key == key).first()
+        if not row:
+            row = ConfigKV(key=key, value=value)
+            s.add(row)
+        else:
+            row.value = value
+        s.commit()
+    finally:
+        s.close()
 
+# ---- Admins ----
 class Admin(Base):
     __tablename__ = "admins"
     id = Column(Integer, primary_key=True)
-    user_id = Column(BigInteger, unique=True, index=True)
+    user_id = Column(BigInteger, unique=True, index=True)  # BIGINT
     added_at = Column(DateTime, default=now_utc)
 
+# ---- Packs ----
 class Pack(Base):
     __tablename__ = "packs"
     id = Column(Integer, primary_key=True, index=True)
     title = Column(String, nullable=False)
-    audience = Column(String, default="vip")  # vip | free
-    header_message_id = Column(Integer, unique=True)
+    # header_message_id único (ver header_key)
+    header_message_id = Column(Integer, nullable=True, unique=True)
     created_at = Column(DateTime, default=now_utc)
     sent = Column(Boolean, default=False)
+    tier = Column(String, default="vip")  # 'vip' ou 'free'
     files = relationship("PackFile", back_populates="pack", cascade="all, delete-orphan")
 
 class PackFile(Base):
@@ -139,803 +156,1611 @@ class PackFile(Base):
     id = Column(Integer, primary_key=True, index=True)
     pack_id = Column(Integer, ForeignKey("packs.id", ondelete="CASCADE"))
     file_id = Column(String, nullable=False)
-    file_unique_id = Column(String)
-    file_type = Column(String)    # photo, video, animation, document, audio, voice
-    role = Column(String)         # preview | file
-    file_name = Column(String)
+    file_unique_id = Column(String, nullable=True)
+    file_type = Column(String, nullable=True)   # photo, video, animation, document, audio, voice
+    role = Column(String, nullable=True)        # preview | file
+    file_name = Column(String, nullable=True)
     added_at = Column(DateTime, default=now_utc)
     pack = relationship("Pack", back_populates="files")
 
+# ---- Pagamentos ----
 class Payment(Base):
     __tablename__ = "payments"
     id = Column(Integer, primary_key=True)
-    user_id = Column(BigInteger, index=True)
-    username = Column(String)
+    user_id = Column(BigInteger, index=True)  # BIGINT
+    username = Column(String, nullable=True)
     tx_hash = Column(String, unique=True, index=True)
-    chain = Column(String, default=DEFAULT_CHAIN)
-    amount = Column(String)
+    chain = Column(String, default=CHAIN_NAME)
+    amount = Column(String, nullable=True)
     status = Column(String, default="pending")  # pending | approved | rejected
-    notes = Column(Text)
+    notes = Column(Text, nullable=True)
     created_at = Column(DateTime, default=now_utc)
-    decided_at = Column(DateTime)
+    decided_at = Column(DateTime, nullable=True)
 
+# ---- Mensagens agendadas (por tier) ----
 class ScheduledMessage(Base):
     __tablename__ = "scheduled_messages"
     id = Column(Integer, primary_key=True)
-    audience = Column(String, default="vip")  # vip | free
-    hhmm = Column(String, nullable=False)     # "HH:MM"
+    hhmm = Column(String, nullable=False)      # "HH:MM"
     tz = Column(String, default="America/Sao_Paulo")
     text = Column(Text, nullable=False)
     enabled = Column(Boolean, default=True)
+    tier = Column(String, default="vip")       # 'vip' ou 'free'
     created_at = Column(DateTime, default=now_utc)
     __table_args__ = (UniqueConstraint('id', name='uq_scheduled_messages_id'),)
 
 def ensure_bigint_columns():
-    if not url.get_backend_name().startswith("postgresql"): return
+    """Migra colunas user_id para BIGINT no Postgres (safe idempotente)."""
+    if not url.get_backend_name().startswith("postgresql"):
+        return
     try:
         with engine.begin() as conn:
-            for t, col in (("admins","user_id"), ("payments","user_id")):
-                try: conn.execute(text(f'ALTER TABLE {t} ALTER COLUMN {col} TYPE BIGINT USING {col}::bigint'))
-                except Exception: pass
+            try:
+                conn.execute(text("ALTER TABLE admins   ALTER COLUMN user_id TYPE BIGINT USING user_id::bigint"))
+            except Exception:
+                pass
+            try:
+                conn.execute(text("ALTER TABLE payments ALTER COLUMN user_id TYPE BIGINT USING user_id::bigint"))
+            except Exception:
+                pass
     except Exception as e:
-        logging.warning("Falha ensure_bigint_columns: %s", e)
+        logging.warning("Falha em ensure_bigint_columns: %s", e)
 
-def ensure_schema_migrations():
-    """Migrações mínimas idempotentes."""
-    insp = inspect(engine)
-    # scheduled_messages.audience
+def ensure_pack_tier_column():
+    """Garante coluna tier em packs e scheduled_messages."""
     try:
-        cols = {c["name"] for c in insp.get_columns("scheduled_messages")}
-        if "audience" not in cols:
-            with engine.begin() as conn:
-                conn.execute(text("ALTER TABLE scheduled_messages ADD COLUMN audience VARCHAR DEFAULT 'vip'"))
         with engine.begin() as conn:
-            conn.execute(text("UPDATE scheduled_messages SET audience = 'vip' WHERE audience IS NULL"))
-    except Exception as e:
-        logging.warning("ensure_schema_migrations scheduled_messages: %s", e)
-    # packs.audience
-    try:
-        cols = {c["name"] for c in insp.get_columns("packs")}
-        if "audience" not in cols:
-            with engine.begin() as conn:
-                conn.execute(text("ALTER TABLE packs ADD COLUMN audience VARCHAR DEFAULT 'vip'"))
-        with engine.begin() as conn:
-            conn.execute(text("UPDATE packs SET audience = 'vip' WHERE audience IS NULL"))
-    except Exception as e:
-        logging.warning("ensure_schema_migrations packs: %s", e)
+            try: conn.execute(text("ALTER TABLE packs ADD COLUMN tier VARCHAR"))
+            except Exception: pass
+            try: conn.execute(text("UPDATE packs SET tier='vip' WHERE tier IS NULL"))
+            except Exception: pass
+            try: conn.execute(text("ALTER TABLE scheduled_messages ADD COLUMN tier VARCHAR"))
+            except Exception: pass
+            try: conn.execute(text("UPDATE scheduled_messages SET tier='vip' WHERE tier IS NULL"))
+            except Exception: pass
+    except Exception:
+        pass
 
 def init_db():
     Base.metadata.create_all(bind=engine)
     initial_admin_id = os.getenv("INITIAL_ADMIN_ID")
     if initial_admin_id:
-        with session_scope() as s:
+        s = SessionLocal()
+        try:
             uid = int(initial_admin_id)
-            if not s.query(Admin).filter_by(user_id=uid).first(): s.add(Admin(user_id=uid))
-    if not cfg_get("daily_pack_hhmm"): cfg_set("daily_pack_hhmm", "18:49")
-    if not cfg_get("price_amount"):    cfg_set("price_amount", DEFAULT_PRICE_AMOUNT)
-    if not cfg_get("price_currency"):  cfg_set("price_currency", DEFAULT_PRICE_CURRENCY)
-    if not cfg_get("free_teaser"):     cfg_set("free_teaser", DEFAULT_FREE_TEASER)
-    if not cfg_get("default_chain"):   cfg_set("default_chain", DEFAULT_CHAIN)
+            if not s.query(Admin).filter(Admin.user_id == uid).first():
+                s.add(Admin(user_id=uid))
+                s.commit()
+        finally:
+            s.close()
+    if not cfg_get("daily_pack_vip_hhmm"):
+        cfg_set("daily_pack_vip_hhmm", "09:00")
+    if not cfg_get("daily_pack_free_hhmm"):
+        cfg_set("daily_pack_free_hhmm", "09:30")
 
+# migração antes de criar metadata
 ensure_bigint_columns()
+ensure_pack_tier_column()
 init_db()
-ensure_schema_migrations()
 
-# ---------------------------
+# =========================
 # DB helpers
-# ---------------------------
+# =========================
 def is_admin(user_id: int) -> bool:
-    with session_scope() as s:
-        return s.query(Admin).filter_by(user_id=user_id).first() is not None
+    s = SessionLocal()
+    try:
+        return s.query(Admin).filter(Admin.user_id == user_id).first() is not None
+    finally:
+        s.close()
 
 def list_admin_ids() -> List[int]:
-    with session_scope() as s:
+    s = SessionLocal()
+    try:
         return [a.user_id for a in s.query(Admin).order_by(Admin.added_at.asc()).all()]
+    finally:
+        s.close()
 
 def add_admin_db(user_id: int) -> bool:
-    with session_scope() as s:
-        if s.query(Admin).filter_by(user_id=user_id).first(): return False
-        s.add(Admin(user_id=user_id)); return True
+    s = SessionLocal()
+    try:
+        if s.query(Admin).filter(Admin.user_id == user_id).first():
+            return False
+        s.add(Admin(user_id=user_id))
+        s.commit()
+        return True
+    finally:
+        s.close()
 
 def remove_admin_db(user_id: int) -> bool:
-    with session_scope() as s:
-        a = s.query(Admin).filter_by(user_id=user_id).first()
-        if not a: return False
-        s.delete(a); return True
+    s = SessionLocal()
+    try:
+        a = s.query(Admin).filter(Admin.user_id == user_id).first()
+        if not a:
+            return False
+        s.delete(a)
+        s.commit()
+        return True
+    finally:
+        s.close()
 
-def create_pack(title: str, audience: str, header_message_id: Optional[int] = None) -> Pack:
-    with session_scope() as s:
-        p = Pack(title=title.strip(), audience=audience, header_message_id=header_message_id)
-        s.add(p); s.flush(); s.refresh(p); return p
+def create_pack(title: str, header_message_id: Optional[int] = None, tier: str = "vip") -> 'Pack':
+    s = SessionLocal()
+    try:
+        p = Pack(title=title.strip(), header_message_id=header_message_id, tier=tier)
+        s.add(p)
+        s.commit()
+        s.refresh(p)
+        return p
+    finally:
+        s.close()
 
-def get_pack_by_header(message_id: int) -> Optional[Pack]:
-    with session_scope() as s:
-        return s.query(Pack).filter_by(header_message_id=message_id).first()
+def get_pack_by_header(header_message_id: int) -> Optional['Pack']:
+    s = SessionLocal()
+    try:
+        return s.query(Pack).filter(Pack.header_message_id == header_message_id).first()
+    finally:
+        s.close()
 
 def add_file_to_pack(pack_id: int, file_id: str, file_unique_id: Optional[str], file_type: str, role: str, file_name: Optional[str] = None):
-    with session_scope() as s:
+    s = SessionLocal()
+    try:
         pf = PackFile(
-            pack_id=pack_id, file_id=file_id, file_unique_id=file_unique_id,
-            file_type=file_type, role=role, file_name=file_name
+            pack_id=pack_id,
+            file_id=file_id,
+            file_unique_id=file_unique_id,
+            file_type=file_type,
+            role=role,
+            file_name=file_name,
         )
-        s.add(pf); s.flush(); s.refresh(pf); return pf
+        s.add(pf)
+        s.commit()
+        s.refresh(pf)
+        return pf
+    finally:
+        s.close()
 
-def get_next_unsent_pack() -> Optional[Pack]:
-    with session_scope() as s:
-        return s.query(Pack).filter(Pack.sent == False, (Pack.audience == "vip") | (Pack.audience.is_(None))).order_by(Pack.created_at.asc()).first()
+def get_next_unsent_pack(tier: str = "vip") -> Optional['Pack']:
+    s = SessionLocal()
+    try:
+        return s.query(Pack).filter(Pack.sent == False, Pack.tier == tier).order_by(Pack.created_at.asc()).first()
+    finally:
+        s.close()
 
 def mark_pack_sent(pack_id: int):
-    with session_scope() as s:
-        p = s.query(Pack).filter_by(id=pack_id).first()
-        if p: p.sent = True
-
-def mark_pack_pending(pack_id: int):
-    with session_scope() as s:
+    s = SessionLocal()
+    try:
         p = s.query(Pack).filter(Pack.id == pack_id).first()
-        if p: p.sent = False
+        if p:
+            p.sent = True
+            s.commit()
+    finally:
+        s.close()
 
-def packs_detail_for_list() -> List[str]:
-    with session_scope() as s:
-        items = s.query(Pack).order_by(Pack.created_at.desc()).all()
-        lines = []
-        for p in items:
-            previews = s.query(PackFile).filter_by(pack_id=p.id, role="preview").count()
-            docs    = s.query(PackFile).filter_by(pack_id=p.id, role="file").count()
-            status = "ENVIADO" if p.sent else "PENDENTE"
-            aud = ((p.audience or "vip").upper())
-            lines.append(f"[{p.id}] {esc(p.title)} — {aud} — {status} — previews:{previews} arquivos:{docs} — {p.created_at.strftime('%d/%m %H:%M')}")
-        return lines
+def list_packs_by_tier(tier: str):
+    s = SessionLocal()
+    try:
+        return s.query(Pack).filter(Pack.tier == tier).order_by(Pack.created_at.desc()).all()
+    finally:
+        s.close()
 
-def list_pending_packs_lines() -> List[str]:
-    with session_scope() as s:
-        q = s.query(Pack).filter((Pack.sent == False) | (Pack.sent.is_(None))).order_by(Pack.created_at.asc()).all()
-        out = []
-        for p in q:
-            out.append(f"[{p.id}] {esc(p.title)} — {(p.audience or 'vip').upper()} — criado {p.created_at.strftime('%d/%m %H:%M')}")
-        return out
+# ---- Scheduled messages helpers ----
+def scheduled_all(tier: Optional[str] = None) -> List['ScheduledMessage']:
+    s = SessionLocal()
+    try:
+        q = s.query(ScheduledMessage)
+        if tier:
+            q = q.filter(ScheduledMessage.tier == tier)
+        return q.order_by(ScheduledMessage.hhmm.asc(), ScheduledMessage.id.asc()).all()
+    finally:
+        s.close()
 
-def pending_payments_lines() -> List[str]:
-    with session_scope() as s:
-        pend = s.query(Payment).filter_by(status="pending").order_by(Payment.created_at.asc()).all()
-        return [f"- user_id:{p.user_id} @{p.username or '-'} | {p.tx_hash} | {p.chain} | {p.created_at.strftime('%d/%m %H:%M')}" for p in pend]
+def scheduled_get(sid: int) -> Optional['ScheduledMessage']:
+    s = SessionLocal()
+    try:
+        return s.query(ScheduledMessage).filter(ScheduledMessage.id == sid).first()
+    finally:
+        s.close()
 
-# ---------------------------
-# Conversa /novopack
-# ---------------------------
-TITLE, CHOOSE_AUDIENCE, PREVIEWS, FILES, CONFIRM_SAVE = range(5)
+def scheduled_create(hhmm: str, text: str, tz_name: str = "America/Sao_Paulo", tier: str = "vip") -> 'ScheduledMessage':
+    s = SessionLocal()
+    try:
+        m = ScheduledMessage(hhmm=hhmm, text=text, tz=tz_name, enabled=True, tier=tier)
+        s.add(m)
+        s.commit()
+        s.refresh(m)
+        return m
+    finally:
+        s.close()
 
-def _summary_from_session(user_data: Dict[str, Any]) -> str:
-    t = user_data.get("title", "—")
-    audience = user_data.get("audience", "vip")
-    previews = user_data.get("previews", [])
-    files = user_data.get("files", [])
-    def _names(items):
-        out, idx = [], 1
-        for it in items:
-            nm = it.get("file_name")
-            if nm: out.append(esc(nm))
-            else:
-                kind = {"photo":"Foto","video":"Vídeo","animation":"Animação","document":"Documento","audio":"Áudio","voice":"Voice"}.get(it["file_type"], "Arquivo")
-                out.append(f"{kind} {idx}"); idx += 1
-        return out or ["—"]
-    lines = [
-        "📦 <b>Resumo do Pack</b>",
-        f"• Nome: <b>{esc(t)}</b>",
-        f"• Público: <b>{audience.upper()}</b>",
-        f"• Previews ({len(previews)}): " + ", ".join(_names(previews)),
-        f"• Arquivos ({len(files)}): " + ", ".join(_names(files)),
-        "", "Deseja salvar? (<b>sim</b>/<b>não</b>)"
-    ]
-    return "\n".join(lines)
+def scheduled_update(sid: int, hhmm: Optional[str], text: Optional[str]) -> bool:
+    s = SessionLocal()
+    try:
+        m = s.query(ScheduledMessage).filter(ScheduledMessage.id == sid).first()
+        if not m:
+            return False
+        if hhmm:
+            m.hhmm = hhmm
+        if text is not None:
+            m.text = text
+        s.commit()
+        return True
+    finally:
+        s.close()
 
-async def novopack_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data.clear()
-    await update.effective_message.reply_text("🧩 Vamos criar um novo pack!\n\n1) Envie o <b>título do pack</b>.", parse_mode=ParseMode.HTML)
-    return TITLE
+def scheduled_toggle(sid: int) -> Optional[bool]:
+    s = SessionLocal()
+    try:
+        m = s.query(ScheduledMessage).filter(ScheduledMessage.id == sid).first()
+        if not m:
+            return None
+        m.enabled = not m.enabled
+        s.commit()
+        return m.enabled
+    finally:
+        s.close()
 
-async def novopack_title(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    title = (update.effective_message.text or "").strip()
-    if not title: return await update.effective_message.reply_text("Título vazio. Envie um texto com o título do pack.") or TITLE
-    context.user_data["title"] = title
-    await update.effective_message.reply_text("2) Este pack é para <b>VIP</b> ou <b>FREE</b>? (responda: vip | free)", parse_mode=ParseMode.HTML)
-    return CHOOSE_AUDIENCE
+def scheduled_delete(sid: int) -> bool:
+    s = SessionLocal()
+    try:
+        m = s.query(ScheduledMessage).filter(ScheduledMessage.id == sid).first()
+        if not m:
+            return False
+        s.delete(m)
+        s.commit()
+        return True
+    finally:
+        s.close()
 
-async def novopack_choose_audience(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    ans = (update.effective_message.text or "").strip().lower()
-    if ans not in ("vip", "free"): return await update.effective_message.reply_text("Responda apenas com: vip ou free.") or CHOOSE_AUDIENCE
-    context.user_data.update({"audience": ans, "previews": [], "files": []})
-    await update.effective_message.reply_text("3) Envie as <b>PREVIEWS</b> (foto/vídeo/animação). Quando terminar: /proximo", parse_mode=ParseMode.HTML)
-    return PREVIEWS
+# =========================
+# STORAGE GROUP handlers
+# =========================
 
-async def novopack_collect_previews(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg, previews = update.effective_message, context.user_data.get("previews", [])
-    if   msg.photo:     previews.append({"file_id": msg.photo[-1].file_id, "file_type": "photo",     "file_name": (msg.caption or "").strip() or None})
-    elif msg.video:     previews.append({"file_id": msg.video.file_id,       "file_type": "video",     "file_name": (msg.caption or "").strip() or None})
-    elif msg.animation: previews.append({"file_id": msg.animation.file_id,    "file_type": "animation", "file_name": (msg.caption or "").strip() or None})
-    else:               return await msg.reply_text("Envie foto/vídeo/animação ou /proximo.") or PREVIEWS
-    context.user_data["previews"] = previews
-    return await msg.reply_text("✅ Preview adicionada. Envie mais ou /proximo.") or PREVIEWS
+def header_key(chat_id: int, message_id: int) -> int:
+    """
+    Evita colisão entre grupos diferentes:
+    - VIP storage usa +message_id
+    - FREE storage usa -message_id
+    """
+    if chat_id == STORAGE_GROUP_ID:
+        return int(message_id)
+    if chat_id == STORAGE_GROUP_FREE_ID:
+        return int(-message_id)
+    return int(message_id)
 
-async def novopack_next_to_files(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.effective_message.reply_text("4) Agora envie os <b>ARQUIVOS</b> (documento/áudio/voice). Quando terminar: /finalizar", parse_mode=ParseMode.HTML)
-    return FILES
-
-async def novopack_collect_files(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg, files = update.effective_message, context.user_data.get("files", [])
-    if   msg.document: files.append({"file_id": msg.document.file_id, "file_type": "document", "file_name": getattr(msg.document,"file_name",None) or (msg.caption or "").strip() or None})
-    elif msg.audio:    files.append({"file_id": msg.audio.file_id,    "file_type": "audio",    "file_name": getattr(msg.audio,"file_name",None) or (msg.caption or "").strip() or None})
-    elif msg.voice:    files.append({"file_id": msg.voice.file_id,    "file_type": "voice",    "file_name": (msg.caption or "").strip() or None})
-    else:              return await msg.reply_text("Envie documento/áudio/voice ou /finalizar.") or FILES
-    context.user_data["files"] = files
-    return await msg.reply_text("✅ Arquivo adicionado. Envie mais ou /finalizar.") or FILES
-
-async def novopack_finish_review(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.effective_message.reply_text(_summary_from_session(context.user_data), parse_mode=ParseMode.HTML)
-    return CONFIRM_SAVE
-
-async def novopack_confirm_save(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    a = (update.effective_message.text or "").strip().lower()
-    if a not in ("sim","não","nao"):
-        return await update.effective_message.reply_text("Responda <b>sim</b> para salvar ou <b>não</b> para cancelar.", parse_mode=ParseMode.HTML) or CONFIRM_SAVE
-    if a in ("não","nao"):
-        context.user_data.clear(); await update.effective_message.reply_text("Operação cancelada."); return ConversationHandler.END
-    title, audience = context.user_data.get("title"), context.user_data.get("audience","vip")
-    p = create_pack(title=title, audience=audience, header_message_id=None)
-    for it in context.user_data.get("previews", []):
-        add_file_to_pack(p.id, it["file_id"], None, it["file_type"], "preview", it.get("file_name"))
-    for it in context.user_data.get("files", []):
-        add_file_to_pack(p.id, it["file_id"], None, it["file_type"], "file", it.get("file_name"))
-    context.user_data.clear()
-    await update.effective_message.reply_text(f"🎉 {title} cadastrado com sucesso ({audience.upper()}).")
-    return ConversationHandler.END
-
-async def novopack_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data.clear(); await update.effective_message.reply_text("Operação cancelada."); return ConversationHandler.END
-
-# ---------------------------
-# STORAGE (VIP / FREE)
-# ---------------------------
 async def storage_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg, chat_id = update.effective_message, update.effective_message.chat.id
-    if chat_id not in (STORAGE_VIP_GROUP_ID, STORAGE_FREE_GROUP_ID): return
+    msg = update.effective_message
+    if not msg or msg.chat.id not in {STORAGE_GROUP_ID, STORAGE_GROUP_FREE_ID}:
+        return
+
+    if msg.reply_to_message:
+        return
+
     title = (msg.text or "").strip()
-    if not title or msg.reply_to_message: return
-    lw = title.lower()
-    if lw in {"sim","não","nao","/proximo","/finalizar","/cancelar"} or title.startswith("/") or len(title)<4: return
-    if len(title.split()) < 2: return
-    if get_pack_by_header(msg.message_id): return await msg.reply_text("Pack já registrado para este cabeçalho.")
-    audience = "vip" if chat_id == STORAGE_VIP_GROUP_ID else "free"
-    p = create_pack(title=title, audience=audience, header_message_id=msg.message_id)
-    await msg.reply_text(f"Pack registrado: <b>{esc(p.title)}</b> (id {p.id}, {audience.upper()})", parse_mode=ParseMode.HTML)
+    if not title:
+        return
+
+    lower = title.lower()
+    banned = {"sim", "não", "nao", "/proximo", "/finalizar", "/cancelar"}
+    if lower in banned or title.startswith("/") or len(title) < 4:
+        return
+
+    words = title.split()
+    looks_like_title = (
+        len(words) >= 2
+        or lower.startswith("pack ")
+        or lower.startswith("#pack ")
+        or lower.startswith("pack:")
+        or lower.startswith("[pack]")
+    )
+    if not looks_like_title:
+        return
+
+    if update.effective_user and not is_admin(update.effective_user.id):
+        return
+
+    hkey = header_key(msg.chat.id, msg.message_id)
+    if get_pack_by_header(hkey):
+        await msg.reply_text("Pack já registrado.")
+        return
+
+    tier = "vip" if msg.chat.id == STORAGE_GROUP_ID else "free"
+    p = create_pack(title=title, header_message_id=hkey, tier=tier)
+    await msg.reply_text(
+        f"Pack registrado: <b>{esc(p.title)}</b> (id {p.id}) — <i>{tier.upper()}</i>",
+        parse_mode="HTML"
+    )
 
 async def storage_media_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg, chat_id, reply = update.effective_message, update.effective_message.chat.id, update.effective_message.reply_to_message
-    if chat_id not in (STORAGE_VIP_GROUP_ID, STORAGE_FREE_GROUP_ID): return
-    if not reply: return await msg.reply_text("Envie este arquivo como <b>resposta</b> ao título do pack.", parse_mode=ParseMode.HTML)
-    pack = get_pack_by_header(reply.message_id)
-    if not pack: return await msg.reply_text("Cabeçalho do pack não encontrado. Responda à mensagem de título.")
-    file_id = file_unique_id = visible_name = None; role = "file"; file_type = None
-    if   msg.photo:     file_id, file_unique_id, file_type, role, visible_name = msg.photo[-1].file_id, getattr(msg.photo[-1],"file_unique_id",None), "photo","preview",(msg.caption or "").strip() or None
-    elif msg.video:     file_id, file_unique_id, file_type, role, visible_name = msg.video.file_id,    getattr(msg.video,"file_unique_id",None), "video","preview",(msg.caption or "").strip() or None
-    elif msg.animation: file_id, file_unique_id, file_type, role, visible_name = msg.animation.file_id,getattr(msg.animation,"file_unique_id",None),"animation","preview",(msg.caption or "").strip() or None
-    elif msg.document:  file_id, file_unique_id, file_type, visible_name      = msg.document.file_id,  getattr(msg.document,"file_unique_id",None),"document", getattr(msg.document,"file_name",None)
-    elif msg.audio:     file_id, file_unique_id, file_type, visible_name      = msg.audio.file_id,     getattr(msg.audio,"file_unique_id",None),   "audio",    getattr(msg.audio,"file_name",None) or (msg.caption or "").strip() or None
-    elif msg.voice:     file_id, file_unique_id, file_type, visible_name      = msg.voice.file_id,     getattr(msg.voice,"file_unique_id",None),   "voice",    (msg.caption or "").strip() or None
-    else:               return await msg.reply_text("Tipo de mídia não suportado.", parse_mode=ParseMode.HTML)
-    add_file_to_pack(pack.id, file_id, file_unique_id, file_type, role, visible_name)
-    await msg.reply_text(f"Item adicionado ao pack <b>{esc(pack.title)}</b>.", parse_mode=ParseMode.HTML)
+    msg = update.effective_message
+    if not msg or msg.chat.id not in {STORAGE_GROUP_ID, STORAGE_GROUP_FREE_ID}:
+        return
 
-# ---------------------------
-# Envio de pack (Job)
-# ---------------------------
-async def enviar_pack_vip_job(context: ContextTypes.DEFAULT_TYPE) -> str:
+    reply = msg.reply_to_message
+    if not reply or not reply.message_id:
+        await msg.reply_text("Envie este arquivo como <b>resposta</b> ao título do pack.", parse_mode="HTML")
+        return
+
+    hkey = header_key(update.effective_chat.id, reply.message_id)
+    pack = get_pack_by_header(hkey)
+    if not pack:
+        await msg.reply_text("Cabeçalho do pack não encontrado. Responda à mensagem de título.")
+        return
+
+    file_id = None
+    file_unique_id = None
+    file_type = None
+    role = "file"
+    visible_name = None
+
+    if msg.photo:
+        biggest = msg.photo[-1]
+        file_id = biggest.file_id
+        file_unique_id = getattr(biggest, "file_unique_id", None)
+        file_type = "photo"
+        role = "preview"
+        visible_name = (msg.caption or "").strip() or None
+    elif msg.video:
+        file_id = msg.video.file_id
+        file_unique_id = getattr(msg.video, "file_unique_id", None)
+        file_type = "video"
+        role = "preview"
+        visible_name = (msg.caption or "").strip() or None
+    elif msg.animation:
+        file_id = msg.animation.file_id
+        file_unique_id = getattr(msg.animation, "file_unique_id", None)
+        file_type = "animation"
+        role = "preview"
+        visible_name = (msg.caption or "").strip() or None
+    elif msg.document:
+        file_id = msg.document.file_id
+        file_unique_id = getattr(msg.document, "file_unique_id", None)
+        file_type = "document"
+        role = "file"
+        visible_name = getattr(msg.document, "file_name", None)
+    elif msg.audio:
+        file_id = msg.audio.file_id
+        file_unique_id = getattr(msg.audio, "file_unique_id", None)
+        file_type = "audio"
+        role = "file"
+        visible_name = getattr(msg.audio, "file_name", None) or (msg.caption or "").strip() or None
+    elif msg.voice:
+        file_id = msg.voice.file_id
+        file_unique_id = getattr(msg.voice, "file_unique_id", None)
+        file_type = "voice"
+        role = "file"
+        visible_name = (msg.caption or "").strip() or None
+    else:
+        await msg.reply_text("Tipo de mídia não suportado.", parse_mode="HTML")
+        return
+
+    add_file_to_pack(pack_id=pack.id, file_id=file_id, file_unique_id=file_unique_id, file_type=file_type, role=role, file_name=visible_name)
+    await msg.reply_text(f"Item adicionado ao pack <b>{esc(pack.title)}</b> — <i>{pack.tier.upper()}</i>.", parse_mode="HTML")
+
+# =========================
+# ENVIO DO PACK (JobQueue)
+# =========================
+async def enviar_pack_job(context: ContextTypes.DEFAULT_TYPE, tier: str, target_chat_id: int) -> str:
     try:
-        pack = get_next_unsent_pack()
-        if not pack: return "Nenhum pack VIP pendente para envio."
-        with session_scope() as s:
-            p = s.query(Pack).filter_by(id=pack.id).first()
-            files = s.query(PackFile).filter_by(pack_id=p.id).order_by(PackFile.id.asc()).all()
-        if not files: mark_pack_sent(p.id); return f"Pack '{p.title}' não possui arquivos. Marcado como enviado."
+        pack = get_next_unsent_pack(tier=tier)
+        if not pack:
+            logging.info(f"Nenhum pack pendente para envio ({tier}).")
+            return f"Nenhum pack pendente para envio ({tier})."
+
+        s = SessionLocal()
+        try:
+            p = s.query(Pack).filter(Pack.id == pack.id).first()
+            files = s.query(PackFile).filter(PackFile.pack_id == p.id).order_by(PackFile.id.asc()).all()
+        finally:
+            s.close()
+
+        if not files:
+            logging.warning(f"Pack '{p.title}' ({tier}) sem arquivos; marcando como enviado.")
+            mark_pack_sent(p.id)
+            return f"Pack '{p.title}' ({tier}) não possui arquivos. Marcado como enviado."
 
         previews = [f for f in files if f.role == "preview"]
         docs     = [f for f in files if f.role == "file"]
 
-        photo_ids = [f.file_id for f in previews if f.file_type == "photo"]
         sent_first = False
+        sent_counts = {"photos": 0, "videos": 0, "animations": 0, "docs": 0, "audios": 0, "voices": 0}
+
+        photo_ids = [f.file_id for f in previews if f.file_type == "photo"]
         if photo_ids:
-            media = [InputMediaPhoto(media=photo_ids[0], caption=pack.title)] + [InputMediaPhoto(media=fid) for fid in photo_ids[1:]]
+            media = []
+            for i, fid in enumerate(photo_ids):
+                if i == 0:
+                    media.append(InputMediaPhoto(media=fid, caption=p.title))
+                else:
+                    media.append(InputMediaPhoto(media=fid))
             try:
-                await context.application.bot.send_media_group(chat_id=GROUP_VIP_ID, media=media)
+                await context.application.bot.send_media_group(chat_id=target_chat_id, media=media)
                 sent_first = True
+                sent_counts["photos"] += len(photo_ids)
             except Exception as e:
                 logging.warning(f"Falha send_media_group: {e}. Enviando individual.")
                 for i, fid in enumerate(photo_ids):
-                    await context.application.bot.send_photo(chat_id=GROUP_VIP_ID, photo=fid, caption=(pack.title if i==0 else None))
+                    cap = p.title if i == 0 else None
+                    await context.application.bot.send_photo(chat_id=target_chat_id, photo=fid, caption=cap)
                     sent_first = True
+                    sent_counts["photos"] += 1
 
-        for f in [f for f in previews if f.file_type in ("video","animation")]:
+        for f in [f for f in previews if f.file_type in ("video", "animation")]:
+            cap = p.title if not sent_first else None
             try:
                 if f.file_type == "video":
-                    await context.application.bot.send_video(chat_id=GROUP_VIP_ID, video=f.file_id, caption=(pack.title if not sent_first else None))
-                else:
-                    await context.application.bot.send_animation(chat_id=GROUP_VIP_ID, animation=f.file_id, caption=(pack.title if not sent_first else None))
+                    await context.application.bot.send_video(chat_id=target_chat_id, video=f.file_id, caption=cap)
+                    sent_counts["videos"] += 1
+                elif f.file_type == "animation":
+                    await context.application.bot.send_animation(chat_id=target_chat_id, animation=f.file_id, caption=cap)
+                    sent_counts["animations"] += 1
                 sent_first = True
             except Exception as e:
                 logging.warning(f"Erro enviando preview {f.id}: {e}")
 
         for f in docs:
             try:
-                cap = pack.title if not sent_first else None
-                if   f.file_type == "document": await context.application.bot.send_document(chat_id=GROUP_VIP_ID, document=f.file_id, caption=cap)
-                elif f.file_type == "audio":    await context.application.bot.send_audio(   chat_id=GROUP_VIP_ID, audio=f.file_id, caption=cap)
-                elif f.file_type == "voice":    await context.application.bot.send_voice(   chat_id=GROUP_VIP_ID, voice=f.file_id, caption=cap)
-                else:                            await context.application.bot.send_document(chat_id=GROUP_VIP_ID, document=f.file_id, caption=cap)
+                cap = p.title if not sent_first else None
+                if f.file_type == "document":
+                    await context.application.bot.send_document(chat_id=target_chat_id, document=f.file_id, caption=cap)
+                    sent_counts["docs"] += 1
+                elif f.file_type == "audio":
+                    await context.application.bot.send_audio(chat_id=target_chat_id, audio=f.file_id, caption=cap)
+                    sent_counts["audios"] += 1
+                elif f.file_type == "voice":
+                    await context.application.bot.send_voice(chat_id=target_chat_id, voice=f.file_id, caption=cap)
+                    sent_counts["voices"] += 1
+                else:
+                    await context.application.bot.send_document(chat_id=target_chat_id, document=f.file_id, caption=cap)
+                    sent_counts["docs"] += 1
                 sent_first = True
             except Exception as e:
                 logging.warning(f"Erro enviando arquivo {f.file_name or f.id}: {e}")
 
-        teaser_tpl = cfg_get("free_teaser", DEFAULT_FREE_TEASER)
-        teaser = (teaser_tpl or "").format(title=pack.title).strip()
-        if teaser:
-            try: await context.application.bot.send_message(chat_id=GROUP_FREE_ID, text=teaser)
-            except Exception as e: logging.warning(f"Erro teaser FREE: {e}")
-        if photo_ids:
-            media_free = [InputMediaPhoto(media=photo_ids[0], caption=pack.title)] + [InputMediaPhoto(media=fid) for fid in photo_ids[1:]]
-            try:
-                await context.application.bot.send_media_group(chat_id=GROUP_FREE_ID, media=media_free)
-            except Exception as e:
-                logging.warning(f"Falha media_group FREE: {e}. Enviando individual.")
-                for i, fid in enumerate(photo_ids):
-                    try: await context.application.bot.send_photo(chat_id=GROUP_FREE_ID, photo=fid, caption=(pack.title if i==0 else None))
-                    except Exception as e2: logging.warning(f"Erro foto FREE: {e2}")
-
         mark_pack_sent(p.id)
-        return f"✅ Enviado pack VIP '{p.title}' (e previews no FREE)."
-    except Exception as e:
-        logging.exception("Erro no enviar_pack_vip_job")
-        return f"❌ Erro no envio: {e!r}"
+        logging.info(f"Pack enviado: {p.title} ({tier})")
 
-# ---------------------------
-# KEEPALIVE (robusto)
-# ---------------------------
-async def keepalive_job(context: ContextTypes.DEFAULT_TYPE):
-    try:
-        import httpx
-        if BASE_URL:
-            url = f"{BASE_URL.rstrip('/')}/ping"
-        else:
-            url = f"http://127.0.0.1:{PORT}/ping"
-        async with httpx.AsyncClient(timeout=10) as cli:
-            r = await cli.get(url)
-            r.raise_for_status()
-        logging.info("[keepalive] ok %s", url)
+        return (
+            f"✅ Enviado pack '{p.title}' ({tier}). "
+            f"Previews: {sent_counts['photos']} fotos, {sent_counts['videos']} vídeos, {sent_counts['animations']} animações. "
+            f"Arquivos: {sent_counts['docs']} docs, {sent_counts['audios']} áudios, {sent_counts['voices']} voices."
+        )
     except Exception as e:
-        logging.warning(f"[keepalive] erro: {e}")
+        logging.exception("Erro no enviar_pack_job")
+        return f"❌ Erro no envio ({tier}): {e!r}"
 
-# ---------------------------
-# Comandos básicos & Admin
-# ---------------------------
+async def enviar_pack_vip_job(context: ContextTypes.DEFAULT_TYPE) -> str:
+    return await enviar_pack_job(context, tier="vip",  target_chat_id=GROUP_VIP_ID)
+
+async def enviar_pack_free_job(context: ContextTypes.DEFAULT_TYPE) -> str:
+    return await enviar_pack_job(context, tier="free", target_chat_id=GROUP_FREE_ID)
+
+# =========================
+# COMMANDS BÁSICOS & ADMIN
+# =========================
 async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.effective_message.reply_text("Fala! Eu gerencio packs VIP/FREE, pagamentos via MetaMask e mensagens agendadas.\nUse /comandos para ver tudo.")
+    # trata deep-link /start novopack pelo ConversationHandler (ver startup)
+    msg = update.effective_message
+    text = (
+        "Fala! Eu gerencio packs VIP/FREE, pagamentos via MetaMask e mensagens agendadas.\n"
+        "Use /comandos para ver tudo."
+    )
+    if msg:
+        await msg.reply_text(text)
 
 async def comandos_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    price = f"{cfg_get('price_amount', DEFAULT_PRICE_AMOUNT)} {cfg_get('price_currency', DEFAULT_PRICE_CURRENCY)}"
-    chains = ", ".join(sorted(NETWORK_ALIASES.keys()))
-    lines = [
+    isadm = is_admin(update.effective_user.id) if update.effective_user else False
+    base = [
         "📋 <b>Comandos</b>",
-        "• /start | /comandos | /listar_comandos | /getid",
+        "• /start — mensagem inicial",
+        "• /comandos — lista de comandos",
+        "• /listar_comandos — (alias)",
+        "• /getid — mostra seus IDs",
         "",
         "💸 Pagamento (MetaMask):",
-        "• /pagar — instruções e redes",
-        "• /tx HASH  ou  /tx REDE HASH",
-        f"Preço VIP: <b>{esc(price)}</b>",
+        "• /pagar — instruções",
+        "• /tx &lt;hash&gt; — registrar a transação",
         "",
-        "🧩 Packs:",
-        "• /novopack (fluxo guiado) | /novopackvip | /novopackfree | /cancelar",
-        "• /listar_packs | /packs_pendentes | /marcar_pendente &lt;id&gt; | /marcar_enviado &lt;id&gt; | /simularvip",
+        "🧩 Packs (privado ou grupo de armazenamento):",
+        "• /novopack — perguntar VIP/FREE e iniciar fluxo",
+        "• /novopackvip — atalho direto para VIP (privado)",
+        "• /novopackfree — atalho direto para FREE (privado)",
         "",
         "🕒 Mensagens agendadas:",
-        "• /add_msg_vip HH:MM &lt;texto&gt; | /add_msg_free HH:MM &lt;texto&gt;",
+        "• /add_msg_vip HH:MM &lt;texto&gt;",
+        "• /add_msg_free HH:MM &lt;texto&gt;",
         "• /list_msgs_vip | /list_msgs_free",
-        "• /edit_msg_vip &lt;id&gt; [HH:MM] [novo texto] | /edit_msg_free ...",
+        "• /edit_msg_vip &lt;id&gt; [HH:MM] [novo texto]",
+        "• /edit_msg_free &lt;id&gt; [HH:MM] [novo texto]",
         "• /toggle_msg_vip &lt;id&gt; | /toggle_msg_free &lt;id&gt;",
         "• /del_msg_vip &lt;id&gt; | /del_msg_free &lt;id&gt;",
-        "",
-        "🛠 Admin & Config:",
-        "• /set_pack_horario HH:MM | /set_preco VALOR MOEDA | /ver_preco | /set_free_teaser &lt;texto com {title}&gt;",
-        "• /add_admin &lt;id&gt; | /rem_admin &lt;id&gt; | /listar_admins",
-        "• /listar_pendentes | /aprovar_tx &lt;user_id&gt; | /rejeitar_tx &lt;user_id&gt; [motivo]",
-        "• /grupovip | /diag | /fix_legacy",
-        f"\nRedes aceitas: {esc(chains)}"
     ]
-    for ch in chunk_text(lines): await update.effective_message.reply_text(ch, parse_mode=ParseMode.HTML)
-
-listar_comandos_cmd = comandos_cmd
+    adm = [
+        "",
+        "🛠 <b>Admin</b>",
+        "• /simularvip — envia o próximo pack VIP pendente agora",
+        "• /simularfree — envia o próximo pack FREE pendente agora",
+        "• /listar_packsvip — lista packs VIP",
+        "• /listar_packsfree — lista packs FREE",
+        "• /pack_info &lt;id&gt; — detalhes do pack",
+        "• /excluir_item &lt;id_item&gt; — remove item do pack",
+        "• /excluir_pack [&lt;id&gt;] — remove pack (com confirmação)",
+        "• /set_pendentevip &lt;id&gt; — marca pack VIP como pendente",
+        "• /set_pendentefree &lt;id&gt; — marca pack FREE como pendente",
+        "• /set_enviadovip &lt;id&gt; — marca pack VIP como enviado",
+        "• /set_enviadofree &lt;id&gt; — marca pack FREE como enviado",
+        "• /set_pack_horario_vip HH:MM — define o horário diário dos packs VIP",
+        "• /set_pack_horario_free HH:MM — define o horário diário dos packs FREE",
+        "• /limpar_chat &lt;N&gt; — apaga últimas N mensagens (melhor esforço)",
+        "• /mudar_nome &lt;novo nome&gt; — muda o nome exibido do bot",
+        "• /mudar_username — instruções para mudar o @username (BotFather)",
+        "• /add_admin &lt;user_id&gt; — adiciona admin",
+        "• /rem_admin &lt;user_id&gt; — remove admin",
+        "• /listar_admins — lista admins",
+        "• /listar_pendentes — pagamentos pendentes",
+        "• /aprovar_tx &lt;user_id&gt; — aprova e envia convite VIP",
+        "• /rejeitar_tx &lt;user_id&gt; [motivo] — rejeita pagamento",
+    ]
+    lines = base + (adm if isadm else [])
+    await update.effective_message.reply_text("\n".join(lines), parse_mode="HTML")
 
 async def getid_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    u, c = update.effective_user, update.effective_chat
-    await update.effective_message.reply_text(f"Seu nome: {esc(u.full_name)}\nSeu ID: {u.id}\nID deste chat: {c.id}", parse_mode=ParseMode.HTML)
+    user = update.effective_user
+    chat = update.effective_chat
+    msg = update.effective_message
+    if msg:
+        await msg.reply_text(
+            f"Seu nome: {esc(user.full_name)}\nSeu ID: {user.id}\nID deste chat: {chat.id}",
+            parse_mode="HTML"
+        )
 
-def _is_admin_or_storage(update: Update) -> bool:
-    return (update.effective_user and is_admin(update.effective_user.id)) or (update.effective_chat and update.effective_chat.id in (STORAGE_VIP_GROUP_ID, STORAGE_FREE_GROUP_ID))
+# ====== Admin utils ======
+async def mudar_nome_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not (update.effective_user and is_admin(update.effective_user.id)):
+        await update.effective_message.reply_text("Apenas admins podem usar este comando.")
+        return
+    if not context.args:
+        await update.effective_message.reply_text("Uso: /mudar_nome <novo nome exibido do bot>")
+        return
+    novo_nome = " ".join(context.args).strip()
+    try:
+        await application.bot.set_my_name(name=novo_nome)
+        await update.effective_message.reply_text(f"✅ Nome exibido alterado para: {novo_nome}")
+    except Exception as e:
+        await update.effective_message.reply_text(f"Erro: {e}")
+
+async def mudar_username_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    txt = (
+        "⚠️ Alterar o <b>@username</b> do bot não é possível via API.\n"
+        "Siga no <b>@BotFather</b>:\n"
+        "1) /mybots → selecione seu bot\n"
+        "2) Bot Settings → Edit Username → informe o novo @username disponível\n"
+        "Obs.: o nome exibido (não o @) você pode mudar com /mudar_nome aqui."
+    )
+    await update.effective_message.reply_text(txt, parse_mode="HTML")
+
+async def limpar_chat_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not (update.effective_user and is_admin(update.effective_user.id)):
+        await update.effective_message.reply_text("Apenas admins podem usar este comando.")
+        return
+    if not context.args:
+        await update.effective_message.reply_text("Uso: /limpar_chat <N>")
+        return
+    try:
+        n = int(context.args[0])
+        if n <= 0 or n > 500:
+            await update.effective_message.reply_text("Escolha um N entre 1 e 500.")
+            return
+    except:
+        await update.effective_message.reply_text("Número inválido.")
+        return
+
+    chat_id = update.effective_chat.id
+    current_id = update.effective_message.message_id
+    deleted = 0
+    for mid in range(current_id, current_id - n, -1):
+        try:
+            await application.bot.delete_message(chat_id=chat_id, message_id=mid)
+            deleted += 1
+            await asyncio.sleep(0.03)
+        except Exception:
+            pass
+    await application.bot.send_message(chat_id=chat_id, text=f"🧹 Apaguei ~{deleted} mensagens (melhor esforço).")
 
 async def listar_admins_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not (update.effective_user and is_admin(update.effective_user.id)): return await update.effective_message.reply_text("Apenas admins.")
+    if not (update.effective_user and is_admin(update.effective_user.id)):
+        await update.effective_message.reply_text("Apenas admins podem usar este comando.")
+        return
     ids = list_admin_ids()
-    await update.effective_message.reply_text("👑 Admins:\n" + ("\n".join(f"- {i}" for i in ids) if ids else "Sem admins."))
+    if not ids:
+        await update.effective_message.reply_text("Sem admins cadastrados.")
+        return
+    await update.effective_message.reply_text("👑 Admins:\n" + "\n".join(f"- {i}" for i in ids))
 
 async def add_admin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not (update.effective_user and is_admin(update.effective_user.id)): return await update.effective_message.reply_text("Apenas admins.")
-    if not context.args: return await update.effective_message.reply_text("Uso: /add_admin <user_id>")
-    try: ok = add_admin_db(int(context.args[0]))
-    except: return await update.effective_message.reply_text("user_id inválido.")
+    if not (update.effective_user and is_admin(update.effective_user.id)):
+        await update.effective_message.reply_text("Apenas admins podem usar este comando.")
+        return
+    if not context.args:
+        await update.effective_message.reply_text("Uso: /add_admin <user_id>")
+        return
+    try:
+        uid = int(context.args[0])
+    except:
+        await update.effective_message.reply_text("user_id inválido.")
+        return
+    ok = add_admin_db(uid)
     await update.effective_message.reply_text("✅ Admin adicionado." if ok else "Já era admin.")
 
 async def rem_admin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not (update.effective_user and is_admin(update.effective_user.id)): return await update.effective_message.reply_text("Apenas admins.")
-    if not context.args: return await update.effective_message.reply_text("Uso: /rem_admin <user_id>")
-    try: ok = remove_admin_db(int(context.args[0]))
-    except: return await update.effective_message.reply_text("user_id inválido.")
+    if not (update.effective_user and is_admin(update.effective_user.id)):
+        await update.effective_message.reply_text("Apenas admins podem usar este comando.")
+        return
+    if not context.args:
+        await update.effective_message.reply_text("Uso: /rem_admin <user_id>")
+        return
+    try:
+        uid = int(context.args[0])
+    except:
+        await update.effective_message.reply_text("user_id inválido.")
+        return
+    ok = remove_admin_db(uid)
     await update.effective_message.reply_text("✅ Admin removido." if ok else "Este user não é admin.")
 
-async def listar_packs_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not _is_admin_or_storage(update): return await update.effective_message.reply_text("Apenas admins (ou use nos grupos de storage).")
-    lines = packs_detail_for_list()
-    for ch in chunk_text(lines or ["Nenhum pack registrado."]): await update.effective_message.reply_text(ch, parse_mode=ParseMode.HTML)
-
-async def packs_pendentes_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not _is_admin_or_storage(update): return await update.effective_message.reply_text("Apenas admins (ou use nos grupos de storage).")
-    lines = list_pending_packs_lines()
-    if not lines: return await update.effective_message.reply_text("Nenhum pack pendente.")
-    for ch in chunk_text(["🟡 <b>Packs pendentes</b>"] + lines):
-        await update.effective_message.reply_text(ch, parse_mode=ParseMode.HTML)
-
-async def marcar_pendente_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not (update.effective_user and is_admin(update.effective_user.id)): return await update.effective_message.reply_text("Apenas admins.")
-    if not context.args: return await update.effective_message.reply_text("Uso: /marcar_pendente <pack_id>")
-    try: pid = int(context.args[0])
-    except: return await update.effective_message.reply_text("ID inválido.")
-    mark_pack_pending(pid)
-    await update.effective_message.reply_text(f"✅ Pack {pid} marcado como PENDENTE.")
-
-async def marcar_enviado_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not (update.effective_user and is_admin(update.effective_user.id)): return await update.effective_message.reply_text("Apenas admins.")
-    if not context.args: return await update.effective_message.reply_text("Uso: /marcar_enviado <pack_id>")
-    try: pid = int(context.args[0])
-    except: return await update.effective_message.reply_text("ID inválido.")
-    mark_pack_sent(pid)
-    await update.effective_message.reply_text(f"✅ Pack {pid} marcado como ENVIADO.")
-
+# ====== Packs admin ======
 async def simularvip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not (update.effective_user and is_admin(update.effective_user.id)): return await update.effective_message.reply_text("Apenas admins.")
-    await update.effective_message.reply_text(await enviar_pack_vip_job(context))
-
-# ---------------------------
-# Pagamento MetaMask
-# ---------------------------
-NETWORK_ALIASES = {
-    "polygon": ["polygon","matic","pol"],
-    "bsc": ["bsc","bnb","binance"],
-    "ethereum": ["eth","ethereum","mainnet"],
-    "arbitrum": ["arbitrum","arb"],
-    "base": ["base"],
-    "avalanche": ["avax","avalanche"],
-}
-
-def _detect_network_from_hash(_: str) -> Optional[str]:
-    return cfg_get("default_chain", DEFAULT_CHAIN)
-
-async def pagar_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user, chat = update.effective_user, update.effective_chat
-    price = f"{cfg_get('price_amount', DEFAULT_PRICE_AMOUNT)} {cfg_get('price_currency', DEFAULT_PRICE_CURRENCY)}"
-    chains = ", ".join(sorted(NETWORK_ALIASES.keys()))
-    msg = (
-        f"💸 <b>Pagamento via MetaMask</b>\n"
-        f"Carteira ({esc(cfg_get('default_chain', DEFAULT_CHAIN)).upper()}):\n"
-        f"<code>{esc(WALLET_ADDRESS)}</code>\n"
-        f"Valor do VIP: <b>{esc(price)}</b>\n\n"
-        f"Após pagar, envie:\n"
-        f"/tx HASH  (tento detectar a rede)\n"
-        f"/tx REDE HASH  (ex.: /tx polygon 0xabc...)\n\n"
-        f"Redes aceitas: {esc(chains)}"
-    )
-    if chat and chat.id == GROUP_FREE_ID:
-        try:
-            sent = await update.effective_message.reply_text("✅ Te enviei as instruções no privado. (vou apagar aqui em 5s)")
-            await asyncio.sleep(5)
-            try: await update.effective_message.delete()
-            except: pass
-            try: await sent.delete()
-            except: pass
-        except: pass
-        try: await application.bot.send_message(chat_id=user.id, text=msg, parse_mode=ParseMode.HTML)
-        except Exception as e: logging.warning(f"Falha ao DM /pagar para {user.id}: {e}")
+    if not (update.effective_user and is_admin(update.effective_user.id)):
+        await update.effective_message.reply_text("Apenas admins podem usar este comando.")
         return
-    await update.effective_message.reply_text(msg, parse_mode=ParseMode.HTML)
+    status = await enviar_pack_vip_job(context)
+    await update.effective_message.reply_text(status)
 
-async def grupovip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    price = f"{cfg_get('price_amount', DEFAULT_PRICE_AMOUNT)} {cfg_get('price_currency', DEFAULT_PRICE_CURRENCY)}"
-    msg = (
-        f"Olá, {esc(user.first_name)}! 👋\n\n"
-        f"Para entrar no VIP, o valor é <b>{esc(price)}</b> em cripto ({esc(cfg_get('default_chain', DEFAULT_CHAIN)).upper()}):\n"
-        f"<code>{esc(WALLET_ADDRESS)}</code>\n\n"
-        f"Depois envie /pagar para ver as instruções ou mande diretamente /tx ..."
-    )
-    try: await application.bot.send_message(chat_id=user.id, text=msg, parse_mode=ParseMode.HTML)
+async def simularfree_cmd(update: Update, Context: ContextTypes.DEFAULT_TYPE):
+    # PTB passa 'context', mas manter assinatura igual às demais
+    context = Context  # compat
+    if not (update.effective_user and is_admin(update.effective_user.id)):
+        await update.effective_message.reply_text("Apenas admins podem usar este comando.")
+        return
+    status = await enviar_pack_free_job(context)
+    await update.effective_message.reply_text(status)
+
+async def listar_packsvip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not (update.effective_user and is_admin(update.effective_user.id)):
+        await update.effective_message.reply_text("Apenas admins podem usar este comando.")
+        return
+    s = SessionLocal()
+    try:
+        packs = list_packs_by_tier("vip")
+        if not packs:
+            await update.effective_message.reply_text("Nenhum pack VIP registrado.")
+            return
+        lines = []
+        for p in packs:
+            previews = s.query(PackFile).filter(PackFile.pack_id == p.id, PackFile.role == "preview").count()
+            docs    = s.query(PackFile).filter(PackFile.pack_id == p.id, PackFile.role == "file").count()
+            status = "ENVIADO" if p.sent else "PENDENTE"
+            lines.append(f"[{p.id}] {esc(p.title)} — {status} — previews:{previews} arquivos:{docs} — {p.created_at.strftime('%d/%m %H:%M')}")
+        await update.effective_message.reply_text("\n".join(lines))
+    finally:
+        s.close()
+
+async def listar_packsfree_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not (update.effective_user and is_admin(update.effective_user.id)):
+        await update.effective_message.reply_text("Apenas admins podem usar este comando.")
+        return
+    s = SessionLocal()
+    try:
+        packs = list_packs_by_tier("free")
+        if not packs:
+            await update.effective_message.reply_text("Nenhum pack FREE registrado.")
+            return
+        lines = []
+        for p in packs:
+            previews = s.query(PackFile).filter(PackFile.pack_id == p.id, PackFile.role == "preview").count()
+            docs    = s.query(PackFile).filter(PackFile.pack_id == p.id, PackFile.role == "file").count()
+            status = "ENVIADO" if p.sent else "PENDENTE"
+            lines.append(f"[{p.id}] {esc(p.title)} — {status} — previews:{previews} arquivos:{docs} — {p.created_at.strftime('%d/%m %H:%M')}")
+        await update.effective_message.reply_text("\n".join(lines))
+    finally:
+        s.close()
+
+async def pack_info_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not (update.effective_user and is_admin(update.effective_user.id)):
+        await update.effective_message.reply_text("Apenas admins podem usar este comando.")
+        return
+    if not context.args:
+        await update.effective_message.reply_text("Uso: /pack_info <id>")
+        return
+    try:
+        pid = int(context.args[0])
+    except:
+        await update.effective_message.reply_text("ID inválido.")
+        return
+    s = SessionLocal()
+    try:
+        p = s.query(Pack).filter(Pack.id == pid).first()
+        if not p:
+            await update.effective_message.reply_text("Pack não encontrado.")
+            return
+        files = s.query(PackFile).filter(PackFile.pack_id == p.id).order_by(PackFile.id.asc()).all()
+        if not files:
+            await update.effective_message.reply_text(f"Pack '{p.title}' não possui arquivos.")
+            return
+        lines = [f"Pack [{p.id}] {esc(p.title)} — {'ENVIADO' if p.sent else 'PENDENTE'} — {p.tier.upper()}"]
+        for f in files:
+            name = f.file_name or ""
+            lines.append(f" - item #{f.id} | {f.file_type} ({f.role}) {name}")
+        await update.effective_message.reply_text("\n".join(lines))
+    finally:
+        s.close()
+
+async def excluir_item_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not (update.effective_user and is_admin(update.effective_user.id)):
+        await update.effective_message.reply_text("Apenas admins podem usar este comando.")
+        return
+    if not context.args:
+        await update.effective_message.reply_text("Uso: /excluir_item <id_item>")
+        return
+    try:
+        item_id = int(context.args[0])
+    except:
+        await update.effective_message.reply_text("ID inválido. Use: /excluir_item <id_item>")
+        return
+
+    s = SessionLocal()
+    try:
+        item = s.query(PackFile).filter(PackFile.id == item_id).first()
+        if not item:
+            await update.effective_message.reply_text("Item não encontrado.")
+            return
+        pack = s.query(Pack).filter(Pack.id == item.pack_id).first()
+        s.delete(item)
+        s.commit()
+        await update.effective_message.reply_text(f"✅ Item #{item_id} removido do pack '{pack.title if pack else '?'}'.")
     except Exception as e:
-        logging.warning(f"Falha ao DM /grupovip: {e}")
-        await update.effective_message.reply_text("Te enviei no privado; se não chegou, me chame no PV.")
+        s.rollback()
+        logging.exception("Erro ao remover item")
+        await update.effective_message.reply_text(f"❌ Erro ao remover item: {e}")
+    finally:
+        s.close()
+
+# ===== EXCLUIR PACK (lista + confirmação) =====
+DELETE_PACK_CONFIRM = range(1)
+
+async def excluir_pack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not (update.effective_user and is_admin(update.effective_user.id)):
+        await update.effective_message.reply_text("Apenas admins podem usar este comando.")
+        return ConversationHandler.END
+
+    if not context.args:
+        s = SessionLocal()
+        try:
+            packs = list_packs_by_tier("vip") + list_packs_by_tier("free")
+            if not packs:
+                await update.effective_message.reply_text("Nenhum pack registrado.")
+                return ConversationHandler.END
+            lines = ["🗑 <b>Excluir Pack</b>\n", "Envie: <code>/excluir_pack &lt;id&gt;</code> para escolher um."]
+            for p in packs:
+                lines.append(f"[{p.id}] {esc(p.title)} ({p.tier.upper()})")
+            await update.effective_message.reply_text("\n".join(lines), parse_mode="HTML")
+            return ConversationHandler.END
+        finally:
+            s.close()
+
+    try:
+        pid = int(context.args[0])
+    except:
+        await update.effective_message.reply_text("Uso: /excluir_pack <id>")
+        return ConversationHandler.END
+
+    context.user_data["delete_pid"] = pid
+    await update.effective_message.reply_text(
+        f"Confirma excluir o pack <b>#{pid}</b>? (sim/não)",
+        parse_mode="HTML"
+    )
+    return DELETE_PACK_CONFIRM
+
+async def excluir_pack_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    ans = (update.effective_message.text or "").strip().lower()
+    if ans not in ("sim", "não", "nao"):
+        await update.effective_message.reply_text("Responda <b>sim</b> para confirmar ou <b>não</b> para cancelar.", parse_mode="HTML")
+        return DELETE_PACK_CONFIRM
+
+    pid = context.user_data.get("delete_pid")
+    context.user_data.pop("delete_pid", None)
+
+    if ans in ("não", "nao"):
+        await update.effective_message.reply_text("Cancelado.")
+        return ConversationHandler.END
+
+    s = SessionLocal()
+    try:
+        p = s.query(Pack).filter(Pack.id == pid).first()
+        if not p:
+            await update.effective_message.reply_text("Pack não encontrado.")
+            return ConversationHandler.END
+        title = p.title
+        s.delete(p)
+        s.commit()
+        await update.effective_message.reply_text(f"✅ Pack <b>{esc(title)}</b> (#{pid}) excluído.", parse_mode="HTML")
+    except Exception as e:
+        s.rollback()
+        logging.exception("Erro ao excluir pack")
+        await update.effective_message.reply_text(f"❌ Erro ao excluir: {e}")
+    finally:
+        s.close()
+
+    return ConversationHandler.END
+
+# ===== SET PENDENTE / SET ENVIADO por tier =====
+async def _set_sent_by_tier(update: Update, context: ContextTypes.DEFAULT_TYPE, tier: str, sent: bool):
+    if not (update.effective_user and is_admin(update.effective_user.id)):
+        await update.effective_message.reply_text("Apenas admins podem usar este comando.")
+        return
+    if not context.args:
+        await update.effective_message.reply_text(f"Uso: /{'set_enviado' if sent else 'set_pendente'}{tier} <id_do_pack>")
+        return
+    try:
+        pid = int(context.args[0])
+    except:
+        await update.effective_message.reply_text("ID inválido.")
+        return
+    s = SessionLocal()
+    try:
+        p = s.query(Pack).filter(Pack.id == pid, Pack.tier == tier).first()
+        if not p:
+            await update.effective_message.reply_text(f"Pack não encontrado para {tier.upper()}.")
+            return
+        p.sent = sent
+        s.commit()
+        await update.effective_message.reply_text(
+            f"✅ Pack #{p.id} — “{esc(p.title)}” marcado como <b>{'ENVIADO' if sent else 'PENDENTE'}</b> ({tier}).",
+            parse_mode="HTML"
+        )
+    except Exception as e:
+        s.rollback()
+        await update.effective_message.reply_text(f"❌ Erro ao atualizar: {e}")
+    finally:
+        s.close()
+
+async def set_pendentefree_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await _set_sent_by_tier(update, context, tier="free", sent=False)
+
+async def set_pendentevip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await _set_sent_by_tier(update, context, tier="vip", sent=False)
+
+async def set_enviadofree_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await _set_sent_by_tier(update, context, tier="free", sent=True)
+
+async def set_enviadovip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await _set_sent_by_tier(update, context, tier="vip", sent=True)
+
+# =========================
+# NOVOPACK (privado + grupos cadastrados)
+# =========================
+CHOOSE_TIER, TITLE, CONFIRM_TITLE, PREVIEWS, FILES, CONFIRM_SAVE = range(6)
+
+def _require_admin(update: Update) -> bool:
+    return update.effective_user and is_admin(update.effective_user.id)
+
+def _summary_from_session(user_data: Dict[str, Any]) -> str:
+    title = user_data.get("title", "—")
+    previews = user_data.get("previews", [])
+    files = user_data.get("files", [])
+    tier = (user_data.get("tier") or "vip").upper()
+
+    preview_names = []
+    p_index = 1
+    for it in previews:
+        base = it.get("file_name")
+        if base:
+            preview_names.append(esc(base))
+        else:
+            label = "Foto" if it["file_type"] == "photo" else ("Vídeo" if it["file_type"] == "video" else "Animação")
+            preview_names.append(f"{label} {p_index}")
+            p_index += 1
+
+    file_names = []
+    f_index = 1
+    for it in files:
+        base = it.get("file_name")
+        if base:
+            file_names.append(esc(base))
+        else:
+            file_names.append(f"{it['file_type'].capitalize()} {f_index}")
+            f_index += 1
+
+    text = [
+        f"📦 <b>Resumo do Pack</b> ({tier})",
+        f"• Nome: <b>{esc(title)}</b>",
+        f"• Previews ({len(previews)}): " + (", ".join(preview_names) if preview_names else "—"),
+        f"• Arquivos ({len(files)}): " + (", ".join(file_names) if file_names else "—"),
+        "",
+        "Deseja salvar? (<b>sim</b>/<b>não</b>)"
+    ]
+    return "\n".join(text)
+
+async def hint_previews(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.effective_message.reply_text(
+        "Agora envie PREVIEWS (📷 foto / 🎞 vídeo / 🎞 animação) ou use /proximo para ir aos ARQUIVOS."
+    )
+
+async def hint_files(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.effective_message.reply_text(
+        "Agora envie ARQUIVOS (📄 documento / 🎵 áudio / 🎙 voice) ou use /finalizar para revisar e salvar."
+    )
+
+def _is_allowed_group(chat_id: int) -> bool:
+    """Permite iniciar o /novopack também dentro dos grupos cadastrados de armazenamento (VIP/FREE)."""
+    return chat_id in {STORAGE_GROUP_ID, STORAGE_GROUP_FREE_ID}
+
+async def novopack_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Entrada única: /novopack → pergunta VIP/FREE e inicia fluxo.
+       Funciona no privado e nos grupos cadastrados de armazenamento.
+       Se for qualquer outro grupo, envia deep-link pro privado.
+    """
+    if not _require_admin(update):
+        await update.effective_message.reply_text("Apenas admins podem usar este comando.")
+        return ConversationHandler.END
+
+    chat = update.effective_chat
+    if chat.type != "private" and not _is_allowed_group(chat.id):
+        # empurra para o privado com deep-link
+        try:
+            username = BOT_USERNAME or (await application.bot.get_me()).username
+        except Exception:
+            username = None
+        if username:
+            link = f"https://t.me/{username}?start=novopack"
+            await update.effective_message.reply_text(
+                "Use este comando no privado comigo, por favor.\n" + link
+            )
+        else:
+            await update.effective_message.reply_text("Use este comando no privado comigo, por favor.")
+        return ConversationHandler.END
+
+    # privado OU grupo permitido: inicia fluxo
+    context.user_data.clear()
+    await update.effective_message.reply_text(
+        "Quer cadastrar em qual tier? Responda <b>vip</b> ou <b>free</b>.",
+        parse_mode="HTML"
+    )
+    return CHOOSE_TIER
+
+async def novopack_choose_tier(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    answer = (update.effective_message.text or "").strip().lower()
+    if answer in ("vip", "v"):
+        context.user_data["tier"] = "vip"
+    elif answer in ("free", "f", "gratis", "grátis"):
+        context.user_data["tier"] = "free"
+    else:
+        await update.effective_message.reply_text(
+            "Não entendi. Responda <b>vip</b> ou <b>free</b> 🙂",
+            parse_mode="HTML"
+        )
+        return CHOOSE_TIER
+
+    await update.effective_message.reply_text(
+        f"🧩 Novo pack <b>{context.user_data['tier'].upper()}</b> — envie o <b>título</b>.",
+        parse_mode="HTML"
+    )
+    return TITLE
+
+# atalhos (privado)
+async def novopackvip_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not _require_admin(update):
+        await update.effective_message.reply_text("Apenas admins podem usar este comando.")
+        return ConversationHandler.END
+    if update.effective_chat.type != "private":
+        await update.effective_message.reply_text("Use este comando no privado comigo, por favor.")
+        return ConversationHandler.END
+    context.user_data.clear()
+    context.user_data["tier"] = "vip"
+    await update.effective_message.reply_text("🧩 Novo pack VIP — envie o <b>título</b>.", parse_mode="HTML")
+    return TITLE
+
+async def novopackfree_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not _require_admin(update):
+        await update.effective_message.reply_text("Apenas admins podem usar este comando.")
+        return ConversationHandler.END
+    if update.effective_chat.type != "private":
+        await update.effective_message.reply_text("Use este comando no privado comigo, por favor.")
+        return ConversationHandler.END
+    context.user_data.clear()
+    context.user_data["tier"] = "free"
+    await update.effective_message.reply_text("🧩 Novo pack FREE — envie o <b>título</b>.", parse_mode="HTML")
+    return TITLE
+
+async def novopack_title(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    title = (update.effective_message.text or "").strip()
+    if not title:
+        await update.effective_message.reply_text("Título vazio. Envie um texto com o título do pack.")
+        return TITLE
+    context.user_data["title_candidate"] = title
+    await update.effective_message.reply_text(f"Confirma o nome: <b>{esc(title)}</b>? (sim/não)", parse_mode="HTML")
+    return CONFIRM_TITLE
+
+async def novopack_confirm_title(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    answer = (update.effective_message.text or "").strip().lower()
+    if answer not in ("sim", "não", "nao"):
+        await update.effective_message.reply_text("Por favor, responda <b>sim</b> ou <b>não</b>.", parse_mode="HTML")
+        return CONFIRM_TITLE
+    if answer in ("não", "nao"):
+        await update.effective_message.reply_text("Ok! Envie o <b>novo título</b> do pack.", parse_mode="HTML")
+        return TITLE
+    context.user_data["title"] = context.user_data.get("title_candidate")
+    context.user_data["previews"] = []
+    context.user_data["files"] = []
+    await update.effective_message.reply_text(
+        "2) Envie as <b>PREVIEWS</b> (📷 fotos / 🎞 vídeos / 🎞 animações).\n"
+        "Envie quantas quiser. Quando terminar, mande /proximo.",
+        parse_mode="HTML"
+    )
+    return PREVIEWS
+
+async def novopack_collect_previews(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = update.effective_message
+    previews: List[Dict[str, Any]] = context.user_data.get("previews", [])
+
+    if msg.photo:
+        biggest = msg.photo[-1]
+        previews.append({
+            "file_id": biggest.file_id,
+            "file_type": "photo",
+            "file_name": (msg.caption or "").strip() or None,
+        })
+        await msg.reply_text("✅ <b>Foto cadastrada</b>. Envie mais ou /proximo.", parse_mode="HTML")
+
+    elif msg.video:
+        previews.append({
+            "file_id": msg.video.file_id,
+            "file_type": "video",
+            "file_name": (msg.caption or "").strip() or None,
+        })
+        await msg.reply_text("✅ <b>Preview (vídeo) cadastrado</b>. Envie mais ou /proximo.", parse_mode="HTML")
+
+    elif msg.animation:
+        previews.append({
+            "file_id": msg.animation.file_id,
+            "file_type": "animation",
+            "file_name": (msg.caption or "").strip() or None,
+        })
+        await msg.reply_text("✅ <b>Preview (animação) cadastrado</b>. Envie mais ou /proximo.", parse_mode="HTML")
+
+    else:
+        await hint_previews(update, context)
+        return PREVIEWS
+
+    context.user_data["previews"] = previews
+    return PREVIEWS
+
+async def novopack_next_to_files(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.user_data.get("title"):
+        await update.effective_message.reply_text("Título não encontrado. Use /cancelar e recomece com /novopack.")
+        return ConversationHandler.END
+    await update.effective_message.reply_text(
+        "3) Agora envie os <b>ARQUIVOS</b> (📄 documentos / 🎵 áudio / 🎙 voice).\n"
+        "Envie quantos quiser. Quando terminar, mande /finalizar.",
+        parse_mode="HTML"
+    )
+    return FILES
+
+async def novopack_collect_files(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = update.effective_message
+    files: List[Dict[str, Any]] = context.user_data.get("files", [])
+
+    if msg.document:
+        files.append({
+            "file_id": msg.document.file_id,
+            "file_type": "document",
+            "file_name": getattr(msg.document, "file_name", None) or (msg.caption or "").strip() or None,
+        })
+        await msg.reply_text("✅ <b>Arquivo cadastrado</b>. Envie mais ou /finalizar.", parse_mode="HTML")
+
+    elif msg.audio:
+        files.append({
+            "file_id": msg.audio.file_id,
+            "file_type": "audio",
+            "file_name": getattr(msg.audio, "file_name", None) or (msg.caption or "").strip() or None,
+        })
+        await msg.reply_text("✅ <b>Áudio cadastrado</b>. Envie mais ou /finalizar.", parse_mode="HTML")
+
+    elif msg.voice:
+        files.append({
+            "file_id": msg.voice.file_id,
+            "file_type": "voice",
+            "file_name": (msg.caption or "").strip() or None,
+        })
+        await msg.reply_text("✅ <b>Voice cadastrado</b>. Envie mais ou /finalizar.", parse_mode="HTML")
+
+    else:
+        await hint_files(update, context)
+        return FILES
+
+    context.user_data["files"] = files
+    return FILES
+
+async def novopack_finish_review(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    summary = _summary_from_session(context.user_data)
+    await update.effective_message.reply_text(summary, parse_mode="HTML")
+    return CONFIRM_SAVE
+
+async def novopack_confirm_save(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    answer = (update.effective_message.text or "").strip().lower()
+    if answer not in ("sim", "não", "nao"):
+        await update.effective_message.reply_text("Responda <b>sim</b> para salvar ou <b>não</b> para cancelar.", parse_mode="HTML")
+        return CONFIRM_SAVE
+    if answer in ("não", "nao"):
+        context.user_data.clear()
+        await update.effective_message.reply_text("Operação cancelada. Nada foi salvo.")
+        return ConversationHandler.END
+
+    title = context.user_data.get("title")
+    previews = context.user_data.get("previews", [])
+    files = context.user_data.get("files", [])
+    tier = context.user_data.get("tier", "vip")
+
+    p = create_pack(title=title, header_message_id=None, tier=tier)
+    for it in previews:
+        add_file_to_pack(
+            pack_id=p.id,
+            file_id=it["file_id"],
+            file_unique_id=None,
+            file_type=it["file_type"],
+            role="preview",
+            file_name=it.get("file_name"),
+        )
+    for it in files:
+        add_file_to_pack(
+            pack_id=p.id,
+            file_id=it["file_id"],
+            file_unique_id=None,
+            file_type=it["file_type"],
+            role="file",
+            file_name=it.get("file_name"),
+        )
+
+    context.user_data.clear()
+    await update.effective_message.reply_text(f"🎉 <b>{esc(title)}</b> cadastrado com sucesso em <b>{tier.upper()}</b>!", parse_mode="HTML")
+    return ConversationHandler.END
+
+async def novopack_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data.clear()
+    await update.effective_message.reply_text("Operação cancelada.")
+    return ConversationHandler.END
+
+# =========================
+# Pagamento por MetaMask - Fluxo
+# =========================
+async def pagar_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not WALLET_ADDRESS:
+        await update.effective_message.reply_text("Método de pagamento não configurado. (WALLET_ADDRESS ausente)")
+        return
+    texto = (
+        f"💸 <b>Pagamento via MetaMask</b>\n"
+        f"1) Envie o valor para a carteira (<b>{esc(CHAIN_NAME)}</b>):\n"
+        f"<code>{esc(WALLET_ADDRESS)}</code>\n"
+        f"2) Após pagar, me envie: <code>/tx &lt;hash_da_transacao&gt;</code>\n\n"
+        f"A equipe valida e libera o VIP. Se tiver automação externa, também aceitamos POST em /crypto_webhook."
+    )
+    await update.effective_message.reply_text(texto, parse_mode="HTML")
 
 async def tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg, user, args = update.effective_message, update.effective_user, context.args
-    if not args: return await msg.reply_text("Uso:\n/tx HASH\nou\n/tx REDE HASH (ex.: /tx polygon 0xabc...)")
-    if len(args) == 1:
-        tx_hash, chain = args[0].strip(), _detect_network_from_hash(args[0].strip())
-    else:
-        cand, tx_hash = args[0].lower(), args[1].strip()
-        chain = next((key for key, aliases in NETWORK_ALIASES.items() if cand in aliases or cand == key), None)
-        if not chain: return await msg.reply_text("Rede inválida. Ex.: polygon, bsc, ethereum, arbitrum, base, avalanche")
-    if not tx_hash.startswith("0x") or len(tx_hash) < 10: return await msg.reply_text("Hash inválido.")
-    with session_scope() as s:
-        if s.query(Payment).filter_by(tx_hash=tx_hash).first(): return await msg.reply_text("Esse hash já foi registrado. Aguarde aprovação.")
-        s.add(Payment(user_id=user.id, username=user.username, tx_hash=tx_hash, chain=chain, status="pending"))
-    await msg.reply_text("✅ Recebi seu hash! Assim que for aprovado, te envio o convite do VIP.")
+    msg = update.effective_message
+    user = update.effective_user
+    if not context.args:
+        await msg.reply_text("Uso: /tx <hash_da_transacao>")
+        return
+    tx_hash = context.args[0].strip()
+    if not tx_hash or len(tx_hash) < 10:
+        await msg.reply_text("Hash inválido.")
+        return
+
+    s = SessionLocal()
+    try:
+        if s.query(Payment).filter(Payment.tx_hash == tx_hash).first():
+            await msg.reply_text("Esse hash já foi registrado. Aguarde aprovação.")
+            return
+        p = Payment(
+            user_id=user.id,
+            username=user.username,
+            tx_hash=tx_hash,
+            chain=CHAIN_NAME,
+            status="pending",
+        )
+        s.add(p)
+        s.commit()
+        await msg.reply_text("✅ Recebi seu hash! Assim que for aprovado, te envio o convite do VIP.")
+    finally:
+        s.close()
 
 async def listar_pendentes_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not _is_admin_or_storage(update): return await update.effective_message.reply_text("Apenas admins (ou use nos grupos de storage).")
-    lines = pending_payments_lines()
-    for ch in chunk_text((["⏳ <b>Pendentes</b>"] + lines) if lines else ["Sem pagamentos pendentes."]):
-        await update.effective_message.reply_text(ch, parse_mode=ParseMode.HTML)
-
-async def _notify_admins(text: str):
-    for uid in list_admin_ids():
-        try: await application.bot.send_message(chat_id=uid, text=text)
-        except: pass
-
-async def _send_invite_one_click() -> Optional[ChatInviteLink]:
+    if not (update.effective_user and is_admin(update.effective_user.id)):
+        await update.effective_message.reply_text("Apenas admins podem usar este comando.")
+        return
+    s = SessionLocal()
     try:
-        expire_date = int((dt.datetime.utcnow() + dt.timedelta(hours=1)).timestamp())
-        return await application.bot.create_chat_invite_link(
-            chat_id=GROUP_VIP_ID, expire_date=expire_date, member_limit=1, creates_join_request=False, name="1-click VIP"
-        )
-    except Exception:
-        logging.exception("Erro criando invite 1-click"); return None
+        pend = s.query(Payment).filter(Payment.status == "pending").order_by(Payment.created_at.asc()).all()
+        if not pend:
+            await update.effective_message.reply_text("Sem pagamentos pendentes.")
+            return
+        lines = ["⏳ <b>Pendentes</b>"]
+        for p in pend:
+            lines.append(f"- user_id:{p.user_id} @{p.username or '-'} | {p.tx_hash} | {p.chain} | {p.created_at.strftime('%d/%m %H:%M')}")
+        await update.effective_message.reply_text("\n".join(lines), parse_mode="HTML")
+    finally:
+        s.close()
 
 async def aprovar_tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not (update.effective_user and is_admin(update.effective_user.id)): return await update.effective_message.reply_text("Apenas admins.")
-    if not context.args: return await update.effective_message.reply_text("Uso: /aprovar_tx <user_id>")
-    try: uid = int(context.args[0])
-    except: return await update.effective_message.reply_text("user_id inválido.")
-    with session_scope() as s:
-        p = s.query(Payment).filter(Payment.user_id==uid, Payment.status=="pending").order_by(Payment.created_at.asc()).first()
-        if not p: return await update.effective_message.reply_text("Nenhum pagamento pendente para este usuário.")
-        p.status, p.decided_at = "approved", now_utc()
-    link = await _send_invite_one_click()
-    if link:
-        try: await application.bot.send_message(chat_id=uid, text=f"✅ Pagamento aprovado! Entre no VIP: {link.invite_link}")
-        except: logging.exception("Erro enviando invite ao usuário")
-    try: count = await application.bot.get_chat_member_count(chat_id=GROUP_VIP_ID)
-    except: count = None
-    await _notify_admins(f"Novo VIP aprovado: {uid}.\nMembros no VIP agora: {count if count is not None else 'n/d'}.")
-    await update.effective_message.reply_text(f"Aprovado. Convite enviado {'(1 clique)' if link else ''}.")
+    if not (update.effective_user and is_admin(update.effective_user.id)):
+        await update.effective_message.reply_text("Apenas admins podem usar este comando.")
+        return
+    if not context.args:
+        await update.effective_message.reply_text("Uso: /aprovar_tx <user_id>")
+        return
+    try:
+        uid = int(context.args[0])
+    except:
+        await update.effective_message.reply_text("user_id inválido.")
+        return
+
+    s = SessionLocal()
+    try:
+        p = s.query(Payment).filter(Payment.user_id == uid, Payment.status == "pending").order_by(Payment.created_at.asc()).first()
+        if not p:
+            await update.effective_message.reply_text("Nenhum pagamento pendente para este usuário.")
+            return
+        p.status = "approved"
+        p.decided_at = now_utc()
+        s.commit()
+
+        try:
+            invite = await application.bot.export_chat_invite_link(chat_id=GROUP_VIP_ID)
+            await application.bot.send_message(chat_id=uid, text=f"✅ Pagamento aprovado! Entre no VIP: {invite}")
+            await update.effective_message.reply_text(f"Aprovado e convite enviado para {uid}.")
+        except Exception as e:
+            logging.exception("Erro enviando invite")
+            await update.effective_message.reply_text(f"Aprovado, mas falhou ao enviar convite: {e}")
+    finally:
+        s.close()
 
 async def rejeitar_tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not (update.effective_user and is_admin(update.effective_user.id)): return await update.effective_message.reply_text("Apenas admins.")
-    if not context.args: return await update.effective_message.reply_text("Uso: /rejeitar_tx <user_id> [motivo]")
-    try: uid = int(context.args[0])
-    except: return await update.effective_message.reply_text("user_id inválido.")
+    if not (update.effective_user and is_admin(update.effective_user.id)):
+        await update.effective_message.reply_text("Apenas admins podem usar este comando.")
+        return
+    if not context.args:
+        await update.effective_message.reply_text("Uso: /rejeitar_tx <user_id> [motivo]")
+        return
+    try:
+        uid = int(context.args[0])
+    except:
+        await update.effective_message.reply_text("user_id inválido.")
+        return
     motivo = " ".join(context.args[1:]).strip() if len(context.args) > 1 else "Não especificado"
-    with session_scope() as s:
-        p = s.query(Payment).filter(Payment.user_id==uid, Payment.status=="pending").order_by(Payment.created_at.asc()).first()
-        if not p: return await update.effective_message.reply_text("Nenhum pagamento pendente para este usuário.")
-        p.status, p.notes, p.decided_at = "rejected", motivo, now_utc()
-    try: await application.bot.send_message(chat_id=uid, text=f"❌ Pagamento rejeitado. Motivo: {motivo}")
-    except: pass
-    await update.effective_message.reply_text("Pagamento rejeitado.")
 
-# ----- Preço & teaser & horário
-async def set_preco_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not (update.effective_user and is_admin(update.effective_user.id)): return await update.effective_message.reply_text("Apenas admins.")
-    if len(context.args) < 2: return await update.effective_message.reply_text("Uso: /set_preco VALOR MOEDA (ex.: /set_preco 50 USDT)")
-    cfg_set("price_amount", context.args[0]); cfg_set("price_currency", context.args[1].upper())
-    await update.effective_message.reply_text(f"✅ Preço atualizado para {context.args[0]} {context.args[1].upper()}.")
+    s = SessionLocal()
+    try:
+        p = s.query(Payment).filter(Payment.user_id == uid, Payment.status == "pending").order_by(Payment.created_at.asc()).first()
+        if not p:
+            await update.effective_message.reply_text("Nenhum pagamento pendente para este usuário.")
+            return
+        p.status = "rejected"
+        p.notes = motivo
+        p.decided_at = now_utc()
+        s.commit()
+        try:
+            await application.bot.send_message(chat_id=uid, text=f"❌ Pagamento rejeitado. Motivo: {motivo}")
+        except:
+            pass
+        await update.effective_message.reply_text("Pagamento rejeitado.")
+    finally:
+        s.close()
 
-async def ver_preco_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.effective_message.reply_text(f"Preço VIP atual: {cfg_get('price_amount', DEFAULT_PRICE_AMOUNT)} {cfg_get('price_currency', DEFAULT_PRICE_CURRENCY)}")
-
-async def set_free_teaser_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not (update.effective_user and is_admin(update.effective_user.id)): return await update.effective_message.reply_text("Apenas admins.")
-    txt = " ".join(context.args).strip()
-    if not txt: return await update.effective_message.reply_text("Uso: /set_free_teaser <texto com {title}>")
-    cfg_set("free_teaser", txt); await update.effective_message.reply_text("✅ Teaser do FREE atualizado.")
-
-async def set_pack_horario_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not (update.effective_user and is_admin(update.effective_user.id)): return await update.effective_message.reply_text("Apenas admins.")
-    if not context.args: return await update.effective_message.reply_text("Uso: /set_pack_horario HH:MM")
-    try: hhmm = context.args[0]; parse_hhmm(hhmm); cfg_set("daily_pack_hhmm", hhmm); await _reschedule_daily_pack(); await update.effective_message.reply_text(f"✅ Horário diário dos packs definido para {hhmm}.")
-    except Exception as e: await update.effective_message.reply_text(f"Hora inválida: {e}")
-
-# ---------------------------
-# Mensagens agendadas
-# ---------------------------
+# =========================
+# Mensagens agendadas (VIP / FREE)
+# =========================
 JOB_PREFIX_SM = "schmsg_"
+
 def _tz(tz_name: str):
-    try: return pytz.timezone(tz_name)
-    except: return pytz.timezone("America/Sao_Paulo")
+    try:
+        return pytz.timezone(tz_name)
+    except Exception:
+        return pytz.timezone("America/Sao_Paulo")
 
 async def _scheduled_message_job(context: ContextTypes.DEFAULT_TYPE):
     job = context.job
     sid = int(job.name.replace(JOB_PREFIX_SM, "")) if job and job.name else None
-    if sid is None: return
-    with session_scope() as s: m = s.query(ScheduledMessage).filter_by(id=sid).first()
-    if not m or not m.enabled: return
-    chat_id = GROUP_VIP_ID if (m.audience or "vip") == "vip" else GROUP_FREE_ID
-    try: await context.application.bot.send_message(chat_id=chat_id, text=m.text)
-    except Exception as e: logging.warning(f"Falha scheduled_message id={sid}: {e}")
+    if sid is None:
+        return
+    m = scheduled_get(sid)
+    if not m or not m.enabled:
+        return
+    try:
+        target_chat = GROUP_VIP_ID if m.tier == "vip" else GROUP_FREE_ID
+        await context.application.bot.send_message(chat_id=target_chat, text=m.text)
+    except Exception as e:
+        logging.warning(f"Falha ao enviar scheduled_message id={sid}: {e}")
 
 def _register_all_scheduled_messages(job_queue: JobQueue):
-    with session_scope() as s: msgs = s.query(ScheduledMessage).order_by(ScheduledMessage.hhmm.asc(), ScheduledMessage.id.asc()).all()
+    # limpa todos os jobs antigos (mensagens + packs)
+    for j in list(job_queue.jobs()):
+        if j.name and (j.name.startswith(JOB_PREFIX_SM) or j.name in {"daily_pack_vip", "daily_pack_free"}):
+            j.schedule_removal()
+    # re-registra mensagens por tier
+    msgs = scheduled_all()
     for m in msgs:
-        try: h, k = parse_hhmm(m.hhmm)
-        except: continue
-        job_queue.run_daily(_scheduled_message_job, time=dt.time(hour=h, minute=k, tzinfo=_tz(m.tz)), name=f"{JOB_PREFIX_SM}{m.id}")
+        try:
+            h, k = parse_hhmm(m.hhmm)
+        except Exception:
+            continue
+        tz = _tz(m.tz)
+        job_queue.run_daily(
+            _scheduled_message_job,
+            time=dt.time(hour=h, minute=k, tzinfo=tz),
+            name=f"{JOB_PREFIX_SM}{m.id}",
+        )
 
-async def add_msg_generic(update, context, audience: str):
-    if not (update.effective_user and is_admin(update.effective_user.id)): return await update.effective_message.reply_text("Apenas admins.")
-    if len(context.args) < 2: return await update.effective_message.reply_text(f"Uso: /add_msg_{audience} HH:MM <texto>")
-    hhmm, texto = context.args[0], " ".join(context.args[1:]).strip()
-    try: parse_hhmm(hhmm)
-    except Exception as e: return await update.effective_message.reply_text(f"Hora inválida: {e}")
-    if not texto: return await update.effective_message.reply_text("Texto vazio.")
-    with session_scope() as s:
-        m = ScheduledMessage(audience=audience, hhmm=hhmm, text=texto, tz="America/Sao_Paulo", enabled=True)
-        s.add(m); s.flush(); sid = m.id
-    h, k = parse_hhmm(hhmm)
-    context.job_queue.run_daily(_scheduled_message_job, time=dt.time(hour=h, minute=k, tzinfo=_tz("America/Sao_Paulo")), name=f"{JOB_PREFIX_SM}{sid}")
-    await update.effective_message.reply_text(f"✅ Mensagem #{sid} criada para {hhmm} ({audience.upper()}).")
+async def _reschedule_daily_packs():
+    # remove existentes
+    for j in list(application.job_queue.jobs()):
+        if j.name in {"daily_pack_vip", "daily_pack_free"}:
+            j.schedule_removal()
 
-async def list_msgs_generic(update, context, audience: str):
-    if not (update.effective_user and is_admin(update.effective_user.id)): return await update.effective_message.reply_text("Apenas admins.")
-    with session_scope() as s:
-        msgs = s.query(ScheduledMessage).filter_by(audience=audience).order_by(ScheduledMessage.hhmm.asc(), ScheduledMessage.id.asc()).all()
-        if not msgs: return await update.effective_message.reply_text("Não há mensagens agendadas.")
-        lines = ["🕒 <b>Mensagens agendadas</b>"]
-        for m in msgs:
-            preview = (m.text[:80] + "…") if len(m.text) > 80 else m.text
-            lines.append(f"#{m.id} — {m.hhmm} ({m.tz}) [{'ON' if m.enabled else 'OFF'}] — {esc(preview)}")
-    for ch in chunk_text(lines): await update.effective_message.reply_text(ch, parse_mode=ParseMode.HTML)
+    tz = pytz.timezone("America/Sao_Paulo")
+    hhmm_vip  = cfg_get("daily_pack_vip_hhmm")  or "09:00"
+    hhmm_free = cfg_get("daily_pack_free_hhmm") or "09:30"
+    hv, mv = parse_hhmm(hhmm_vip)
+    hf, mf = parse_hhmm(hhmm_free)
 
-async def edit_msg_generic(update, context, audience: str):
-    if not (update.effective_user and is_admin(update.effective_user.id)): return await update.effective_message.reply_text("Apenas admins.")
-    if not context.args: return await update.effective_message.reply_text(f"Uso: /edit_msg_{audience} <id> [HH:MM] [novo texto]")
-    try: sid = int(context.args[0])
-    except: return await update.effective_message.reply_text("ID inválido.")
-    hhmm = None; new_text = None
+    application.job_queue.run_daily(enviar_pack_vip_job,  time=dt.time(hour=hv, minute=mv, tzinfo=tz), name="daily_pack_vip")
+    application.job_queue.run_daily(enviar_pack_free_job, time=dt.time(hour=hf, minute=mf, tzinfo=tz), name="daily_pack_free")
+
+    logging.info(f"Job VIP agendado para {hhmm_vip}; FREE para {hhmm_free} (America/Sao_Paulo)")
+
+# ----- Comandos de mensagens (VIP/FREE) -----
+async def _add_msg_tier(update: Update, context: ContextTypes.DEFAULT_TYPE, tier: str):
+    if not (update.effective_user and is_admin(update.effective_user.id)):
+        await update.effective_message.reply_text("Apenas admins.")
+        return
+    if not context.args or len(context.args) < 2:
+        await update.effective_message.reply_text(f"Uso: /add_msg_{tier} HH:MM <texto>")
+        return
+    hhmm = context.args[0]
+    try:
+        parse_hhmm(hhmm)
+    except Exception as e:
+        await update.effective_message.reply_text(f"Hora inválida: {e}")
+        return
+    texto = " ".join(context.args[1:]).strip()
+    if not texto:
+        await update.effective_message.reply_text("Texto vazio.")
+        return
+    m = scheduled_create(hhmm, texto, tier=tier)
+    tz = _tz(m.tz)
+    h, k = parse_hhmm(m.hhmm)
+    application.job_queue.run_daily(
+        _scheduled_message_job,
+        time=dt.time(hour=h, minute=k, tzinfo=tz),
+        name=f"{JOB_PREFIX_SM}{m.id}",
+    )
+    await update.effective_message.reply_text(f"✅ Mensagem #{m.id} ({tier.upper()}) criada para {m.hhmm} (diária).")
+
+async def add_msg_vip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await _add_msg_tier(update, context, "vip")
+
+async def add_msg_free_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await _add_msg_tier(update, context, "free")
+
+async def _list_msgs_tier(update: Update, context: ContextTypes.DEFAULT_TYPE, tier: str):
+    if not (update.effective_user and is_admin(update.effective_user.id)):
+        await update.effective_message.reply_text("Apenas admins.")
+        return
+    msgs = scheduled_all(tier=tier)
+    if not msgs:
+        await update.effective_message.reply_text(f"Não há mensagens agendadas ({tier.upper()}).")
+        return
+    lines = [f"🕒 <b>Mensagens agendadas — {tier.upper()}</b>"]
+    for m in msgs:
+        status = "ON" if m.enabled else "OFF"
+        preview = (m.text[:80] + "…") if len(m.text) > 80 else m.text
+        lines.append(f"#{m.id} — {m.hhmm} ({m.tz}) [{status}] — {esc(preview)}")
+    await update.effective_message.reply_text("\n".join(lines), parse_mode="HTML")
+
+async def list_msgs_vip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await _list_msgs_tier(update, context, "vip")
+
+async def list_msgs_free_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await _list_msgs_tier(update, context, "free")
+
+async def _edit_msg_tier(update: Update, context: ContextTypes.DEFAULT_TYPE, tier: str):
+    if not (update.effective_user and is_admin(update.effective_user.id)):
+        await update.effective_message.reply_text("Apenas admins.")
+        return
+    if not context.args:
+        await update.effective_message.reply_text(f"Uso: /edit_msg_{tier} <id> [HH:MM] [novo texto]")
+        return
+    try:
+        sid = int(context.args[0])
+    except:
+        await update.effective_message.reply_text("ID inválido.")
+        return
+    hhmm = None
+    new_text = None
     if len(context.args) >= 2:
-        cand = context.args[1]
-        if ":" in cand and len(cand) <= 5:
-            try: parse_hhmm(cand); hhmm = cand; new_text = " ".join(context.args[2:]).strip() if len(context.args)>2 else None
-            except Exception as e: return await update.effective_message.reply_text(f"Hora inválida: {e}")
+        candidate = context.args[1]
+        if ":" in candidate and len(candidate) <= 5:
+            try:
+                parse_hhmm(candidate)
+                hhmm = candidate
+                new_text = " ".join(context.args[2:]).strip() if len(context.args) > 2 else None
+            except Exception as e:
+                await update.effective_message.reply_text(f"Hora inválida: {e}")
+                return
         else:
             new_text = " ".join(context.args[1:]).strip()
-    if hhmm is None and new_text is None: return await update.effective_message.reply_text("Nada para alterar. Informe HH:MM e/ou novo texto.")
-    with session_scope() as s:
-        m = s.query(ScheduledMessage).filter_by(id=sid, audience=audience).first()
-        if not m: return await update.effective_message.reply_text("Mensagem não encontrada.")
-        if hhmm: m.hhmm = hhmm
-        if new_text is not None: m.text = new_text
+    if hhmm is None and new_text is None:
+        await update.effective_message.reply_text("Nada para alterar. Informe HH:MM e/ou novo texto.")
+        return
+
+    m_current = scheduled_get(sid)
+    if not m_current or m_current.tier != tier:
+        await update.effective_message.reply_text(f"Mensagem não encontrada no tier {tier.upper()}.")
+        return
+
+    ok = scheduled_update(sid, hhmm, new_text)
+    if not ok:
+        await update.effective_message.reply_text("Mensagem não encontrada.")
+        return
     for j in list(context.job_queue.jobs()):
-        if j.name == f"{JOB_PREFIX_SM}{sid}": j.schedule_removal()
-    with session_scope() as s: m = s.query(ScheduledMessage).filter_by(id=sid).first()
+        if j.name == f"{JOB_PREFIX_SM}{sid}":
+            j.schedule_removal()
+    m = scheduled_get(sid)
     if m:
-        h,k = parse_hhmm(m.hhmm)
-        context.job_queue.run_daily(_scheduled_message_job, time=dt.time(hour=h, minute=k, tzinfo=_tz(m.tz)), name=f"{JOB_PREFIX_SM}{m.id}")
+        tz = _tz(m.tz)
+        h, k = parse_hhmm(m.hhmm)
+        context.job_queue.run_daily(
+            _scheduled_message_job,
+            time=dt.time(hour=h, minute=k, tzinfo=tz),
+            name=f"{JOB_PREFIX_SM}{m.id}",
+        )
     await update.effective_message.reply_text("✅ Mensagem atualizada.")
 
-async def toggle_msg_generic(update, context, audience: str):
-    if not (update.effective_user and is_admin(update.effective_user.id)) : return await update.effective_message.reply_text("Apenas admins.")
-    if not context.args: return await update.effective_message.reply_text(f"Uso: /toggle_msg_{audience} <id>")
-    try: sid = int(context.args[0])
-    except: return await update.effective_message.reply_text("ID inválido.")
-    with session_scope() as s:
-        m = s.query(ScheduledMessage).filter_by(id=sid, audience=audience).first()
-        if not m: return await update.effective_message.reply_text("Mensagem não encontrada.")
-        m.enabled = not m.enabled; new_state = m.enabled
-    await update.effective_message.reply_text(f"✅ Mensagem #{sid} agora está {'ON' if new_state else 'OFF'}.")
+async def edit_msg_vip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await _edit_msg_tier(update, context, "vip")
 
-async def del_msg_generic(update, context, audience: str):
-    if not (update.effective_user and is_admin(update.effective_user.id)) : return await update.effective_message.reply_text("Apenas admins.")
-    if not context.args: return await update.effective_message.reply_text(f"Uso: /del_msg_{audience} <id>")
-    try: sid = int(context.args[0])
-    except: return await update.effective_message.reply_text("ID inválido.")
-    with session_scope() as s:
-        m = s.query(ScheduledMessage).filter_by(id=sid, audience=audience).first()
-        if not m: return await update.effective_message.reply_text("Mensagem não encontrada.")
-        s.delete(m)
+async def edit_msg_free_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await _edit_msg_tier(update, context, "free")
+
+async def _toggle_msg_tier(update: Update, context: ContextTypes.DEFAULT_TYPE, tier: str):
+    if not (update.effective_user and is_admin(update.effective_user.id)):
+        await update.effective_message.reply_text("Apenas admins.")
+        return
+    if not context.args:
+        await update.effective_message.reply_text(f"Uso: /toggle_msg_{tier} <id>")
+        return
+    try:
+        sid = int(context.args[0])
+    except:
+        await update.effective_message.reply_text("ID inválido.")
+        return
+    m_current = scheduled_get(sid)
+    if not m_current or m_current.tier != tier:
+        await update.effective_message.reply_text(f"Mensagem não encontrada no tier {tier.upper()}.")
+        return
+    new_state = scheduled_toggle(sid)
+    if new_state is None:
+        await update.effective_message.reply_text("Mensagem não encontrada.")
+        return
+    await update.effective_message.reply_text(f"✅ Mensagem #{sid} ({tier.upper()}) agora está {'ON' if new_state else 'OFF'}.")
+
+async def toggle_msg_vip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await _toggle_msg_tier(update, context, "vip")
+
+async def toggle_msg_free_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await _toggle_msg_tier(update, context, "free")
+
+async def _del_msg_tier(update: Update, context: ContextTypes.DEFAULT_TYPE, tier: str):
+    if not (update.effective_user and is_admin(update.effective_user.id)):
+        await update.effective_message.reply_text("Apenas admins.")
+        return
+    if not context.args:
+        await update.effective_message.reply_text(f"Uso: /del_msg_{tier} <id>")
+        return
+    try:
+        sid = int(context.args[0])
+    except:
+        await update.effective_message.reply_text("ID inválido.")
+        return
+    m_current = scheduled_get(sid)
+    if not m_current or m_current.tier != tier:
+        await update.effective_message.reply_text(f"Mensagem não encontrada no tier {tier.upper()}.")
+        return
+    ok = scheduled_delete(sid)
+    if not ok:
+        await update.effective_message.reply_text("Mensagem não encontrada.")
+        return
     for j in list(context.job_queue.jobs()):
-        if j.name == f"{JOB_PREFIX_SM}{sid}": j.schedule_removal()
+        if j.name == f"{JOB_PREFIX_SM}{sid}":
+            j.schedule_removal()
     await update.effective_message.reply_text("✅ Mensagem removida.")
 
-# Wraps
-async def add_msg_vip_cmd(u,c):   await add_msg_generic(u,c,"vip")
-async def add_msg_free_cmd(u,c):  await add_msg_generic(u,c,"free")
-async def list_msgs_vip_cmd(u,c): await list_msgs_generic(u,c,"vip")
-async def list_msgs_free_cmd(u,c):await list_msgs_generic(u,c,"free")
-async def edit_msg_vip_cmd(u,c):  await edit_msg_generic(u,c,"vip")
-async def edit_msg_free_cmd(u,c): await edit_msg_generic(u,c,"free")
-async def toggle_msg_vip_cmd(u,c):await toggle_msg_generic(u,c,"vip")
-async def toggle_msg_free_cmd(u,c):await toggle_msg_generic(u,c,"free")
-async def del_msg_vip_cmd(u,c):   await del_msg_generic(u,c,"vip")
-async def del_msg_free_cmd(u,c):  await del_msg_generic(u,c,"free")
+async def del_msg_vip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await _del_msg_tier(update, context, "vip")
 
-# ---------------------------
-# Diag / Fix
-# ---------------------------
-async def diag_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def del_msg_free_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await _del_msg_tier(update, context, "free")
+
+# ====== Set horário dos jobs diários (VIP/FREE) ======
+async def set_pack_horario_vip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not (update.effective_user and is_admin(update.effective_user.id)):
-        return await update.effective_message.reply_text("Apenas admins.")
+        await update.effective_message.reply_text("Apenas admins.")
+        return
+    if not context.args:
+        await update.effective_message.reply_text("Uso: /set_pack_horario_vip HH:MM")
+        return
     try:
-        info = await application.bot.get_webhook_info()
-        webhook_ok = bool(info.url)
-    except Exception:
-        webhook_ok = False
-    with session_scope() as s:
-        packs_c = s.query(Pack).count()
-        pf_c    = s.query(PackFile).count()
-        pay_c   = s.query(Payment).count()
-        sm_c    = s.query(ScheduledMessage).count()
-        insp = inspect(engine)
-        packs_cols = {c["name"] for c in insp.get_columns("packs")}
-        sched_cols = {c["name"] for c in insp.get_columns("scheduled_messages")}
-        packs_null_aud = s.execute(text("SELECT COUNT(*) FROM packs WHERE audience IS NULL")).scalar() or 0
-        sched_null_aud = s.execute(text("SELECT COUNT(*) FROM scheduled_messages WHERE audience IS NULL")).scalar() or 0
-    lines = [
-        "🔎 <b>Diag</b>",
-        f"Webhook setado: {'SIM' if webhook_ok else 'NÃO'}",
-        f"DB: packs={packs_c}, pack_files={pf_c}, payments={pay_c}, sched_msgs={sm_c}",
-        f"Schema packs tem 'audience': {'SIM' if 'audience' in packs_cols else 'NÃO'} (nulos={packs_null_aud})",
-        f"Schema scheduled_messages tem 'audience': {'SIM' if 'audience' in sched_cols else 'NÃO'} (nulos={sched_null_aud})",
-        f"default_chain={cfg_get('default_chain', DEFAULT_CHAIN)}  price={cfg_get('price_amount', DEFAULT_PRICE_AMOUNT)} {cfg_get('price_currency', DEFAULT_PRICE_CURRENCY)}",
-        f"daily_pack_hhmm={cfg_get('daily_pack_hhmm')}",
-    ]
-    for ch in chunk_text(lines): await update.effective_message.reply_text(ch, parse_mode=ParseMode.HTML)
+        hhmm = context.args[0]
+        parse_hhmm(hhmm)
+        cfg_set("daily_pack_vip_hhmm", hhmm)
+        await _reschedule_daily_packs()
+        await update.effective_message.reply_text(f"✅ Horário diário dos packs VIP definido para {hhmm}.")
+    except Exception as e:
+        await update.effective_message.reply_text(f"Hora inválida: {e}")
 
-async def fix_legacy_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def set_pack_horario_free_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not (update.effective_user and is_admin(update.effective_user.id)):
-        return await update.effective_message.reply_text("Apenas admins.")
-    with engine.begin() as conn:
-        conn.execute(text("UPDATE packs SET audience='vip' WHERE audience IS NULL"))
-        conn.execute(text("UPDATE scheduled_messages SET audience='vip' WHERE audience IS NULL"))
-    await update.effective_message.reply_text("✅ Legacy corrigido (audience NULL -> 'vip').")
+        await update.effective_message.reply_text("Apenas admins.")
+        return
+    if not context.args:
+        await update.effective_message.reply_text("Uso: /set_pack_horario_free HH:MM")
+        return
+    try:
+        hhmm = context.args[0]
+        parse_hhmm(hhmm)
+        cfg_set("daily_pack_free_hhmm", hhmm)
+        await _reschedule_daily_packs()
+        await update.effective_message.reply_text(f"✅ Horário diário dos packs FREE definido para {hhmm}.")
+    except Exception as e:
+        await update.effective_message.reply_text(f"Hora inválida: {e}")
 
-# ---------------------------
-# Error handler
-# ---------------------------
+# =========================
+# Error handler global
+# =========================
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     logging.exception("Erro não tratado", exc_info=context.error)
 
-# ---------------------------
+# =========================
 # Webhooks
-# ---------------------------
+# =========================
 @app.post("/crypto_webhook")
 async def crypto_webhook(request: Request):
     data = await request.json()
-    uid, tx_hash = data.get("telegram_user_id"), data.get("tx_hash")
+    uid = data.get("telegram_user_id")
+    tx_hash = data.get("tx_hash")
     amount = data.get("amount")
-    chain = (data.get("chain") or cfg_get("default_chain", DEFAULT_CHAIN)).lower()
+    chain = data.get("chain") or CHAIN_NAME
+
     if not uid or not tx_hash:
         return JSONResponse({"ok": False, "error": "telegram_user_id e tx_hash são obrigatórios"}, status_code=400)
-    with session_scope() as s:
-        pay = s.query(Payment).filter_by(tx_hash=tx_hash).first()
+
+    s = SessionLocal()
+    try:
+        pay = s.query(Payment).filter(Payment.tx_hash == tx_hash).first()
         if not pay:
-            s.add(Payment(user_id=int(uid), tx_hash=tx_hash, amount=amount, chain=chain, status="approved", decided_at=now_utc()))
+            pay = Payment(user_id=int(uid), tx_hash=tx_hash, amount=amount, chain=chain, status="approved", decided_at=now_utc())
+            s.add(pay)
         else:
-            pay.status, pay.decided_at = "approved", now_utc()
-    link = await _send_invite_one_click()
-    if link:
-        try: await application.bot.send_message(chat_id=int(uid), text=f"✅ Pagamento confirmado! Entre no VIP: {link.invite_link}")
-        except: logging.exception("Erro enviando invite")
+            pay.status = "approved"
+            pay.decided_at = now_utc()
+        s.commit()
+    finally:
+        s.close()
+
+    try:
+        invite = await application.bot.export_chat_invite_link(chat_id=GROUP_VIP_ID)
+        await application.bot.send_message(chat_id=int(uid), text=f"✅ Pagamento confirmado! Entre no VIP: {invite}")
+    except Exception:
+        logging.exception("Erro enviando invite")
+
     return JSONResponse({"ok": True})
 
 @app.post("/webhook")
@@ -945,106 +1770,176 @@ async def telegram_webhook(request: Request):
         update = Update.de_json(data, application.bot)
         await application.process_update(update)
     except Exception:
-        logging.exception("Erro processando update Telegram"); raise HTTPException(status_code=400, detail="Invalid update")
-    return PlainTextResponse("", status_code=200)
-
-@app.get("/ping")
-async def ping(): return {"ok": True, "time": now_utc().isoformat()}
-
-@app.get("/healthz")
-async def healthz(): return {"ok": True}
-
-@app.head("/")
-async def head_root():
+        logging.exception("Erro processando update Telegram")
+        raise HTTPException(status_code=400, detail="Invalid update")
     return PlainTextResponse("", status_code=200)
 
 @app.get("/")
-async def root(): return {"status": "online", "message": "Bot ready (crypto + schedules + packs)"}
+async def root():
+    return {"status": "online", "message": "Bot ready (crypto + schedules + VIP/FREE)"}
 
-# ---------------------------
-# Startup
-# ---------------------------
-tz_sp = pytz.timezone("America/Sao_Paulo")
-
-async def _reschedule_daily_pack():
-    for j in list(application.job_queue.jobs()):
-        if j.name == "daily_pack": j.schedule_removal()
-    hhmm = cfg_get("daily_pack_hhmm") or "18:49"
-    h, m = parse_hhmm(hhmm)
-    application.job_queue.run_daily(enviar_pack_vip_job, time=dt.time(hour=h, minute=m, tzinfo=tz_sp), name="daily_pack")
-    logging.info(f"Job diário de pack agendado para {hhmm} America/Sao_Paulo")
-
+# =========================
+# Startup: register handlers & jobs
+# =========================
 @app.on_event("startup")
 async def on_startup():
-    global bot
-    logging.basicConfig(level=logging.INFO)
-    await application.initialize(); await application.start()
+    global bot, BOT_USERNAME
+    await application.initialize()
+    await application.start()
     bot = application.bot
 
-    if BASE_URL:
-        try: await bot.set_webhook(url=f"{BASE_URL.rstrip('/')}/webhook")
-        except Exception as e: logging.warning(f"Falha set_webhook: {e}")
-    logging.info("Bot iniciado (cripto + schedules + packs).")
+    if not WEBHOOK_URL:
+        raise RuntimeError("WEBHOOK_URL não definido no .env")
+    await bot.set_webhook(url=WEBHOOK_URL)
 
+    me = await bot.get_me()
+    BOT_USERNAME = me.username
+
+    logging.basicConfig(level=logging.INFO)
+    logging.info("Bot iniciado (cripto + schedules + VIP/FREE).")
+
+    # ===== Error handler =====
     application.add_error_handler(error_handler)
 
-    # Conversa /novopack
-    conv = ConversationHandler(
-        entry_points=[CommandHandler("novopack", novopack_start),
-                      CommandHandler("novopackvip", novopack_start),
-                      CommandHandler("novopackfree", novopack_start)],
+    # ===== Conversas do NOVOPACK (group=0) =====
+    states_map = {
+        TITLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, novopack_title)],
+        CONFIRM_TITLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, novopack_confirm_title)],
+        PREVIEWS: [
+            CommandHandler("proximo", novopack_next_to_files),
+            MessageHandler(filters.PHOTO | filters.VIDEO | filters.ANIMATION, novopack_collect_previews),
+            MessageHandler(filters.TEXT & ~filters.COMMAND, hint_previews),
+        ],
+        FILES: [
+            CommandHandler("finalizar", novopack_finish_review),
+            MessageHandler(filters.Document.ALL | filters.AUDIO | filters.VOICE, novopack_collect_files),
+            MessageHandler(filters.TEXT & ~filters.COMMAND, hint_files),
+        ],
+        CONFIRM_SAVE: [MessageHandler(filters.TEXT & ~filters.COMMAND, novopack_confirm_save)],
+    }
+
+    # Handler principal: /novopack (privado ou grupos cadastrados) + /start novopack (privado via deep-link)
+    conv_main = ConversationHandler(
+        entry_points=[
+            CommandHandler("novopack", novopack_start),
+            CommandHandler("start", novopack_start, filters=filters.ChatType.PRIVATE & filters.Regex(r"^/start\s+novopack(\s|$)")),
+        ],
         states={
-            TITLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, novopack_title)],
-            CHOOSE_AUDIENCE: [MessageHandler(filters.TEXT & ~filters.COMMAND, novopack_choose_audience)],
-            PREVIEWS: [CommandHandler("proximo", novopack_next_to_files),
-                       MessageHandler(filters.PHOTO | filters.VIDEO | filters.ANIMATION, novopack_collect_previews),
-                       MessageHandler(filters.TEXT & ~filters.COMMAND, novopack_collect_previews)],
-            FILES: [CommandHandler("finalizar", novopack_finish_review),
-                    MessageHandler(filters.Document.ALL | filters.AUDIO | filters.VOICE, novopack_collect_files),
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, novopack_collect_files)],
-            CONFIRM_SAVE: [MessageHandler(filters.TEXT & ~filters.COMMAND, novopack_confirm_save)],
+            CHOOSE_TIER: [MessageHandler(filters.TEXT & ~filters.COMMAND, novopack_choose_tier)],
+            **states_map,
         },
         fallbacks=[CommandHandler("cancelar", novopack_cancel)],
         allow_reentry=True,
     )
-    application.add_handler(conv, group=0)
+    application.add_handler(conv_main, group=0)
 
-    # Storage handlers (VIP / FREE)
-    for chat_id in (STORAGE_VIP_GROUP_ID, STORAGE_FREE_GROUP_ID):
-        application.add_handler(MessageHandler(filters.Chat(chat_id) & filters.TEXT & ~filters.COMMAND, storage_text_handler), group=1)
-        application.add_handler(MessageHandler(
-            filters.Chat(chat_id) & (filters.PHOTO | filters.VIDEO | filters.ANIMATION | filters.AUDIO | filters.Document.ALL | filters.VOICE),
-            storage_media_handler
-        ), group=1)
+    # Atalhos (opcionais, só privado)
+    conv_vip = ConversationHandler(
+        entry_points=[CommandHandler("novopackvip", novopackvip_start, filters=filters.ChatType.PRIVATE)],
+        states=states_map,
+        fallbacks=[CommandHandler("cancelar", novopack_cancel)],
+        allow_reentry=True,
+    )
+    application.add_handler(conv_vip, group=0)
 
-    # Comandos gerais
-    handlers = {
-        "start": start_cmd, "comandos": comandos_cmd, "listar_comandos": listar_comandos_cmd, "getid": getid_cmd,
-        "listar_packs": listar_packs_cmd, "packs_pendentes": packs_pendentes_cmd,
-        "marcar_pendente": marcar_pendente_cmd, "marcar_enviado": marcar_enviado_cmd, "simularvip": simularvip_cmd,
-        "listar_admins": listar_admins_cmd, "add_admin": add_admin_cmd, "rem_admin": rem_admin_cmd,
-        "set_preco": set_preco_cmd, "ver_preco": ver_preco_cmd, "set_free_teaser": set_free_teaser_cmd, "set_pack_horario": set_pack_horario_cmd,
-        "grupovip": grupovip_cmd, "pagar": pagar_cmd, "tx": tx_cmd,
-        "listar_pendentes": listar_pendentes_cmd, "aprovar_tx": aprovar_tx_cmd, "rejeitar_tx": rejeitar_tx_cmd,
-        "add_msg_vip": add_msg_vip_cmd, "add_msg_free": add_msg_free_cmd,
-        "list_msgs_vip": list_msgs_vip_cmd, "list_msgs_free": list_msgs_free_cmd,
-        "edit_msg_vip": edit_msg_vip_cmd, "edit_msg_free": edit_msg_free_cmd,
-        "toggle_msg_vip": toggle_msg_vip_cmd, "toggle_msg_free": toggle_msg_free_cmd,
-        "del_msg_vip": del_msg_vip_cmd, "del_msg_free": del_msg_free_cmd,
-        "diag": diag_cmd, "fix_legacy": fix_legacy_cmd,
-    }
-    for cmd, fn in handlers.items():
-        application.add_handler(CommandHandler(cmd, fn), group=1)
+    conv_free = ConversationHandler(
+        entry_points=[CommandHandler("novopackfree", novopackfree_start, filters=filters.ChatType.PRIVATE)],
+        states=states_map,
+        fallbacks=[CommandHandler("cancelar", novopack_cancel)],
+        allow_reentry=True,
+    )
+    application.add_handler(conv_free, group=0)
 
-    # Jobs
-    await _reschedule_daily_pack()
-    application.job_queue.run_repeating(keepalive_job, interval=KEEPALIVE_INTERVAL_SEC, first=10, name="keepalive")
+    # ===== Conversa /excluir_pack (com confirmação) =====
+    excluir_conv = ConversationHandler(
+        entry_points=[CommandHandler("excluir_pack", excluir_pack_cmd)],
+        states={DELETE_PACK_CONFIRM: [MessageHandler(filters.TEXT & ~filters.COMMAND, excluir_pack_confirm)]},
+        fallbacks=[],
+        allow_reentry=True,
+    )
+    application.add_handler(excluir_conv, group=0)
+
+    # ===== Handlers do grupo de armazenamento (group=1) =====
+    application.add_handler(
+        MessageHandler(
+            (filters.Chat(STORAGE_GROUP_ID) | filters.Chat(STORAGE_GROUP_FREE_ID)) & filters.TEXT & ~filters.COMMAND,
+            storage_text_handler
+        ),
+        group=1,
+    )
+    media_filter = (
+        (filters.Chat(STORAGE_GROUP_ID) | filters.Chat(STORAGE_GROUP_FREE_ID))
+        & (
+            filters.PHOTO
+            | filters.VIDEO
+            | filters.ANIMATION
+            | filters.AUDIO
+            | filters.Document.ALL
+            | filters.VOICE
+        )
+    )
+    application.add_handler(MessageHandler(media_filter, storage_media_handler), group=1)
+
+    # ===== Comandos gerais (group=1) =====
+    application.add_handler(CommandHandler("start", start_cmd), group=1)
+    application.add_handler(CommandHandler("comandos", comandos_cmd), group=1)
+    application.add_handler(CommandHandler("listar_comandos", comandos_cmd), group=1)
+    application.add_handler(CommandHandler("getid", getid_cmd), group=1)
+
+    # Packs & admin
+    application.add_handler(CommandHandler("simularvip", simularvip_cmd), group=1)
+    application.add_handler(CommandHandler("simularfree", simularfree_cmd), group=1)
+    application.add_handler(CommandHandler("listar_packsvip", listar_packsvip_cmd), group=1)
+    application.add_handler(CommandHandler("listar_packsfree", listar_packsfree_cmd), group=1)
+    application.add_handler(CommandHandler("pack_info", pack_info_cmd), group=1)
+    application.add_handler(CommandHandler("excluir_item", excluir_item_cmd), group=1)
+    application.add_handler(CommandHandler("set_pendentevip", set_pendentevip_cmd), group=1)
+    application.add_handler(CommandHandler("set_pendentefree", set_pendentefree_cmd), group=1)
+    application.add_handler(CommandHandler("set_enviadovip", set_enviadovip_cmd), group=1)
+    application.add_handler(CommandHandler("set_enviadofree", set_enviadofree_cmd), group=1)
+
+    # Admin mgmt & util
+    application.add_handler(CommandHandler("listar_admins", listar_admins_cmd), group=1)
+    application.add_handler(CommandHandler("add_admin", add_admin_cmd), group=1)
+    application.add_handler(CommandHandler("rem_admin", rem_admin_cmd), group=1)
+    application.add_handler(CommandHandler("mudar_nome", mudar_nome_cmd), group=1)
+    application.add_handler(CommandHandler("mudar_username", mudar_username_cmd), group=1)
+    application.add_handler(CommandHandler("limpar_chat", limpar_chat_cmd), group=1)
+
+    # Pagamentos cripto
+    application.add_handler(CommandHandler("pagar", pagar_cmd), group=1)
+    application.add_handler(CommandHandler("tx", tx_cmd), group=1)
+    application.add_handler(CommandHandler("listar_pendentes", listar_pendentes_cmd), group=1)
+    application.add_handler(CommandHandler("aprovar_tx", aprovar_tx_cmd), group=1)
+    application.add_handler(CommandHandler("rejeitar_tx", rejeitar_tx_cmd), group=1)
+
+    # Mensagens agendadas (por tier)
+    application.add_handler(CommandHandler("add_msg_vip", add_msg_vip_cmd), group=1)
+    application.add_handler(CommandHandler("add_msg_free", add_msg_free_cmd), group=1)
+    application.add_handler(CommandHandler("list_msgs_vip", list_msgs_vip_cmd), group=1)
+    application.add_handler(CommandHandler("list_msgs_free", list_msgs_free_cmd), group=1)
+    application.add_handler(CommandHandler("edit_msg_vip", edit_msg_vip_cmd), group=1)
+    application.add_handler(CommandHandler("edit_msg_free", edit_msg_free_cmd), group=1)
+    application.add_handler(CommandHandler("toggle_msg_vip", toggle_msg_vip_cmd), group=1)
+    application.add_handler(CommandHandler("toggle_msg_free", toggle_msg_free_cmd), group=1)
+    application.add_handler(CommandHandler("del_msg_vip", del_msg_vip_cmd), group=1)
+    application.add_handler(CommandHandler("del_msg_free", del_msg_free_cmd), group=1)
+
+    # Set horário dos packs diários
+    application.add_handler(CommandHandler("set_pack_horario_vip", set_pack_horario_vip_cmd), group=1)
+    application.add_handler(CommandHandler("set_pack_horario_free", set_pack_horario_free_cmd), group=1)
+
+    # Jobs diários de packs
+    await _reschedule_daily_packs()
+
+    # (Re)registrar todas as mensagens agendadas existentes
     _register_all_scheduled_messages(application.job_queue)
+
     logging.info("Handlers e jobs registrados.")
 
-# ---------------------------
-# Run local
-# ---------------------------
+# =========================
+# Run
+# =========================
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     uvicorn.run("main:app", host="0.0.0.0", port=PORT)
