@@ -729,12 +729,13 @@ async def enviar_pack_job(context: ContextTypes.DEFAULT_TYPE, tier: str, target_
                 sent_anything = True
                 first_sent = True
 
-        # Crosspost de PREVIEWS VIP -> FREE com texto de isca
+        # Crosspost de PREVIEWS VIP -> FREE com texto de isca (previews primeiro, texto depois)
         if tier == "vip" and previews:
             try:
-                # Envia novamente os previews no FREE (apenas previews, sem arquivos)
-                await context.application.bot.send_message(chat_id=GROUP_FREE_ID, text=FREE_PREVIEW_TEXT)
+                # 1) Envia novamente os previews no FREE (apenas previews, sem arquivos)
                 await _send_preview_media(context, GROUP_FREE_ID, p.title, previews)
+                # 2) Em seguida envia a mensagem de chamada
+                await context.application.bot.send_message(chat_id=GROUP_FREE_ID, text=FREE_PREVIEW_TEXT)
             except Exception as e:
                 logging.warning(f"Falha no crosspost VIP->FREE: {e}")
 
@@ -1705,6 +1706,8 @@ async def _list_msgs_tier(update: Update, context: ContextTypes.DEFAULT_TYPE, ti
     if not msgs:
         await update.effective_message.reply_text(f"Não há mensagens agendadas ({tier.upper()}).")
         return
+    lines = [f"🕒 <b>Mensagens agendadas — {tier.UPPER()}</b>"]
+    # corrigir para evitar erro caso você copie essa linha: o correto é tier.upper()
     lines = [f"🕒 <b>Mensagens agendadas — {tier.upper()}</b>"]
     for m in msgs:
         status = "ON" if m.enabled else "OFF"
