@@ -271,9 +271,10 @@ class PackFile(Base):
     src_message_id = Column(Integer, nullable=True)
     pack = relationship("Pack", back_populates="files")
 
-__table_args__ = (
+    __table_args__ = (
         UniqueConstraint("pack_id", "file_unique_id", "file_type", name="uq_pack_file_unique"),
     )
+
 
 
 class Payment(Base):
@@ -443,6 +444,7 @@ def list_packs_by_tier(tier: str) -> List['Pack']:
              .all()
         )
 
+
 def is_admin(user_id: int) -> bool:
     try:
         with SessionLocal() as s:
@@ -459,33 +461,56 @@ def is_admin(user_id: int) -> bool:
     with SessionLocal() as s:
         return s.query(Admin).filter(Admin.user_id == int(user_id)).first() is not None
     
+
+# --- ADMIN helper com cache simples (evita ida ao banco toda hora)
+_ADMIN_CACHE: set[int] = set()
+_ADMIN_CACHE_TS: float = 0.0
+
+def is_admin(user_id: int) -> bool:
+    global _ADMIN_CACHE, _ADMIN_CACHE_TS
+    now = dt.datetime.utcnow().timestamp()
+    if now - _ADMIN_CACHE_TS > 60:
+        with SessionLocal() as s:
+            _ADMIN_CACHE = {a.user_id for a in s.query(Admin).all()}
+        _ADMIN_CACHE_TS = now
+    return int(user_id) in _ADMIN_CACHE
+
+
+    
 def add_admin_db(user_id: int) -> bool:
-   with SessionLocal() as s:
+    with SessionLocal() as s:
         try:
             if s.query(Admin).filter(Admin.user_id == user_id).first():
                 return False
             s.add(Admin(user_id=user_id))
             s.commit()
+            # atualiza cache
+            global _ADMIN_CACHE, _ADMIN_CACHE_TS
+            _ADMIN_CACHE.add(user_id); _ADMIN_CACHE_TS = dt.datetime.utcnow().timestamp()
             return True
         except Exception:
             s.rollback()
             raise
 
 def remove_admin_db(user_id: int) -> bool:
-   with SessionLocal() as s:
+    with SessionLocal() as s:
         try:
             a = s.query(Admin).filter(Admin.user_id == user_id).first()
             if not a:
                 return False
             s.delete(a)
             s.commit()
+            # atualiza cache
+            global _ADMIN_CACHE, _ADMIN_CACHE_TS
+            _ADMIN_CACHE.discard(user_id); _ADMIN_CACHE_TS = dt.datetime.utcnow().timestamp()
             return True
         except Exception:
             s.rollback()
             raise
 
+
 def create_pack(title: str, header_message_id: Optional[int] = None, tier: str = "vip") -> 'Pack':
-   with SessionLocal() as s:
+    with SessionLocal() as s:
         try:
             p = Pack(title=title.strip(), header_message_id=header_message_id, tier=tier)
             s.add(p)
@@ -497,12 +522,14 @@ def create_pack(title: str, header_message_id: Optional[int] = None, tier: str =
             raise
 
 def get_pack_by_header(header_message_id: int) -> Optional['Pack']:
-     with SessionLocal() as s:
+    with SessionLocal() as s:
         return s.query(Pack).filter(Pack.header_message_id == header_message_id).first()
 
-def add_file_to_pack(pack_id: int, file_id: str, file_unique_id: Optional[str], file_type: str, role: str,
-     file_name: Optional[str] = None, src_chat_id: Optional[int] = None, src_message_id: Optional[int] = None):
-     with SessionLocal() as s:
+def add_file_to_pack(
+    pack_id: int, file_id: str, file_unique_id: Optional[str], file_type: str, role: str,
+    file_name: Optional[str] = None, src_chat_id: Optional[int] = None, src_message_id: Optional[int] = None
+):
+    with SessionLocal() as s:
         try:
             pf = PackFile(
                 pack_id=pack_id,
@@ -521,6 +548,7 @@ def add_file_to_pack(pack_id: int, file_id: str, file_unique_id: Optional[str], 
         except Exception:
             s.rollback()
             raise
+
 
 def get_next_unsent_pack(tier: str = "vip") -> Optional['Pack']:
     s = SessionLocal()
@@ -1054,18 +1082,30 @@ async def listar_packsvip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE
         return await update.effective_message.reply_text("Apenas admins.")
 
     with SessionLocal() as s:
-        packs = list_packs_by_tier("vip")
+        packs = (
+            s.query(Pack)
+            .filter(Pack.tier == "vip")
+            .order_by(Pack.created_at.asc())
+            .all()
+        )
 
         if not packs:
-            return await update.effective_message.reply_text("Nenhum pack VIP registrado.")
+            await update.effective_message.reply_text("Nenhum pack VIP registrado.")
+            raise ApplicationHandlerStop  # garante que nada mais responda
 
-        lines = ["🧩 <b>Packs VIP</b>"]
+        lines = []
         for p in packs:
             previews = s.query(PackFile).filter(PackFile.pack_id == p.id, PackFile.role == "preview").count()
             docs    = s.query(PackFile).filter(PackFile.pack_id == p.id, PackFile.role == "file").count()
             status  = "ENVIADO" if p.sent else "PENDENTE"
-            lines.append(f"[{p.id}] {esc(p.title)} — {status} — previews:{previews} arquivos:{docs} — {p.created_at.strftime('%d/%m %H:%M')}")
-        await update.effective_message.reply_text("\n".join(lines), parse_mode="HTML")
+            lines.append(
+                f"[{p.id}] {esc(p.title)} — {status} — previews:{previews} arquivos:{docs} — {p.created_at.strftime('%d/%m %H:%M')}"
+            )
+
+    await update.effective_message.reply_text("\n".join(lines))
+    # corta a propagação por segurança
+    raise ApplicationHandlerStop
+
 
 
 
@@ -1431,6 +1471,7 @@ async def verify_tx_any(tx_hash: str) -> Dict[str, Any]:
         return res
     else:
         return await verify_native_payment(tx_hash)
+    
 
 # =========================
 # Pagamento – comandos
@@ -1455,14 +1496,12 @@ async def pagar_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     sent = await dm(user.id, texto)
 
     if chat.type != "private":
-        # apaga a mensagem do usuário
         try:
             await msg.delete()
         except Exception:
             pass
 
         if sent:
-            # manda confirmação e apaga em 5s
             try:
                 bot_msg = await chat.send_message("Te enviei o passo a passo no privado. 👌")
                 async def _delete_later():
@@ -1475,7 +1514,6 @@ async def pagar_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception:
                 pass
         else:
-            # usuário nunca iniciou o bot
             try:
                 username = BOT_USERNAME or (await application.bot.get_me()).username
             except Exception:
@@ -1491,11 +1529,29 @@ async def pagar_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await msg.reply_text("Qualquer dúvida, me mande a hash com /tx <hash> 😉")
 
 
+
     tx_hash = context.args[0].strip().lower()
 
     # Já existe?
     with SessionLocal() as s:
         existing = s.query(Payment).filter(Payment.tx_hash == tx_hash).first()
+    if status == "approved":
+        try:
+            # >>> concede/renova 30 dias e vincula a hash
+            vip_upsert_start_or_extend(
+                user_id=user.id,
+                username=user.username,
+                tx_hash=tx_hash,
+                extra_days=30
+            )
+            invite = await application.bot.export_chat_invite_link(chat_id=GROUP_VIP_ID)
+            await dm(user.id, f"✅ Pagamento confirmado na rede {CHAIN_NAME}!\nEntre no VIP: {invite}", parse_mode=None)
+            return await msg.reply_text("✅ Verifiquei sua transação e já liberei seu acesso. Confira seu privado.")
+        except Exception as e:
+            logging.exception("Erro enviando invite auto-approve")
+            return await msg.reply_text(f"Pagamento OK, mas falhou ao enviar o convite: {e}")
+
+
 
     if existing and existing.status == "approved":
         # garante VIP e reenvia invite
@@ -1510,6 +1566,7 @@ async def pagar_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await msg.reply_text("Esse hash já foi registrado e está pendente. Aguarde a validação.")
     elif existing and existing.status == "rejected":
         return await msg.reply_text("Esse hash já foi rejeitado. Fale com um administrador.")
+    
     
 
     # Verificação on-chain
@@ -1633,6 +1690,102 @@ async def listar_pendentes_cmd(update: Update, context: ContextTypes.DEFAULT_TYP
         ]
         await update.effective_message.reply_text("\n".join(lines), parse_mode="HTML")
     
+async def tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = update.effective_message
+    user = update.effective_user
+
+    if not context.args:
+        return await msg.reply_text("Uso: /tx <hash_da_transacao>")
+
+    tx_hash = context.args[0].strip().lower()
+    if not tx_hash.startswith("0x") or len(tx_hash) < 20:
+        return await msg.reply_text("Hash inválida.")
+
+    # Já existe?
+    with SessionLocal() as s:
+        existing = s.query(Payment).filter(Payment.tx_hash == tx_hash).first()
+
+    if existing and existing.status == "approved":
+        m = vip_upsert_start_or_extend(user.id, user.username, existing.tx_hash, extra_days=30)
+        try:
+            invite = await application.bot.export_chat_invite_link(chat_id=GROUP_VIP_ID)
+            await dm(user.id, f"✅ Seu pagamento já estava aprovado!\nVIP até {m.expires_at:%d/%m/%Y} ({human_left(m.expires_at)}).\nEntre no VIP: {invite}", parse_mode=None)
+            return await msg.reply_text("Esse hash já estava aprovado. Reenviei o convite no seu privado. ✅")
+        except Exception as e:
+            return await msg.reply_text(f"Hash aprovado, mas falhou ao reenviar o convite: {e}")
+    elif existing and existing.status == "pending":
+        return await msg.reply_text("Esse hash já foi registrado e está pendente. Aguarde a validação.")
+    elif existing and existing.status == "rejected":
+        return await msg.reply_text("Esse hash já foi rejeitado. Fale com um administrador.")
+
+    # Verificação on-chain
+    try:
+        res = await verify_tx_any(tx_hash)
+    except Exception as e:
+        logging.exception("Erro verificando transação")
+        return await msg.reply_text(f"❌ Erro ao verificar on-chain: {e}")
+
+    # Checagem de preço configurado (se houver)
+    paid_ok = res.get("ok", False)
+    if paid_ok:
+        if TOKEN_CONTRACT:
+            price_tok = get_vip_price_token()
+            if price_tok is not None:
+                amount_raw = res.get("amount_raw")
+                min_units  = int(round(price_tok * (10 ** TOKEN_DECIMALS)))
+                if amount_raw is None or amount_raw < min_units:
+                    paid_ok = False
+        else:
+            price_nat = get_vip_price_native()
+            if price_nat is not None:
+                amount_wei = res.get("amount_wei")
+                if amount_wei is None or amount_wei < _to_wei(price_nat, 18):
+                    paid_ok = False
+
+    status = "approved" if (AUTO_APPROVE_CRYPTO and paid_ok) else "pending"
+
+    with SessionLocal() as s:
+        try:
+            p = Payment(
+                user_id=user.id,
+                username=user.username,
+                tx_hash=tx_hash,
+                chain=CHAIN_NAME,
+                status=status,
+                amount=str(res.get("amount_wei") or res.get("amount_raw") or ""),
+                decided_at=now_utc() if status == "approved" else None,
+            )
+            s.add(p)
+            s.commit()
+        except Exception:
+            s.rollback()
+            raise
+
+    if status == "approved":
+        try:
+            m = vip_upsert_start_or_extend(user.id, user.username, tx_hash, extra_days=30)
+            invite = await application.bot.export_chat_invite_link(chat_id=GROUP_VIP_ID)
+            await dm(
+                user.id,
+                f"✅ Pagamento confirmado na rede {CHAIN_NAME}!\n"
+                f"VIP válido até {m.expires_at:%d/%m/%Y} ({human_left(m.expires_at)}).\n"
+                f"Entre no VIP: {invite}",
+                parse_mode=None
+            )
+            return await msg.reply_text("✅ Verifiquei sua transação e já liberei seu acesso. Confira seu privado.")
+        except Exception as e:
+            logging.exception("Erro enviando invite auto-approve")
+            return await msg.reply_text(f"Pagamento OK, mas falhou ao enviar o convite: {e}")
+    else:
+        human = res.get("reason", "Aguardando confirmações.")
+        await msg.reply_text(f"⏳ Hash recebido. Status: {human}")
+        try:
+            for aid in list_admin_ids():
+                txt = f"📥 Pagamento pendente:\nuser_id:{user.id} @{user.username or '-'}\nhash:{tx_hash}\ninfo:{human}"
+                await dm(aid, txt, parse_mode=None)
+        except Exception:
+            pass
+
 
 async def aprovar_tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not (update.effective_user and is_admin(update.effective_user.id)):
@@ -1882,7 +2035,8 @@ async def crypto_webhook(request: Request):
         return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
 
     approved = bool(res.get("ok"))
-    vip_upsert_start_or_extend(int(uid), None, tx_hash, extra_days=30)
+
+   
 
 
     with SessionLocal() as s:
