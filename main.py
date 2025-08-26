@@ -157,7 +157,7 @@ SELF_URL    = os.getenv("SELF_URL")
 STORAGE_GROUP_ID       = int(os.getenv("STORAGE_GROUP_ID", "-4806334341"))
 GROUP_VIP_ID           = int(os.getenv("GROUP_VIP_ID", "-1002791988432"))
 STORAGE_GROUP_FREE_ID  = int(os.getenv("STORAGE_GROUP_FREE_ID", "-1002509364079"))
-GROUP_FREE_ID          = int(os.getenv("GROUP_FREE_ID", "-1002932075976"))
+GROUP_FREE_ID          = int(os.getenv("GROUP_FREE_ID", "-1002509364079"))
 
 PORT = int(os.getenv("PORT", 8000))
 
