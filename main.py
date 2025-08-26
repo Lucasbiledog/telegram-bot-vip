@@ -791,15 +791,15 @@ async def comandos_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• /listar_pendentes — pagamentos pendentes",
         "• /aprovar_tx <user_id> — aprova e envia convite VIP",
         "• /rejeitar_tx <user_id> [motivo] — rejeita pagamento",
-
-        
-         "🧩 Vip Pagamentos:",
+        "",
+        "🧩 Vip Pagamentos:",
          "• /valor: — define o preço (nativo ou token, se usar ERC-20)",
          "Ao aprovar (auto ou manual), o usuário ganha 30 dias de VIP (renova somando).",
          "•/vip_list: lista VIPs ativos com user_id, username, hash (abreviado) e tempo restante.",
          "•/vip_addtime <user_id> <dias>: ajusta dias (negativo reduz).",
          "•/vip_set <user_id> <dias>: cria/renova manualmente.",
          "•/vip_remove <user_id>: desativa e tenta remover do grupo VIP.",
+         "",
 
 
     ]
