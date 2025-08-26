@@ -2263,14 +2263,13 @@ async def on_startup():
     application.add_handler(CommandHandler("say_free", say_free_cmd), group=1)
 
     application.add_handler(CommandHandler("simularvip", simularvip_cmd), group=1)
-    application.add_handler(CommandHandler("simularfree", simularfree_cmd), group=1)
     application.add_handler(CommandHandler([
-        "listar_packsvip",
-        "listar_packvip",
-        "listar_packs_vip",
-        "listar_pack_vip",
-    ], listar_packsvip_cmd), group=1)
-    application.add_handler(CommandHandler("listar_packsfree", listar_packsfree_cmd), group=1)
+    "listar_packsvip",
+    "listar_packvip",
+    "listar_packs_vip",
+    "listar_pack_vip",
+], listar_packsvip_cmd), group=1, block=True)
+    application.add_handler(CommandHandler("listar_packsfree", listar_packsfree_cmd), group=1, block=True)
     application.add_handler(CommandHandler("pack_info", pack_info_cmd), group=1)
     application.add_handler(CommandHandler("excluir_item", excluir_item_cmd), group=1)
     application.add_handler(CommandHandler("set_pendentevip", set_pendentevip_cmd), group=1)
