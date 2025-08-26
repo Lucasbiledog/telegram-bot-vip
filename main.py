@@ -1554,7 +1554,7 @@ async def pagar_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
 
         if bot_msg:
-            asyncio.create_task(delete_later(chat.id, bot_msg.message_id, 10))
+            asyncio.create_task(delete_later(chat.id, bot_msg.message_id, 30))
     else:
         await msg.reply_text("Qualquer dúvida, me mande a hash com /tx <hash> 😉")
 
