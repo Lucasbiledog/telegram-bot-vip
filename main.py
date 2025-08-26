@@ -30,6 +30,9 @@ from telegram.ext import (
 # =========================
 # Helpers
 # =========================
+# Quais comandos usuários comuns podem usar
+ALLOWED_FOR_NON_ADM = {"pagar", "tx"}
+
 def esc(s): return html.escape(str(s) if s is not None else "")
 def now_utc(): return dt.datetime.utcnow()
 import re
@@ -587,6 +590,29 @@ def mark_pack_sent(pack_id: int):
 # =========================
 # STORAGE GROUP handlers
 # =========================
+
+async def _block_non_admin_commands(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Bloqueia TODOS os comandos para não-admin, exceto a allowlist acima.
+    Vale para privado e grupos."""
+    user = update.effective_user
+    if not user:
+        return
+    if is_admin(user.id):
+        return  # admins passam
+
+    text = (update.effective_message.text or "")
+    cmd_raw = text.split()[0].lower()  # ex: "/comandos@SeuBot"
+    if "@" in cmd_raw:
+        cmd_raw = cmd_raw.split("@", 1)[0]  # tira @bot
+    cmd = cmd_raw[1:] if cmd_raw.startswith("/") else cmd_raw
+
+    if cmd in ALLOWED_FOR_NON_ADM:
+        return  # /pagar e /tx liberados
+
+    # Bloqueia o resto
+    await update.effective_message.reply_text("🚫 Comando restrito. Use apenas /pagar ou /tx.")
+    raise ApplicationHandlerStop
+
 def header_key(chat_id: int, message_id: int) -> int:
     if chat_id == STORAGE_GROUP_ID: return int(message_id)
     if chat_id == STORAGE_GROUP_FREE_ID: return int(-message_id)
@@ -862,7 +888,9 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if msg: await msg.reply_text(text)
 
 async def comandos_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    isadm = is_admin(update.effective_user.id) if update.effective_user else False
+    if not (update.effective_user and is_admin(update.effective_user.id)):
+        return await update.effective_message.reply_text("Apenas admins. Use /pagar ou /tx.")
+    # ... segue como está para admins
     base = [
         "📋 <b>Comandos</b>",
         "• /start — mensagem inicial",
@@ -2188,6 +2216,10 @@ async def on_startup():
 
     # ==== Error handler
     application.add_error_handler(error_handler)
+    
+    # ===== Guard GLOBAL para não-admin (vem BEM cedo)
+    application.add_handler(MessageHandler(filters.COMMAND, _block_non_admin_commands), group=-2)
+
 
     # ==== Guard (tem que vir ANTES)
     application.add_handler(MessageHandler(filters.COMMAND & filters.ChatType.GROUPS, _ignore_non_admin_commands_in_groups), group=-1)
