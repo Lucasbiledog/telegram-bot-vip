@@ -269,6 +269,7 @@ class PackFile(Base):
     added_at = Column(DateTime, default=now_utc)
     src_chat_id = Column(BigInteger, nullable=True)
     src_message_id = Column(Integer, nullable=True)
+
     pack = relationship("Pack", back_populates="files")
 
     __table_args__ = (
@@ -840,7 +841,7 @@ async def enviar_pack_free_job(context: ContextTypes.DEFAULT_TYPE):
 # =========================
 async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.effective_message
-    text = ("Fala! Eu gerencio packs VIP/FREE, pagamentos via MetaMask e mensagens agendadas.\nUse /comandos para ver tudo.")
+    text = ("Fala! Eu gerencio packs VIP/FREE, pagamentos via MetaMask e mensagens agendadas.\nUse /pagar para maiores informações")
     if msg: await msg.reply_text(text)
 
 async def comandos_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
