@@ -538,15 +538,6 @@ def mark_pack_sent(pack_id: int):
             s.rollback()
             raise
 
-def list_packs_by_tier(tier: str) -> List['Pack']:
-    with SessionLocal() as s:
-        return (
-            s.query(Pack)
-             .filter(Pack.tier == tier)
-             .order_by(Pack.created_at.asc())
-             .all()
-        )
-
 # =========================
 # STORAGE GROUP handlers
 # =========================
@@ -1068,19 +1059,15 @@ async def listar_packsvip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE
         if not packs:
             return await update.effective_message.reply_text("Nenhum pack VIP registrado.")
 
-        lines = []
+        lines = ["🧩 <b>Packs VIP</b>"]
         for p in packs:
             previews = s.query(PackFile).filter(PackFile.pack_id == p.id, PackFile.role == "preview").count()
             docs    = s.query(PackFile).filter(PackFile.pack_id == p.id, PackFile.role == "file").count()
             status  = "ENVIADO" if p.sent else "PENDENTE"
-            lines.append(
-                f"[{p.id}] {esc(p.title)} — {status} — previews:{previews} arquivos:{docs} — {p.created_at.strftime('%d/%m %H:%M')}"
-            )
+            lines.append(f"[{p.id}] {esc(p.title)} — {status} — previews:{previews} arquivos:{docs} — {p.created_at.strftime('%d/%m %H:%M')}")
+        await update.effective_message.reply_text("\n".join(lines), parse_mode="HTML")
 
-        # IMPORTANTE: apenas UMA mensagem, sem chamar outro handler/alias depois
-        await update.effective_message.reply_text("\n".join(lines))
 
-    
 
 async def listar_packsfree_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not (update.effective_user and is_admin(update.effective_user.id)): return await update.effective_message.reply_text("Apenas admins.")
