@@ -267,9 +267,11 @@ class PackFile(Base):
     src_chat_id = Column(BigInteger, nullable=True)
     src_message_id = Column(Integer, nullable=True)
     pack = relationship("Pack", back_populates="files")
-    __table_args__ = (
+
+__table_args__ = (
         UniqueConstraint("pack_id", "file_unique_id", "file_type", name="uq_pack_file_unique"),
     )
+
 
 class Payment(Base):
     __tablename__ = "payments"
@@ -442,6 +444,10 @@ def list_admin_ids() -> List[int]:
     with SessionLocal() as s:
         return [a.user_id for a in s.query(Admin).order_by(Admin.added_at.asc()).all()]
 
+def is_admin(user_id: int) -> bool:
+    with SessionLocal() as s:
+        return s.query(Admin).filter(Admin.user_id == user_id).first() is not None
+    
 def add_admin_db(user_id: int) -> bool:
    with SessionLocal() as s:
         try:
