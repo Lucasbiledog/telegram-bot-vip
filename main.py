@@ -705,6 +705,14 @@ async def enviar_pack_job(context: ContextTypes.DEFAULT_TYPE, tier: str, target_
         previews = [f for f in files if f.role == "preview"]
         docs     = [f for f in files if f.role == "file"]
 
+         # Deduplicate documents to avoid sending the same file twice
+        unique = {}
+        for f in docs:
+            key = f.file_unique_id or f.file_id
+            if key not in unique:
+                unique[key] = f
+        docs = list(unique.values())
+
         if previews:
             await _send_preview_media(context, target_chat_id, previews)
         await context.application.bot.send_message(chat_id=target_chat_id, text=p.title)
@@ -773,7 +781,7 @@ async def comandos_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🛠 <b>Admin</b>",
         "• /simularvip — envia o próximo pack VIP pendente",
         "• /simularfree — envia o próximo pack FREE pendente",
-        "• /listar_packsvip — lista packs VIP",
+        "• /listar_packsvip (/listar_packvip) — lista packs VIP",
         "• /listar_packsfree — lista packs FREE",
         "• /pack_info <id> — detalhes do pack",
         "• /excluir_item <id_item> — remove item do pack",
@@ -1868,7 +1876,7 @@ async def on_startup():
 
     application.add_handler(CommandHandler("simularvip", simularvip_cmd), group=1)
     application.add_handler(CommandHandler("simularfree", simularfree_cmd), group=1)
-    application.add_handler(CommandHandler("listar_packsvip", listar_packsvip_cmd), group=1)
+    application.add_handler(CommandHandler(["listar_packsvip", "listar_packvip"], listar_packsvip_cmd), group=1)
     application.add_handler(CommandHandler("listar_packsfree", listar_packsfree_cmd), group=1)
     application.add_handler(CommandHandler("pack_info", pack_info_cmd), group=1)
     application.add_handler(CommandHandler("excluir_item", excluir_item_cmd), group=1)
