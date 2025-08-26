@@ -39,6 +39,97 @@ def wrap_ph(s: str) -> str:
     return re.sub(r'<([^>\n]{1,80})>', r'<code>&lt;\1&gt;</code>', s)
 
 
+from datetime import timedelta
+
+# ----- Preço VIP (em nativo ou token) usando ConfigKV
+def get_vip_price_native() -> Optional[float]:
+    v = cfg_get("vip_price_native")
+    try: return float(v) if v is not None else None
+    except: return None
+
+def set_vip_price_native(value: float):
+    cfg_set("vip_price_native", str(value))
+
+def get_vip_price_token() -> Optional[float]:
+    v = cfg_get("vip_price_token")
+    try: return float(v) if v is not None else None
+    except: return None
+
+def set_vip_price_token(value: float):
+    cfg_set("vip_price_token", str(value))
+
+# ----- Assinaturas
+def vip_get(user_id: int) -> Optional['VipMembership']:
+    with SessionLocal() as s:
+        return s.query(VipMembership).filter(VipMembership.user_id == user_id).first()
+
+def vip_upsert_start_or_extend(user_id: int, username: Optional[str], tx_hash: Optional[str], extra_days: int = 30) -> 'VipMembership':
+    now = now_utc()
+    with SessionLocal() as s:
+        m = s.query(VipMembership).filter(VipMembership.user_id == user_id).first()
+        if not m:
+            m = VipMembership(
+                user_id=user_id,
+                username=username,
+                tx_hash=tx_hash,
+                start_at=now,
+                expires_at=now + timedelta(days=extra_days),
+                active=True,
+            )
+            s.add(m)
+        else:
+            # Se ainda ativo, soma dias a partir do expires_at; senão reinicia a partir de agora
+            base = m.expires_at if m.active and m.expires_at and m.expires_at > now else now
+            m.expires_at = base + timedelta(days=extra_days)
+            m.tx_hash = tx_hash or m.tx_hash
+            m.active = True
+            m.username = username or m.username
+        s.commit(); s.refresh(m)
+        return m
+
+def vip_adjust_days(user_id: int, delta_days: int) -> Optional['VipMembership']:
+    with SessionLocal() as s:
+        m = s.query(VipMembership).filter(VipMembership.user_id == user_id).first()
+        if not m: return None
+        base = m.expires_at or now_utc()
+        m.expires_at = base + timedelta(days=delta_days)
+        if m.expires_at <= now_utc():
+            m.active = False
+        s.commit(); s.refresh(m)
+        return m
+
+def vip_deactivate(user_id: int) -> bool:
+    with SessionLocal() as s:
+        m = s.query(VipMembership).filter(VipMembership.user_id == user_id).first()
+        if not m: return False
+        m.active = False
+        m.expires_at = now_utc()
+        s.commit()
+        return True
+
+def vip_list_active(limit: int = 200) -> List['VipMembership']:
+    with SessionLocal() as s:
+        now = now_utc()
+        return (
+            s.query(VipMembership)
+             .filter(VipMembership.active == True, VipMembership.expires_at > now)
+             .order_by(VipMembership.expires_at.asc())
+             .limit(limit)
+             .all()
+        )
+
+def human_left(dt_expires: dt.datetime) -> str:
+    now = now_utc()
+    if dt_expires <= now: return "expirado"
+    delta = dt_expires - now
+    days = delta.days
+    hours = int(delta.seconds/3600)
+    mins = int((delta.seconds%3600)/60)
+    if days > 0: return f"{days}d {hours}h"
+    if hours > 0: return f"{hours}h {mins}m"
+    return f"{mins}m"
+
+
 def parse_hhmm(s: str) -> Tuple[int, int]:
     s = (s or "").strip()
     if ":" not in s:
@@ -66,7 +157,7 @@ SELF_URL    = os.getenv("SELF_URL")
 STORAGE_GROUP_ID       = int(os.getenv("STORAGE_GROUP_ID", "-4806334341"))
 GROUP_VIP_ID           = int(os.getenv("GROUP_VIP_ID", "-1002791988432"))
 STORAGE_GROUP_FREE_ID  = int(os.getenv("STORAGE_GROUP_FREE_ID", "-1002509364079"))
-GROUP_FREE_ID          = int(os.getenv("GROUP_FREE_ID", "-1002509364079"))
+GROUP_FREE_ID          = int(os.getenv("GROUP_FREE_ID", "-1002932075976"))
 
 PORT = int(os.getenv("PORT", 8000))
 
@@ -189,6 +280,19 @@ class Payment(Base):
     notes = Column(Text, nullable=True)
     created_at = Column(DateTime, default=now_utc)
     decided_at = Column(DateTime, nullable=True)
+
+    class VipMembership(Base):
+        __tablename__ = "vip_memberships"
+    id = Column(Integer, primary_key=True)
+    user_id = Column(BigInteger, index=True, unique=True)
+    username = Column(String, nullable=True)
+    tx_hash = Column(String, nullable=True)  # última transação que ativou/renovou
+    start_at = Column(DateTime, nullable=False, default=now_utc)
+    expires_at = Column(DateTime, nullable=False)
+    active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=now_utc)
+    updated_at = Column(DateTime, default=now_utc, onupdate=now_utc)
+
 
 class ScheduledMessage(Base):
     __tablename__ = "scheduled_messages"
@@ -1190,6 +1294,29 @@ async def tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logging.exception("Erro verificando transação")
         return await msg.reply_text(f"❌ Erro ao verificar on-chain: {e}")
+        # === Verificação de valor mínimo conforme configuração
+    paid_ok = res.get("ok", False)
+    if paid_ok:
+        if TOKEN_CONTRACT:
+            # preço em token (unidades "humanas")
+            price_tok = get_vip_price_token()
+            if price_tok is not None:
+                amount_raw = res.get("amount_raw")
+                min_units = int(round(price_tok * (10 ** TOKEN_DECIMALS)))
+                if amount_raw is None or amount_raw < min_units:
+                    paid_ok = False
+        else:
+            price_nat = get_vip_price_native()
+            if price_nat is not None:
+                amount_wei = res.get("amount_wei")
+                if amount_wei is None or amount_wei < _to_wei(price_nat, 18):
+                    paid_ok = False
+
+    if not paid_ok:
+        # registra como pendente com razão
+        human_reason = res.get("reason") or "Valor insuficiente"
+        return await msg.reply_text(f"⏳ Hash recebido. Status: {human_reason or 'Valor insuficiente'}")
+
 
     status = "approved" if (AUTO_APPROVE_CRYPTO and res.get("ok")) else "pending"
     with SessionLocal() as s:
