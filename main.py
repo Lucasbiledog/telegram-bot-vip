@@ -446,7 +446,7 @@ def list_admin_ids() -> List[int]:
 
 def is_admin(user_id: int) -> bool:
     with SessionLocal() as s:
-        return s.query(Admin).filter(Admin.user_id == user_id).first() is not None
+        return s.query(Admin).filter(Admin.user_id == int(user_id)).first() is not None
     
 def add_admin_db(user_id: int) -> bool:
    with SessionLocal() as s:
@@ -1048,18 +1048,27 @@ async def simularfree_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     status = await enviar_pack_free_job(context); await update.effective_message.reply_text(status)
 
 async def listar_packsvip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not (update.effective_user and is_admin(update.effective_user.id)): return await update.effective_message.reply_text("Apenas admins.")
+    if not (update.effective_user and is_admin(update.effective_user.id)):
+        return await update.effective_message.reply_text("Apenas admins.")
+
     with SessionLocal() as s:
         packs = list_packs_by_tier("vip")
+
         if not packs:
             return await update.effective_message.reply_text("Nenhum pack VIP registrado.")
+
         lines = []
         for p in packs:
             previews = s.query(PackFile).filter(PackFile.pack_id == p.id, PackFile.role == "preview").count()
-            docs = s.query(PackFile).filter(PackFile.pack_id == p.id, PackFile.role == "file").count()
-            status = "ENVIADO" if p.sent else "PENDENTE"
-            lines.append(f"[{p.id}] {esc(p.title)} — {status} — previews:{previews} arquivos:{docs} — {p.created_at.strftime('%d/%m %H:%M')}")
+            docs    = s.query(PackFile).filter(PackFile.pack_id == p.id, PackFile.role == "file").count()
+            status  = "ENVIADO" if p.sent else "PENDENTE"
+            lines.append(
+                f"[{p.id}] {esc(p.title)} — {status} — previews:{previews} arquivos:{docs} — {p.created_at.strftime('%d/%m %H:%M')}"
+            )
+
+        # IMPORTANTE: apenas UMA mensagem, sem chamar outro handler/alias depois
         await update.effective_message.reply_text("\n".join(lines))
+
     
 
 async def listar_packsfree_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1449,44 +1458,47 @@ async def pagar_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.effective_chat.send_message("Te enviei o passo a passo no privado. 👌")
 
 async def tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = update.effective_message
+    msg  = update.effective_message
     user = update.effective_user
+
     if not context.args:
         return await msg.reply_text("Uso: /tx <hash_da_transacao>")
+
     tx_hash = context.args[0].strip().lower()
 
-    # === Verifica se já existe no banco
+    # Já existe?
     with SessionLocal() as s:
         existing = s.query(Payment).filter(Payment.tx_hash == tx_hash).first()
 
-    if existing:
-        if existing.status == "approved":
-            try:
-                invite = await application.bot.export_chat_invite_link(chat_id=GROUP_VIP_ID)
-                await dm(user.id, f"✅ Seu pagamento já estava aprovado!\nEntre no VIP: {invite}", parse_mode=None)
-                return await msg.reply_text("Esse hash já estava aprovado. Reenviei o convite no seu privado. ✅")
-            except Exception as e:
-                return await msg.reply_text(f"Hash já aprovado, mas falhou ao reenviar o convite: {e}")
-        elif existing.status == "pending":
-            return await msg.reply_text("Esse hash já foi registrado e está pendente. Aguarde a validação.")
-        else:
-            return await msg.reply_text("Esse hash já foi rejeitado. Fale com um administrador.")
+    if existing and existing.status == "approved":
+        # garante VIP e reenvia invite
+        m = vip_upsert_start_or_extend(user.id, user.username, existing.tx_hash, extra_days=30)
+        try:
+            invite = await application.bot.export_chat_invite_link(chat_id=GROUP_VIP_ID)
+            await dm(user.id, f"✅ Seu pagamento já estava aprovado!\nVIP até {m.expires_at:%d/%m/%Y} ({human_left(m.expires_at)}).\nEntre no VIP: {invite}", parse_mode=None)
+            return await msg.reply_text("Esse hash já estava aprovado. Reenviei o convite no seu privado. ✅")
+        except Exception as e:
+            return await msg.reply_text(f"Hash aprovado, mas falhou ao reenviar o convite: {e}")
+    elif existing and existing.status == "pending":
+        return await msg.reply_text("Esse hash já foi registrado e está pendente. Aguarde a validação.")
+    elif existing and existing.status == "rejected":
+        return await msg.reply_text("Esse hash já foi rejeitado. Fale com um administrador.")
 
-    # === Verificação on-chain
+    # Verificação on-chain
     try:
         res = await verify_tx_any(tx_hash)
     except Exception as e:
         logging.exception("Erro verificando transação")
         return await msg.reply_text(f"❌ Erro ao verificar on-chain: {e}")
-        # === Verificação de valor mínimo conforme configuração
+
+    # Checagem de preço configurado (se houver)
     paid_ok = res.get("ok", False)
     if paid_ok:
         if TOKEN_CONTRACT:
-            # preço em token (unidades "humanas")
             price_tok = get_vip_price_token()
             if price_tok is not None:
                 amount_raw = res.get("amount_raw")
-                min_units = int(round(price_tok * (10 ** TOKEN_DECIMALS)))
+                min_units  = int(round(price_tok * (10 ** TOKEN_DECIMALS)))
                 if amount_raw is None or amount_raw < min_units:
                     paid_ok = False
         else:
@@ -1497,9 +1509,49 @@ async def tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     paid_ok = False
 
     if not paid_ok:
-        # registra como pendente com razão
         human_reason = res.get("reason") or "Valor insuficiente"
-        return await msg.reply_text(f"⏳ Hash recebido. Status: {human_reason or 'Valor insuficiente'}")
+        # registra como pendente (com razão)
+        with SessionLocal() as s:
+            try:
+                p = Payment(
+                    user_id=user.id, username=user.username, tx_hash=tx_hash, chain=CHAIN_NAME,
+                    amount=str(res.get("amount_wei") or res.get("amount_raw") or ""),
+                    status="pending", notes=human_reason
+                )
+                s.add(p); s.commit()
+            except Exception:
+                s.rollback(); raise
+        return await msg.reply_text(f"⏳ Hash recebido. Status: {human_reason}")
+
+    # Aprovado — grava e cria/renova VIP
+    with SessionLocal() as s:
+        try:
+            p = Payment(
+                user_id=user.id, username=user.username, tx_hash=tx_hash, chain=CHAIN_NAME,
+                status="approved", amount=str(res.get("amount_wei") or res.get("amount_raw") or ""),
+                decided_at=now_utc(),
+            )
+            s.add(p); s.commit()
+        except Exception:
+            s.rollback(); raise
+
+    # vincula VIP 30 dias
+    m = vip_upsert_start_or_extend(user.id, user.username, tx_hash, extra_days=30)
+
+    try:
+        invite = await application.bot.export_chat_invite_link(chat_id=GROUP_VIP_ID)
+        await dm(
+            user.id,
+            f"✅ Pagamento confirmado na rede {CHAIN_NAME}!\n"
+            f"VIP válido até {m.expires_at:%d/%m/%Y} ({human_left(m.expires_at)}).\n"
+            f"Entre no VIP: {invite}",
+            parse_mode=None
+        )
+        return await msg.reply_text("✅ Verifiquei sua transação e já liberei seu acesso. Confira seu privado.")
+    except Exception as e:
+        logging.exception("Erro enviando invite auto-approve")
+        return await msg.reply_text(f"Pagamento OK, mas falhou ao enviar o convite: {e}")
+
 
 
     status = "approved" if (AUTO_APPROVE_CRYPTO and res.get("ok")) else "pending"
@@ -1553,29 +1605,57 @@ async def listar_pendentes_cmd(update: Update, context: ContextTypes.DEFAULT_TYP
     
 
 async def aprovar_tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not (update.effective_user and is_admin(update.effective_user.id)): return await update.effective_message.reply_text("Apenas admins.")
-    if not context.args: return await update.effective_message.reply_text("Uso: /aprovar_tx <user_id>")
-    try: uid = int(context.args[0])
-    except: return await update.effective_message.reply_text("user_id inválido.")
+    if not (update.effective_user and is_admin(update.effective_user.id)):
+        return await update.effective_message.reply_text("Apenas admins.")
+    if not context.args:
+        return await update.effective_message.reply_text("Uso: /aprovar_tx <user_id>")
+
+    try:
+        uid = int(context.args[0])
+    except:
+        return await update.effective_message.reply_text("user_id inválido.")
+
     with SessionLocal() as s:
         try:
-            p = s.query(Payment).filter(Payment.user_id == uid, Payment.status == "pending").order_by(Payment.created_at.asc()).first()
+            p = (
+                s.query(Payment)
+                 .filter(Payment.user_id == uid, Payment.status == "pending")
+                 .order_by(Payment.created_at.asc())
+                 .first()
+            )
             if not p:
                 return await update.effective_message.reply_text("Nenhum pagamento pendente para este usuário.")
+
             p.status = "approved"
             p.decided_at = now_utc()
             s.commit()
-            try:
-                invite = await application.bot.export_chat_invite_link(chat_id=GROUP_VIP_ID)
-                await application.bot.send_message(chat_id=uid, text=f"✅ Pagamento aprovado! Entre no VIP: {invite}")
-                await update.effective_message.reply_text(f"Aprovado e convite enviado para {uid}.")
-            except Exception as e:
-                logging.exception("Erro enviando invite")
-                await update.effective_message.reply_text(f"Aprovado, mas falhou ao enviar convite: {e}")
+            txh = p.tx_hash
         except Exception as e:
-             s.rollback()
-             await update.effective_message.reply_text(f"❌ Erro ao aprovar: {e}")
-        
+            s.rollback()
+            return await update.effective_message.reply_text(f"❌ Erro ao aprovar: {e}")
+
+    # cria/renova VIP 30 dias e vincula a hash aprovada
+    try:
+        # tenta pegar username atual via bot (se conseguir)
+        try:
+            u = await application.bot.get_chat(uid)
+            username = u.username
+        except Exception:
+            username = None
+
+        m = vip_upsert_start_or_extend(uid, username, txh, extra_days=30)
+
+        invite = await application.bot.export_chat_invite_link(chat_id=GROUP_VIP_ID)
+        await application.bot.send_message(
+            chat_id=uid,
+            text=f"✅ Pagamento aprovado!\nSeu VIP vai até {m.expires_at:%d/%m/%Y} ({human_left(m.expires_at)}).\nEntre no VIP: {invite}"
+        )
+        await update.effective_message.reply_text(f"Aprovado e convite enviado para {uid}.")
+    except Exception as e:
+        logging.exception("Erro enviando invite")
+        await update.effective_message.reply_text(f"Aprovado, mas falhou ao enviar convite: {e}")
+
+
 async def rejeitar_tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not (update.effective_user and is_admin(update.effective_user.id)): return await update.effective_message.reply_text("Apenas admins.")
     if not context.args: return await update.effective_message.reply_text("Uso: /rejeitar_tx <user_id> [motivo]")
@@ -1755,19 +1835,23 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
 # =========================
 @app.post("/crypto_webhook")
 async def crypto_webhook(request: Request):
-    data = await request.json()
-    uid = data.get("telegram_user_id")
-    tx_hash = data.get("tx_hash")
+    data   = await request.json()
+    uid    = data.get("telegram_user_id")
+    tx_hash= (data.get("tx_hash") or "").strip().lower()
     amount = data.get("amount")
-    chain = data.get("chain") or CHAIN_NAME
+    chain  = data.get("chain") or CHAIN_NAME
+
     if not uid or not tx_hash:
         return JSONResponse({"ok": False, "error": "telegram_user_id e tx_hash são obrigatórios"}, status_code=400)
 
     try:
         res = await verify_tx_any(tx_hash)
     except Exception as e:
-        logging.exception("Erro verificando no webhook"); 
+        logging.exception("Erro verificando no webhook")
         return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+
+    approved = bool(res.get("ok"))
+
     with SessionLocal() as s:
         try:
             pay = s.query(Payment).filter(Payment.tx_hash == tx_hash).first()
@@ -1777,24 +1861,40 @@ async def crypto_webhook(request: Request):
                     tx_hash=tx_hash,
                     amount=str(res.get('amount_wei') or res.get('amount_raw') or amount or ""),
                     chain=chain,
-                    status="approved" if res.get("ok") else "pending",
-                    decided_at=now_utc() if res.get("ok") else None,
+                    status="approved" if approved else "pending",
+                    decided_at=now_utc() if approved else None,
                 )
                 s.add(pay)
             else:
-                pay.status = "approved" if res.get("ok") else "pending"
-                pay.decided_at = now_utc() if res.get("ok") else None
+                pay.status = "approved" if approved else "pending"
+                pay.decided_at = now_utc() if approved else None
             s.commit()
         except Exception:
             s.rollback()
             raise
 
-    if res.get("ok"):
+    # Se aprovado, renova VIP 30d e manda convite
+    if approved:
         try:
+            # melhor esforço para obter username atual
+            try:
+                u = await application.bot.get_chat(int(uid))
+                username = u.username
+            except Exception:
+                username = None
+
+            vip_upsert_start_or_extend(int(uid), username, tx_hash, extra_days=30)
+
             invite = await application.bot.export_chat_invite_link(chat_id=GROUP_VIP_ID)
-            await application.bot.send_message(chat_id=int(uid), text=f"✅ Pagamento confirmado! Entre no VIP: {invite}")
-        except Exception: logging.exception("Erro enviando invite")
-    return JSONResponse({"ok": True, "verified": res.get("ok"), "reason": res.get("reason")})
+            await application.bot.send_message(
+                chat_id=int(uid),
+                text=f"✅ Pagamento confirmado!\nSeu VIP foi ativado por 30 dias.\nEntre no VIP: {invite}"
+            )
+        except Exception:
+            logging.exception("Erro enviando invite")
+
+    return JSONResponse({"ok": True, "verified": approved, "reason": res.get("reason")})
+
 
 @app.post("/webhook")
 async def telegram_webhook(request: Request):
