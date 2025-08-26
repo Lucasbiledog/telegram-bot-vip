@@ -41,6 +41,23 @@ def wrap_ph(s: str) -> str:
 
 from datetime import timedelta
 
+import re
+TX_RE = re.compile(r'^(0x)?[0-9a-fA-F]+$')
+
+def normalize_tx_hash(s: str) -> Optional[str]:
+    if not s:
+        return None
+    s = s.strip()
+    if not TX_RE.match(s):
+        return None
+    if s.startswith("0x"):
+        # precisa ter 66 chars: 0x + 64 hex
+        return s.lower() if len(s) == 66 else None
+    else:
+        # sem 0x: precisa ter 64 hex; adiciona 0x
+        return ("0x" + s.lower()) if len(s) == 64 else None
+
+
 # ----- Preço VIP (em nativo ou token) usando ConfigKV
 def get_vip_price_native() -> Optional[float]:
     v = cfg_get("vip_price_native")
@@ -1496,13 +1513,15 @@ async def pagar_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg  = update.effective_message
 
     texto = (
-        f"💸 <b>Pagamento via MetaMask</b>\n"
-        f"1) Abra a MetaMask e selecione a rede <b>{esc(CHAIN_NAME)}</b>.\n"
-        f"2) Envie o valor para a carteira:\n<code>{esc(WALLET_ADDRESS)}</code>\n"
-        f"3) Depois envie aqui: <code>/tx &lt;hash_da_transacao&gt;</code>\n\n"
-        f"⚙️ O sistema valida on-chain (confirmações mín.: {MIN_CONFIRMATIONS}).\n"
-        f"✅ Confirmando, você recebe o link do VIP no privado."
-    )
+    f"💸 <b>Pagamento via MetaMask</b>\n"
+    f"1) Abra a MetaMask e selecione a rede <b>{esc(CHAIN_NAME)}</b>.\n"
+    f"2) Envie o valor para a carteira:\n<code>{esc(WALLET_ADDRESS)}</code>\n"
+    f"3) Depois envie aqui: <code>/tx &lt;hash_da_transacao&gt;</code>\n"
+    f"   (o hash começa com 0x e tem 66 caracteres)\n\n"
+    f"⚙️ O sistema valida on-chain (confirmações mín.: {MIN_CONFIRMATIONS}).\n"
+    f"✅ Confirmando, você recebe o link do VIP no privado."
+)
+
 
     sent = await dm(user.id, texto)
 
@@ -1535,7 +1554,7 @@ async def pagar_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
 
         if bot_msg:
-            asyncio.create_task(delete_later(chat.id, bot_msg.message_id, 5))
+            asyncio.create_task(delete_later(chat.id, bot_msg.message_id, 10))
     else:
         await msg.reply_text("Qualquer dúvida, me mande a hash com /tx <hash> 😉")
 
@@ -1701,14 +1720,18 @@ async def listar_pendentes_cmd(update: Update, context: ContextTypes.DEFAULT_TYP
     
 async def tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.effective_message
-    user = update.effective_user
-
     if not context.args:
-        return await msg.reply_text("Uso: /tx <hash_da_transacao>")
+        return await msg.reply_text("Uso: /tx <hash_da_transacao> (ex.: 0x… com 66 caracteres)")
 
-    tx_hash = context.args[0].strip().lower()
-    if not tx_hash.startswith("0x") or len(tx_hash) < 20:
-        return await msg.reply_text("Hash inválida.")
+    tx_raw = context.args[0]
+    tx_hash = normalize_tx_hash(tx_raw)
+    if not tx_hash:
+        return await msg.reply_text(
+            "Hash inválida. Cole o *hash da transação*, não o endereço.\n"
+            "• Deve começar com `0x` e ter 66 caracteres (0x + 64 hex).",
+            parse_mode="Markdown"
+        )
+
 
     # Já existe?
     with SessionLocal() as s:
