@@ -24,7 +24,7 @@ from telegram.ext import (
     JobQueue,
     ConversationHandler,
     filters,
-    DispatcherHandlerStop,
+    ApplicationHandlerStop,
 )
 
 # =========================
@@ -1408,7 +1408,8 @@ async def _ignore_non_admin_commands_in_groups(update: Update, context: ContextT
         # opcional: deletar comandos do usuário
         # try: await application.bot.delete_message(chat_id=chat.id, message_id=update.effective_message.message_id)
         # except Exception: pass
-        raise DispatcherHandlerStop
+                raise ApplicationHandlerStop
+
 
 # =========================
 # Startup
