@@ -1508,10 +1508,12 @@ async def keepalive_job(context: ContextTypes.DEFAULT_TYPE):
 # =========================
 async def _ignore_non_admin_commands_in_groups(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat; user = update.effective_user
-    if not chat or not user: return
+    if not chat or not user:
+        return
     if chat.type in ("group", "supergroup") and not is_admin(user.id):
-        cmd = (update.effective_message.text or "").split()[0].lower()
-        if cmd in {"/pagar"}:
+        text = update.effective_message.text or ""
+        cmd = text.split()[0].lower()
+        if cmd == "/pagar":
             return
         raise ApplicationHandlerStop
 
