@@ -426,9 +426,14 @@ ensure_bigint_columns(); ensure_pack_tier_column(); ensure_packfile_src_columns(
 # =========================
 # DB helpers
 # =========================
-def is_admin(user_id: int) -> bool:
-   with SessionLocal() as s:
-        return s.query(Admin).filter(Admin.user_id == user_id).first() is not None
+def list_packs_by_tier(tier: str) -> List['Pack']:
+    with SessionLocal() as s:
+        return (
+            s.query(Pack)
+             .filter(Pack.tier == tier)
+             .order_by(Pack.created_at.asc())
+             .all()
+        )
 
 def list_admin_ids() -> List[int]:
     with SessionLocal() as s:
@@ -609,10 +614,16 @@ async def storage_media_handler(update: Update, context: ContextTypes.DEFAULT_TY
         file_name=visible_name, src_chat_id=msg.chat.id, src_message_id=msg.message_id
     )
     await msg.reply_text(f"Item adicionado ao pack <b>{esc(pack.title)}</b> — <i>{pack.tier.upper()}</i>.", parse_mode="HTML")
+    
+
+
 
 # =========================
 # ENVIO DO PACK (JobQueue) com fallback copy_message
 # =========================
+# Evita envio concorrente do mesmo pack no mesmo processo
+SENDING_PACKS = set()
+
 async def _try_copy_message(context: ContextTypes.DEFAULT_TYPE, target_chat_id: int, pf: PackFile, caption: Optional[str] = None) -> bool:
     if not (pf.src_chat_id and pf.src_message_id): return False
     try:
@@ -658,9 +669,18 @@ async def _try_send_document_like(context: ContextTypes.DEFAULT_TYPE, target_cha
         else:
             await context.application.bot.send_document(chat_id=target_chat_id, document=pf.file_id, caption=caption)
         return True
+    except BadRequest as e:
+        # Só faz fallback se for um erro típico de ID/arquivo – não para timeouts genéricos
+        msg = str(e).lower()
+        if any(x in msg for x in ["wrong file identifier", "failed to get http url content", "file not found"]):
+            logging.warning(f"[send_{pf.file_type}] BadRequest {pf.id}: {e}. Tentando copy_message.")
+            return await _try_copy_message(context, target_chat_id, pf, caption=caption)
+        logging.warning(f"[send_{pf.file_type}] BadRequest {pf.id}: {e}. (Sem fallback)")
+        return False
     except Exception as e:
-        logging.warning(f"[send_{pf.file_type}] Falha {pf.id}: {e}. Tentando copy_message.")
+        logging.warning(f"[send_{pf.file_type}] Erro {pf.id}: {e}. Tentando copy_message.")
         return await _try_copy_message(context, target_chat_id, pf, caption=caption)
+
 
 async def _send_preview_media(context: ContextTypes.DEFAULT_TYPE, target_chat_id: int, previews: List[PackFile]) -> Dict[str, int]:
     counts = {"photos": 0, "videos": 0, "animations": 0}
@@ -693,32 +713,59 @@ async def _send_preview_media(context: ContextTypes.DEFAULT_TYPE, target_chat_id
 async def enviar_pack_job(context: ContextTypes.DEFAULT_TYPE, tier: str, target_chat_id: int) -> str:
     try:
         pack = get_next_unsent_pack(tier=tier)
-        if not pack: return f"Nenhum pack pendente para envio ({tier})."
+        if not pack:
+            return f"Nenhum pack pendente para envio ({tier})."
 
+        # Evita concorrência no mesmo processo
+        if pack.id in SENDING_PACKS:
+            return f"Pack #{pack.id} já está em envio ({tier})."
+        SENDING_PACKS.add(pack.id)
+
+        # Marca como "em envio" otimista (flag via DB: set sent=True provisoriamente)
+        # Assim outro worker/processo que use get_next_unsent_pack não pega o mesmo.
+        with SessionLocal() as s:
+            p = s.query(Pack).filter(Pack.id == pack.id).first()
+            if not p:
+                SENDING_PACKS.discard(pack.id)
+                return f"Pack desapareceu ({tier})."
+            if p.sent:
+                SENDING_PACKS.discard(pack.id)
+                return f"Pack '{p.title}' já marcado como enviado ({tier})."
+            p.sent = True  # reserva
+            s.commit()
+
+        # Agora recupere os arquivos
         with SessionLocal() as s:
             p = s.query(Pack).filter(Pack.id == pack.id).first()
             files = s.query(PackFile).filter(PackFile.pack_id == p.id).order_by(PackFile.id.asc()).all()
 
         if not files:
-            mark_pack_sent(p.id); return f"Pack '{p.title}' ({tier}) não possui arquivos. Marcado como enviado."
+            # nada para enviar — mantemos sent=True
+            return f"Pack '{p.title}' ({tier}) não possui arquivos. Marcado como enviado."
 
-        previews = [f for f in files if f.role == "preview"]
-        docs     = [f for f in files if f.role == "file"]
+        # --- Dedupe defensivo
+        seen = set()  # (file_unique_id, file_type) ou (file_id, file_type)
+        previews = []
+        docs = []
+        for f in files:
+            key = ((f.file_unique_id or f.file_id), f.file_type)
+            if key in seen:
+                continue
+            seen.add(key)
+            (previews if f.role == "preview" else docs).append(f)
 
-         # Deduplicate documents to avoid sending the same file twice
-        unique = {}
-        for f in docs:
-            key = f.file_unique_id or f.file_id
-            if key not in unique:
-                unique[key] = f
-        docs = list(unique.values())
-
+        # Envia previews primeiro
         if previews:
             await _send_preview_media(context, target_chat_id, previews)
+
+        # Envia título
         await context.application.bot.send_message(chat_id=target_chat_id, text=p.title)
+
+        # Envia docs (com fallback controlado)
         for f in docs:
             await _try_send_document_like(context, target_chat_id, f, caption=None)
 
+        # Crosspost de previews pro FREE (somente se VIP)
         if tier == "vip" and previews:
             try:
                 await _send_preview_media(context, GROUP_FREE_ID, previews)
@@ -726,16 +773,13 @@ async def enviar_pack_job(context: ContextTypes.DEFAULT_TYPE, tier: str, target_
             except Exception as e:
                 logging.warning(f"Falha no crosspost VIP->FREE: {e}")
 
-        mark_pack_sent(p.id)
         return f"✅ Enviado pack '{p.title}' ({tier})."
     except Exception as e:
-        logging.exception("Erro no enviar_pack_job"); return f"❌ Erro no envio ({tier}): {e!r}"
+        logging.exception("Erro no enviar_pack_job")
+        return f"❌ Erro no envio ({tier}): {e!r}"
+    finally:
+        SENDING_PACKS.discard(pack.id if 'pack' in locals() and pack else None)
 
-async def enviar_pack_vip_job(context: ContextTypes.DEFAULT_TYPE) -> str:
-    return await enviar_pack_job(context, tier="vip",  target_chat_id=GROUP_VIP_ID)
-
-async def enviar_pack_free_job(context: ContextTypes.DEFAULT_TYPE) -> str:
-    return await enviar_pack_job(context, tier="free", target_chat_id=GROUP_FREE_ID)
 
 # =========================
 # COMMANDS & ADMIN
