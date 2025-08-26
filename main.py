@@ -1523,6 +1523,44 @@ async def verify_tx_any(tx_hash: str) -> Dict[str, Any]:
 # =========================
 # Pagamento – comandos
 # =========================
+
+async def simular_tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not (update.effective_user and is_admin(update.effective_user.id)):
+        return await update.effective_message.reply_text("Apenas admins podem simular TX.")
+
+    user = update.effective_user
+    tx_hash = "0x" + "deadbeef"*8  # hash fictício, 66 chars
+
+    # grava como aprovado direto
+    with SessionLocal() as s:
+        try:
+            p = Payment(
+                user_id=user.id,
+                username=user.username,
+                tx_hash=tx_hash,
+                chain="TESTNET",
+                status="approved",
+                amount="1000000000000000000",  # 1 ETH fictício
+                decided_at=now_utc(),
+            )
+            s.add(p)
+            s.commit()
+        except Exception:
+            s.rollback()
+            return await update.effective_message.reply_text("❌ Erro ao simular pagamento.")
+
+    # cria/renova VIP por 30 dias
+    m = vip_upsert_start_or_extend(user.id, user.username, tx_hash, extra_days=30)
+
+    try:
+        invite = await application.bot.export_chat_invite_link(chat_id=GROUP_VIP_ID)
+        await dm(user.id, f"✅ SIMULAÇÃO de pagamento!\nVIP até {m.expires_at:%d/%m/%Y} ({human_left(m.expires_at)}).\nEntre no VIP: {invite}", parse_mode=None)
+        await update.effective_message.reply_text("✅ Pagamento simulado com sucesso. Veja seu privado.")
+    except Exception as e:
+        await update.effective_message.reply_text(f"Simulado OK, mas falhou enviar convite: {e}")
+
+
+
 # helper: apagar mensagem depois de alguns segundos
 async def delete_later(chat_id: int, message_id: int, seconds: int = 5):
     await asyncio.sleep(seconds)
@@ -1580,7 +1618,7 @@ async def pagar_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # apaga o aviso depois de 5s (ajuste aqui se quiser outro tempo)
         if bot_msg:
             async def _delete_later(mid: int):
-                await asyncio.sleep(30)  # <<< mude 5 para o número de segundos que quiser
+                await asyncio.sleep(20)  # <<< mude 5 para o número de segundos que quiser
                 try:
                     await application.bot.delete_message(chat_id=chat.id, message_id=mid)
                 except Exception:
@@ -2325,6 +2363,10 @@ async def on_startup():
 
     # ==== Error handler
     application.add_error_handler(error_handler)
+
+    
+    application.add_handler(CommandHandler("simular_tx", simular_tx_cmd), group=1)
+
 
     # ===== Guard GLOBAL para não-admin (vem BEM cedo)
     application.add_handler(MessageHandler(filters.COMMAND, _block_non_admin_commands), group=-2)
