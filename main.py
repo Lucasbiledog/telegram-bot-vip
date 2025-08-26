@@ -31,7 +31,7 @@ from telegram.ext import (
 # Helpers
 # =========================
 # Quais comandos usuários comuns podem usar
-ALLOWED_FOR_NON_ADM = {"pagar", "tx"}
+ALLOWED_FOR_NON_ADM = {"pagar", "tx", "start" }
 
 def esc(s): return html.escape(str(s) if s is not None else "")
 def now_utc(): return dt.datetime.utcnow()
