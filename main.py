@@ -841,7 +841,7 @@ async def enviar_pack_free_job(context: ContextTypes.DEFAULT_TYPE):
 # =========================
 async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.effective_message
-    text = ("Fala! Eu gerencio packs VIP/FREE, pagamentos via MetaMask e mensagens agendadas.\nUse /pagar para maiores informações")
+    text = ("Fala! Eu gerencio packs VIP/FREE, pagamentos via MetaMask e mensagens agendadas.\nUse /pagar para maiores")
     if msg: await msg.reply_text(text)
 
 async def comandos_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1477,9 +1477,19 @@ async def verify_tx_any(tx_hash: str) -> Dict[str, Any]:
 # =========================
 # Pagamento – comandos
 # =========================
+# helper: apagar mensagem depois de alguns segundos
+async def delete_later(chat_id: int, message_id: int, seconds: int = 5):
+    await asyncio.sleep(seconds)
+    try:
+        await application.bot.delete_message(chat_id=chat_id, message_id=message_id)
+    except Exception:
+        pass
+
 async def pagar_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not WALLET_ADDRESS:
-        return await update.effective_message.reply_text("Método de pagamento não configurado. (WALLET_ADDRESS ausente)")
+        return await update.effective_message.reply_text(
+            "Método de pagamento não configurado. (WALLET_ADDRESS ausente)"
+        )
 
     user = update.effective_user
     chat = update.effective_chat
@@ -1497,41 +1507,39 @@ async def pagar_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     sent = await dm(user.id, texto)
 
     if chat.type != "private":
+        # apaga a mensagem do usuário
         try:
             await msg.delete()
         except Exception:
             pass
 
+        bot_msg = None
         if sent:
+            # aviso rápido (apaga em 5s)
             try:
                 bot_msg = await chat.send_message("Te enviei o passo a passo no privado. 👌")
-                async def _delete_later():
-                    await asyncio.sleep(5)
-                    try:
-                        await application.bot.delete_message(chat_id=chat.id, message_id=bot_msg.message_id)
-                    except Exception:
-                        pass
-                asyncio.create_task(_delete_later())
             except Exception:
-                pass
+                bot_msg = None
         else:
+            # usuário nunca iniciou o bot -> mostra link e apaga em 5s
             try:
                 username = BOT_USERNAME or (await application.bot.get_me()).username
             except Exception:
                 username = None
             link = f"https://t.me/{username}?start=pagamento" if username else ""
-            await chat.send_message(
+            bot_msg = await chat.send_message(
                 ("⚠️ Não consegui te chamar no privado.\n"
                  "Toque em <b>Start</b> no meu perfil e tente /pagar de novo.\n"
                  f"{esc(link) if link else ''}"),
                 parse_mode="HTML"
             )
+
+        if bot_msg:
+            asyncio.create_task(delete_later(chat.id, bot_msg.message_id, 5))
     else:
         await msg.reply_text("Qualquer dúvida, me mande a hash com /tx <hash> 😉")
 
-
-
-    tx_hash = context.args[0].strip().lower()
+        tx_hash = context.args[0].strip().lower()
 
     # Já existe?
     with SessionLocal() as s:
