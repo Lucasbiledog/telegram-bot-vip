@@ -140,11 +140,14 @@ def parse_hhmm(s: str) -> Tuple[int, int]:
         raise ValueError("Hora fora do intervalo 00:00–23:59")
     return h, m
 
-async def dm(user_id: int, text: str, parse_mode: Optional[str] = "HTML"):
+async def dm(user_id: int, text: str, parse_mode: Optional[str] = "HTML") -> bool:
     try:
         await application.bot.send_message(chat_id=user_id, text=text, parse_mode=parse_mode)
+        return True
     except Exception as e:
         logging.warning(f"Falha ao enviar DM para {user_id}: {e}")
+        return False
+
 
 # =========================
 # ENV / CONFIG
@@ -439,6 +442,14 @@ def list_packs_by_tier(tier: str) -> List['Pack']:
              .order_by(Pack.created_at.asc())
              .all()
         )
+
+def is_admin(user_id: int) -> bool:
+    try:
+        with SessionLocal() as s:
+            return s.query(Admin).filter(Admin.user_id == int(user_id)).first() is not None
+    except Exception:
+        return False
+
 
 def list_admin_ids() -> List[int]:
     with SessionLocal() as s:
@@ -1440,7 +1451,11 @@ async def verify_tx_any(tx_hash: str) -> Dict[str, Any]:
 async def pagar_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not WALLET_ADDRESS:
         return await update.effective_message.reply_text("Método de pagamento não configurado. (WALLET_ADDRESS ausente)")
+
     user = update.effective_user
+    chat = update.effective_chat
+    msg  = update.effective_message
+
     texto = (
         f"💸 <b>Pagamento via MetaMask</b>\n"
         f"1) Abra a MetaMask e selecione a rede <b>{esc(CHAIN_NAME)}</b>.\n"
@@ -1449,20 +1464,45 @@ async def pagar_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"⚙️ O sistema valida on-chain (confirmações mín.: {MIN_CONFIRMATIONS}).\n"
         f"✅ Confirmando, você recebe o link do VIP no privado."
     )
-    await dm(user.id, texto)
-    if update.effective_chat.type != "private":
+
+    sent = await dm(user.id, texto)
+
+    if chat.type != "private":
+        # apaga a mensagem do usuário
         try:
-            await update.effective_message.delete()
+            await msg.delete()
         except Exception:
             pass
-        await update.effective_chat.send_message("Te enviei o passo a passo no privado. 👌")
 
-async def tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg  = update.effective_message
-    user = update.effective_user
+        if sent:
+            # manda confirmação e apaga em 5s
+            try:
+                bot_msg = await chat.send_message("Te enviei o passo a passo no privado. 👌")
+                async def _delete_later():
+                    await asyncio.sleep(5)
+                    try:
+                        await application.bot.delete_message(chat_id=chat.id, message_id=bot_msg.message_id)
+                    except Exception:
+                        pass
+                asyncio.create_task(_delete_later())
+            except Exception:
+                pass
+        else:
+            # usuário nunca iniciou o bot
+            try:
+                username = BOT_USERNAME or (await application.bot.get_me()).username
+            except Exception:
+                username = None
+            link = f"https://t.me/{username}?start=pagamento" if username else ""
+            await chat.send_message(
+                ("⚠️ Não consegui te chamar no privado.\n"
+                 "Toque em <b>Start</b> no meu perfil e tente /pagar de novo.\n"
+                 f"{esc(link) if link else ''}"),
+                parse_mode="HTML"
+            )
+    else:
+        await msg.reply_text("Qualquer dúvida, me mande a hash com /tx <hash> 😉")
 
-    if not context.args:
-        return await msg.reply_text("Uso: /tx <hash_da_transacao>")
 
     tx_hash = context.args[0].strip().lower()
 
@@ -1483,6 +1523,7 @@ async def tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await msg.reply_text("Esse hash já foi registrado e está pendente. Aguarde a validação.")
     elif existing and existing.status == "rejected":
         return await msg.reply_text("Esse hash já foi rejeitado. Fale com um administrador.")
+    
 
     # Verificação on-chain
     try:
@@ -1536,7 +1577,9 @@ async def tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             s.rollback(); raise
 
     # vincula VIP 30 dias
+    
     m = vip_upsert_start_or_extend(user.id, user.username, tx_hash, extra_days=30)
+    
 
     try:
         invite = await application.bot.export_chat_invite_link(chat_id=GROUP_VIP_ID)
@@ -1629,6 +1672,7 @@ async def aprovar_tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             p.status = "approved"
             p.decided_at = now_utc()
             s.commit()
+            vip_upsert_start_or_extend(uid, None, p.tx_hash, extra_days=30)
             txh = p.tx_hash
         except Exception as e:
             s.rollback()
@@ -1851,6 +1895,8 @@ async def crypto_webhook(request: Request):
         return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
 
     approved = bool(res.get("ok"))
+    vip_upsert_start_or_extend(int(uid), None, tx_hash, extra_days=30)
+
 
     with SessionLocal() as s:
         try:
@@ -1894,6 +1940,7 @@ async def crypto_webhook(request: Request):
             logging.exception("Erro enviando invite")
 
     return JSONResponse({"ok": True, "verified": approved, "reason": res.get("reason")})
+
 
 
 @app.post("/webhook")
@@ -2035,8 +2082,8 @@ async def on_startup():
 
     # ===== Comandos gerais (group=1)
     application.add_handler(CommandHandler("start", start_cmd), group=1)
-    application.add_handler(CommandHandler("comandos", comandos_cmd), group=1)
-    application.add_handler(CommandHandler("listar_comandos", comandos_cmd), group=1)
+    application.add_handler(CommandHandler("comandos", comandos_cmd), group=5)
+    application.add_handler(CommandHandler("listar_comandos", comandos_cmd), group=5)
     application.add_handler(CommandHandler("getid", getid_cmd), group=1)
 
     application.add_handler(CommandHandler("say_vip", say_vip_cmd), group=1)
