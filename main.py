@@ -281,9 +281,8 @@ class Payment(Base):
     created_at = Column(DateTime, default=now_utc)
     decided_at = Column(DateTime, nullable=True)
 
-
-    class VipMembership(Base):
-        __tablename__ = "vip_memberships"
+class VipMembership(Base):
+    __tablename__ = "vip_memberships"
     id = Column(Integer, primary_key=True)
     user_id = Column(BigInteger, index=True, unique=True)
     username = Column(String, nullable=True)
@@ -1904,7 +1903,7 @@ async def on_startup():
     # Jobs
     await _reschedule_daily_packs()
     _register_all_scheduled_messages(application.job_queue)
-    
+
     application.job_queue.run_daily(vip_expiration_warn_job, time=dt.time(hour=9, minute=0, tzinfo=pytz.timezone("America/Sao_Paulo")), name="vip_warn")
     application.job_queue.run_repeating(keepalive_job, interval=dt.timedelta(minutes=4), first=dt.timedelta(seconds=20), name="keepalive")
     logging.info("Handlers e jobs registrados.")
