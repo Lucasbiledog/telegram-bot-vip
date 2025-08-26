@@ -889,9 +889,10 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if msg: await msg.reply_text(text)
 
 async def comandos_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Somente admin pode usar /comandos
     if not (update.effective_user and is_admin(update.effective_user.id)):
-        return await update.effective_message.reply_text("Apenas admins. Use /pagar ou /tx.")
-    # ... segue como está para admins
+        return await update.effective_message.reply_text("Apenas admins.")
+
     base = [
         "📋 <b>Comandos</b>",
         "• /start — mensagem inicial",
@@ -920,8 +921,6 @@ async def comandos_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• /edit_msg_free <id> [HH:MM] [texto]",
         "• /toggle_msg_vip <id> | /toggle_msg_free <id>",
         "• /del_msg_vip <id> | /del_msg_free <id>",
-    ]
-    adm = [
         "",
         "🛠 <b>Admin</b>",
         "• /simularvip — envia o próximo pack VIP pendente",
@@ -946,19 +945,17 @@ async def comandos_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• /rejeitar_tx <user_id> [motivo] — rejeita pagamento",
         "",
         "🧩 Vip Pagamentos:",
-         "• /valor: — define o preço (nativo ou token, se usar ERC-20)",
-         "Ao aprovar (auto ou manual), o usuário ganha 30 dias de VIP (renova somando).",
-         "•/vip_list: lista VIPs ativos com user_id, username, hash (abreviado) e tempo restante.",
-         "•/vip_addtime <user_id> <dias>: ajusta dias (negativo reduz).",
-         "•/vip_set <user_id> <dias>: cria/renova manualmente.",
-         "•/vip_remove <user_id>: desativa e tenta remover do grupo VIP.",
-         "",
-
-
+        "• /valor — define preços",
+        "• /vip_list — lista VIPs ativos",
+        "• /vip_addtime <user_id> <dias>",
+        "• /vip_set <user_id> <dias>",
+        "• /vip_remove <user_id>",
     ]
-    lines = base + (adm if isadm else [])
-    safe_lines = [wrap_ph(x) for x in lines]  # <<<<<< AQUI
+
+    # sanear <> pra não quebrar HTML
+    safe_lines = [wrap_ph(x) for x in base]
     await update.effective_message.reply_text("\n".join(safe_lines), parse_mode="HTML")
+
 
 async def getid_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user; chat = update.effective_chat; msg = update.effective_message
@@ -2332,19 +2329,31 @@ async def keepalive_job(context: ContextTypes.DEFAULT_TYPE):
             r = await client.get(url); logging.info(f"[keepalive] GET {url} -> {r.status_code}")
     except Exception as e: logging.warning(f"[keepalive] erro: {e}")
 
-# =========================
-# Guards: ignorar comandos de não-admin em grupos
-# =========================
-async def _ignore_non_admin_commands_in_groups(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat = update.effective_chat; user = update.effective_user
-    if not chat or not user:
+# ===== Guard global: só permite /pagar e /tx para não-admin (em qualquer chat)
+ALLOWED_NON_ADMIN = {"pagar", "tx", "status"}
+
+async def _block_non_admin_everywhere(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = update.effective_message
+    user = update.effective_user
+    if not msg or not user:
         return
-    if chat.type in ("group", "supergroup") and not is_admin(user.id):
-        text = update.effective_message.text or ""
-        cmd = text.split()[0].lower()
-        if cmd == "/pagar":
-            return
+    text = (msg.text or "").strip().lower()
+    if not text.startswith("/"):
+        return
+    # extrai comando base sem @bot
+    cmd = text.split()[0]
+    base = cmd[1:].split("@", 1)[0]  # ex: "/pagar@MeuBot" -> "pagar"
+
+    if is_admin(user.id):
+        return  # admin passa
+
+    if base not in ALLOWED_NON_ADMIN:
+        # opcional: responder algo curto só no privado
+        if update.effective_chat.type == "private":
+            await msg.reply_text("Comando disponível apenas para administradores.")
+        # corta a propagação
         raise ApplicationHandlerStop
+
 
 
 # =========================
@@ -2364,7 +2373,7 @@ async def on_startup():
     # ==== Error handler
     application.add_error_handler(error_handler)
 
-    
+
     application.add_handler(CommandHandler("simular_tx", simular_tx_cmd), group=1)
 
 
@@ -2373,7 +2382,7 @@ async def on_startup():
 
 
     # ==== Guard (tem que vir ANTES)
-    application.add_handler(MessageHandler(filters.COMMAND & filters.ChatType.GROUPS, _ignore_non_admin_commands_in_groups), group=-1)
+    application.add_handler(MessageHandler(filters.COMMAND, _block_non_admin_everywhere), group=-100)
 
     # ==== Conversas do NOVOPACK
     states_map = {
