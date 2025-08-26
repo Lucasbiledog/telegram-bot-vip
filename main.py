@@ -32,6 +32,12 @@ from telegram.ext import (
 # =========================
 def esc(s): return html.escape(str(s) if s is not None else "")
 def now_utc(): return dt.datetime.utcnow()
+import re
+
+def wrap_ph(s: str) -> str:
+    # Converte qualquer <algo> em <code>&lt;algo&gt;</code> para não quebrar o HTML
+    return re.sub(r'<([^>\n]{1,80})>', r'<code>&lt;\1&gt;</code>', s)
+
 
 def parse_hhmm(s: str) -> Tuple[int, int]:
     s = (s or "").strip()
@@ -401,16 +407,15 @@ def mark_pack_sent(pack_id: int):
             s.rollback()
             raise
 
-def list_packs_by_tier(tier: str):
-   with SessionLocal() as s:
-        try:
-            p = s.query(Pack).filter(Pack.id == pack_id).first()
-            if p:
-                p.sent = True
-                s.commit()
-        except Exception:
-            s.rollback()
-            raise   
+def list_packs_by_tier(tier: str) -> List['Pack']:
+    with SessionLocal() as s:
+        return (
+            s.query(Pack)
+             .filter(Pack.tier == tier)
+             .order_by(Pack.created_at.asc())
+             .all()
+        )
+
 # =========================
 # STORAGE GROUP handlers
 # =========================
@@ -681,7 +686,9 @@ async def comandos_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• /aprovar_tx <user_id> — aprova e envia convite VIP",
         "• /rejeitar_tx <user_id> [motivo] — rejeita pagamento",
     ]
-    await update.effective_message.reply_text("\n".join(base + (adm if isadm else [])), parse_mode="HTML")
+    lines = base + (adm if isadm else [])
+    safe_lines = [wrap_ph(x) for x in lines]  # <<<<<< AQUI
+    await update.effective_message.reply_text("\n".join(safe_lines), parse_mode="HTML")
 
 async def getid_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user; chat = update.effective_chat; msg = update.effective_message
