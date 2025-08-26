@@ -281,6 +281,7 @@ class Payment(Base):
     created_at = Column(DateTime, default=now_utc)
     decided_at = Column(DateTime, nullable=True)
 
+
     class VipMembership(Base):
         __tablename__ = "vip_memberships"
     id = Column(Integer, primary_key=True)
@@ -292,6 +293,8 @@ class Payment(Base):
     active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=now_utc)
     updated_at = Column(DateTime, default=now_utc, onupdate=now_utc)
+
+
 
 
 class ScheduledMessage(Base):
@@ -854,6 +857,101 @@ async def rem_admin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try: uid = int(context.args[0])
     except: return await update.effective_message.reply_text("user_id inválido.")
     await update.effective_message.reply_text("✅ Admin removido." if remove_admin_db(uid) else "Este user não é admin.")
+
+async def valor_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not (update.effective_user and is_admin(update.effective_user.id)):
+        return await update.effective_message.reply_text("Apenas admins.")
+    msg = update.effective_message
+    if not context.args:
+        nat = get_vip_price_native()
+        tok = get_vip_price_token()
+        texto = (
+            "💲 Preços atuais:\n"
+            f"Nativo: {nat if nat is not None else 'não definido'}\n"
+            f"Token: {tok if tok is not None else 'não definido'}"
+        )
+        return await msg.reply_text(texto)
+    if len(context.args) < 2:
+        return await msg.reply_text("Uso: /valor <nativo|token> <valor>")
+    tipo = context.args[0].lower()
+    try:
+        valor = float(context.args[1].replace(',', '.'))
+    except Exception:
+        return await msg.reply_text("Valor inválido.")
+    if tipo.startswith('n'):
+        set_vip_price_native(valor)
+        await msg.reply_text(f"✅ Preço nativo definido para {valor}")
+    elif tipo.startswith('t'):
+        set_vip_price_token(valor)
+        await msg.reply_text(f"✅ Preço token definido para {valor}")
+    else:
+        await msg.reply_text("Uso: /valor <nativo|token> <valor>")
+
+async def vip_list_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not (update.effective_user and is_admin(update.effective_user.id)):
+        return await update.effective_message.reply_text("Apenas admins.")
+    membros = vip_list_active()
+    if not membros:
+        return await update.effective_message.reply_text("Nenhum VIP ativo.")
+    linhas = []
+    for m in membros:
+        hash_abrev = (m.tx_hash[:10] + '...') if m.tx_hash else '-'
+        user = f"@{m.username}" if m.username else '-'
+        linhas.append(f"{m.user_id} | {user} | {hash_abrev} | {human_left(m.expires_at)}")
+    await update.effective_message.reply_text("\n".join(linhas))
+
+async def vip_addtime_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not (update.effective_user and is_admin(update.effective_user.id)):
+        return await update.effective_message.reply_text("Apenas admins.")
+    if len(context.args) < 2:
+        return await update.effective_message.reply_text("Uso: /vip_addtime <user_id> <dias>")
+    try:
+        uid = int(context.args[0])
+        dias = int(context.args[1])
+    except Exception:
+        return await update.effective_message.reply_text("Parâmetros inválidos.")
+    m = vip_adjust_days(uid, dias)
+    if not m:
+        return await update.effective_message.reply_text("Usuário não encontrado.")
+    await update.effective_message.reply_text(
+        f"✅ Novo prazo: {m.expires_at.strftime('%d/%m/%Y')} ({human_left(m.expires_at)})"
+    )
+
+async def vip_set_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not (update.effective_user and is_admin(update.effective_user.id)):
+        return await update.effective_message.reply_text("Apenas admins.")
+    if len(context.args) < 2:
+        return await update.effective_message.reply_text("Uso: /vip_set <user_id> <dias>")
+    try:
+        uid = int(context.args[0])
+        dias = int(context.args[1])
+    except Exception:
+        return await update.effective_message.reply_text("Parâmetros inválidos.")
+    m = vip_upsert_start_or_extend(uid, None, None, extra_days=dias)
+    await update.effective_message.reply_text(
+        f"✅ VIP válido até {m.expires_at.strftime('%d/%m/%Y')} ({human_left(m.expires_at)})"
+    )
+
+async def vip_remove_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not (update.effective_user and is_admin(update.effective_user.id)):
+        return await update.effective_message.reply_text("Apenas admins.")
+    if not context.args:
+        return await update.effective_message.reply_text("Uso: /vip_remove <user_id>")
+    try:
+        uid = int(context.args[0])
+    except Exception:
+        return await update.effective_message.reply_text("user_id inválido.")
+    ok = vip_deactivate(uid)
+    if ok:
+        try:
+            await application.bot.ban_chat_member(chat_id=GROUP_VIP_ID, user_id=uid)
+            await application.bot.unban_chat_member(chat_id=GROUP_VIP_ID, user_id=uid)
+        except Exception:
+            pass
+        await update.effective_message.reply_text("✅ VIP removido/desativado.")
+    else:
+        await update.effective_message.reply_text("Usuário não era VIP.")
+
 
 async def simularvip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not (update.effective_user and is_admin(update.effective_user.id)): return await update.effective_message.reply_text("Apenas admins.")
@@ -1629,6 +1727,22 @@ async def root(): return {"status": "online", "message": "Bot ready (crypto + sc
 @app.get("/keepalive")
 async def keepalive(): return {"ok": True, "ts": now_utc().isoformat()}
 
+
+async def vip_expiration_warn_job(context: ContextTypes.DEFAULT_TYPE):
+    now = now_utc()
+    with SessionLocal() as s:
+        membros = (
+            s.query(VipMembership)
+             .filter(VipMembership.active == True, VipMembership.expires_at > now)
+             .all()
+        )
+    for m in membros:
+        dias = (m.expires_at - now).days
+        if dias in (3, 1):
+            texto = f"⚠️ Seu VIP expira em {dias} dia{'s' if dias > 1 else ''}. Use /pagar para renovar."
+            await dm(m.user_id, texto)
+
+
 async def keepalive_job(context: ContextTypes.DEFAULT_TYPE):
     if not SELF_URL: return
     url = SELF_URL.rstrip("/") + "/keepalive"
@@ -1759,6 +1873,14 @@ async def on_startup():
     application.add_handler(CommandHandler("mudar_nome", mudar_nome_cmd), group=1)
     application.add_handler(CommandHandler("limpar_chat", limpar_chat_cmd), group=1)
 
+    application.add_handler(CommandHandler("valor", valor_cmd), group=1)
+    application.add_handler(CommandHandler("vip_list", vip_list_cmd), group=1)
+    application.add_handler(CommandHandler("vip_addtime", vip_addtime_cmd), group=1)
+    application.add_handler(CommandHandler("vip_set", vip_set_cmd), group=1)
+    application.add_handler(CommandHandler("vip_remove", vip_remove_cmd), group=1)
+
+
+
     application.add_handler(CommandHandler("pagar", pagar_cmd), group=1)
     application.add_handler(CommandHandler("tx", tx_cmd), group=1)
     application.add_handler(CommandHandler("listar_pendentes", listar_pendentes_cmd), group=1)
@@ -1782,6 +1904,8 @@ async def on_startup():
     # Jobs
     await _reschedule_daily_packs()
     _register_all_scheduled_messages(application.job_queue)
+    
+    application.job_queue.run_daily(vip_expiration_warn_job, time=dt.time(hour=9, minute=0, tzinfo=pytz.timezone("America/Sao_Paulo")), name="vip_warn")
     application.job_queue.run_repeating(keepalive_job, interval=dt.timedelta(minutes=4), first=dt.timedelta(seconds=20), name="keepalive")
     logging.info("Handlers e jobs registrados.")
 
