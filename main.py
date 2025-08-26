@@ -267,6 +267,9 @@ class PackFile(Base):
     src_chat_id = Column(BigInteger, nullable=True)
     src_message_id = Column(Integer, nullable=True)
     pack = relationship("Pack", back_populates="files")
+    __table_args__ = (
+        UniqueConstraint("pack_id", "file_unique_id", "file_type", name="uq_pack_file_unique"),
+    )
 
 class Payment(Base):
     __tablename__ = "payments"
@@ -609,6 +612,15 @@ async def storage_media_handler(update: Update, context: ContextTypes.DEFAULT_TY
     else:
         await msg.reply_text("Tipo de mídia não suportado.", parse_mode="HTML"); return
 
+    with SessionLocal() as s:
+        q = s.query(PackFile).filter(PackFile.pack_id == pack.id)
+        if file_unique_id:
+            q = q.filter(PackFile.file_unique_id == file_unique_id)
+        else:
+            q = q.filter(PackFile.file_id == file_id)
+        if q.first():
+            await msg.reply_text("Este arquivo já foi adicionado a este pack.", parse_mode="HTML")
+            return
     add_file_to_pack(
         pack_id=pack.id, file_id=file_id, file_unique_id=file_unique_id, file_type=file_type, role=role,
         file_name=visible_name, src_chat_id=msg.chat.id, src_message_id=msg.message_id
@@ -780,6 +792,12 @@ async def enviar_pack_job(context: ContextTypes.DEFAULT_TYPE, tier: str, target_
     finally:
         SENDING_PACKS.discard(pack.id if 'pack' in locals() and pack else None)
 
+async def enviar_pack_vip_job(context: ContextTypes.DEFAULT_TYPE):
+    return await enviar_pack_job(context, tier="vip", target_chat_id=GROUP_VIP_ID)
+
+
+async def enviar_pack_free_job(context: ContextTypes.DEFAULT_TYPE):
+    return await enviar_pack_job(context, tier="free", target_chat_id=GROUP_FREE_ID)
 
 # =========================
 # COMMANDS & ADMIN
@@ -825,7 +843,7 @@ async def comandos_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🛠 <b>Admin</b>",
         "• /simularvip — envia o próximo pack VIP pendente",
         "• /simularfree — envia o próximo pack FREE pendente",
-        "• /listar_packsvip (/listar_packvip) — lista packs VIP",
+        "• /listar_packsvip | /listar_packvip | /listar_packs_vip | /listar_pack_vip — lista packs VIP",
         "• /listar_packsfree — lista packs FREE",
         "• /pack_info <id> — detalhes do pack",
         "• /excluir_item <id_item> — remove item do pack",
@@ -1920,7 +1938,12 @@ async def on_startup():
 
     application.add_handler(CommandHandler("simularvip", simularvip_cmd), group=1)
     application.add_handler(CommandHandler("simularfree", simularfree_cmd), group=1)
-    application.add_handler(CommandHandler(["listar_packsvip", "listar_packvip"], listar_packsvip_cmd), group=1)
+    application.add_handler(CommandHandler([
+        "listar_packsvip",
+        "listar_packvip",
+        "listar_packs_vip",
+        "listar_pack_vip",
+    ], listar_packsvip_cmd), group=1)
     application.add_handler(CommandHandler("listar_packsfree", listar_packsfree_cmd), group=1)
     application.add_handler(CommandHandler("pack_info", pack_info_cmd), group=1)
     application.add_handler(CommandHandler("excluir_item", excluir_item_cmd), group=1)
