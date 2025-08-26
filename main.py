@@ -1091,16 +1091,72 @@ async def pagar_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.effective_message.reply_text("Te enviei o passo a passo no privado. 👌")
 
 async def tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = update.effective_message; user = update.effective_user
-    if not context.args: return await msg.reply_text("Uso: /tx <hash_da_transacao>")
-    tx_hash = context.args[0].strip()
-    if not tx_hash or len(tx_hash) < 10: return await msg.reply_text("Hash inválido.")
-    # evita duplicidade
+    msg = update.effective_message
+    user = update.effective_user
+    if not context.args:
+        return await msg.reply_text("Uso: /tx <hash_da_transacao>")
+    tx_hash = context.args[0].strip().lower()
+
+    # === Verifica se já existe no banco
     s = SessionLocal()
     try:
-        if s.query(Payment).filter(Payment.tx_hash == tx_hash).first():
-            return await msg.reply_text("Esse hash já foi registrado. Aguarde aprovação/cheque seu privado.")
-    finally: s.close()
+        existing = s.query(Payment).filter(Payment.tx_hash == tx_hash).first()
+    finally:
+        s.close()
+
+    if existing:
+        if existing.status == "approved":
+            try:
+                invite = await application.bot.export_chat_invite_link(chat_id=GROUP_VIP_ID)
+                await dm(user.id, f"✅ Seu pagamento já estava aprovado!\nEntre no VIP: {invite}", parse_mode=None)
+                return await msg.reply_text("Esse hash já estava aprovado. Reenviei o convite no seu privado. ✅")
+            except Exception as e:
+                return await msg.reply_text(f"Hash já aprovado, mas falhou ao reenviar o convite: {e}")
+        elif existing.status == "pending":
+            return await msg.reply_text("Esse hash já foi registrado e está pendente. Aguarde a validação.")
+        else:
+            return await msg.reply_text("Esse hash já foi rejeitado. Fale com um administrador.")
+
+    # === Verificação on-chain
+    try:
+        res = await verify_tx_any(tx_hash)
+    except Exception as e:
+        logging.exception("Erro verificando transação")
+        return await msg.reply_text(f"❌ Erro ao verificar on-chain: {e}")
+
+    status = "approved" if (AUTO_APPROVE_CRYPTO and res.get("ok")) else "pending"
+    s = SessionLocal()
+    try:
+        p = Payment(
+            user_id=user.id, username=user.username, tx_hash=tx_hash,
+            chain=CHAIN_NAME, status=status,
+            amount=str(res.get("amount_wei") or res.get("amount_raw") or ""),
+            decided_at=now_utc() if status == "approved" else None
+        )
+        s.add(p); s.commit()
+    finally:
+        s.close()
+
+    if status == "approved":
+        try:
+            invite = await application.bot.export_chat_invite_link(chat_id=GROUP_VIP_ID)
+            await dm(user.id, f"✅ Pagamento confirmado na rede {CHAIN_NAME}!\nEntre no VIP: {invite}", parse_mode=None)
+            return await msg.reply_text("✅ Verifiquei sua transação e já liberei seu acesso. Confira seu privado.")
+        except Exception as e:
+            logging.exception("Erro enviando invite auto-approve")
+            return await msg.reply_text(f"Pagamento OK, mas falhou ao enviar o convite: {e}")
+    else:
+        human = res.get("reason", "Aguardando confirmação dos nós.")
+        await msg.reply_text(f"⏳ Hash recebido. Status: {human}")
+        # Notifica admins
+        try:
+            for aid in list_admin_ids():
+                txt = f"📥 Pagamento pendente:\nuser_id:{user.id} @{user.username or '-'}\nhash:{tx_hash}\ninfo:{human}"
+                await dm(aid, txt, parse_mode=None)
+        except Exception:
+            pass
+
+
 
     # Verificação on-chain
     try:
