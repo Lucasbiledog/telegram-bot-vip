@@ -542,6 +542,7 @@ def create_pack(title: str, header_message_id: Optional[int] = None, tier: str =
             s.rollback()
             raise
 
+
 def get_pack_by_header(header_message_id: int) -> Optional['Pack']:
     with SessionLocal() as s:
         return s.query(Pack).filter(Pack.header_message_id == header_message_id).first()
@@ -1532,24 +1533,20 @@ async def delete_later(chat_id: int, message_id: int, seconds: int = 5):
 
 async def pagar_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not WALLET_ADDRESS:
-        return await update.effective_message.reply_text(
-            "Método de pagamento não configurado. (WALLET_ADDRESS ausente)"
-        )
+        return await update.effective_message.reply_text("Método de pagamento não configurado. (WALLET_ADDRESS ausente)")
 
     user = update.effective_user
     chat = update.effective_chat
     msg  = update.effective_message
 
     texto = (
-    f"💸 <b>Pagamento via MetaMask</b>\n"
-    f"1) Abra a MetaMask e selecione a rede <b>{esc(CHAIN_NAME)}</b>.\n"
-    f"2) Envie o valor para a carteira:\n<code>{esc(WALLET_ADDRESS)}</code>\n"
-    f"3) Depois envie aqui: <code>/tx &lt;hash_da_transacao&gt;</code>\n"
-    f"   (o hash começa com 0x e tem 66 caracteres)\n\n"
-    f"⚙️ O sistema valida on-chain (confirmações mín.: {MIN_CONFIRMATIONS}).\n"
-    f"✅ Confirmando, você recebe o link do VIP no privado."
-)
-
+        f"💸 <b>Pagamento via MetaMask</b>\n"
+        f"1) Abra a MetaMask e selecione a rede <b>{esc(CHAIN_NAME)}</b>.\n"
+        f"2) Envie o valor para a carteira:\n<code>{esc(WALLET_ADDRESS)}</code>\n"
+        f"3) Depois me mande aqui: <code>/tx &lt;hash_da_transacao&gt;</code>\n\n"
+        f"⚙️ Valido on-chain (mín. {MIN_CONFIRMATIONS} confirmações).\n"
+        f"✅ Aprovando, te envio o convite do VIP no privado."
+    )
 
     sent = await dm(user.id, texto)
 
@@ -1562,13 +1559,12 @@ async def pagar_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         bot_msg = None
         if sent:
-            # aviso rápido (apaga em 5s)
             try:
                 bot_msg = await chat.send_message("Te enviei o passo a passo no privado. 👌")
             except Exception:
-                bot_msg = None
+                pass
         else:
-            # usuário nunca iniciou o bot -> mostra link e apaga em 5s
+            # usuário não iniciou o bot
             try:
                 username = BOT_USERNAME or (await application.bot.get_me()).username
             except Exception:
@@ -1581,10 +1577,123 @@ async def pagar_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode="HTML"
             )
 
+        # apaga o aviso depois de 5s (ajuste aqui se quiser outro tempo)
         if bot_msg:
-            asyncio.create_task(delete_later(chat.id, bot_msg.message_id, 30))
+            async def _delete_later(mid: int):
+                await asyncio.sleep(30)  # <<< mude 5 para o número de segundos que quiser
+                try:
+                    await application.bot.delete_message(chat_id=chat.id, message_id=mid)
+                except Exception:
+                    pass
+            asyncio.create_task(_delete_later(bot_msg.message_id))
     else:
         await msg.reply_text("Qualquer dúvida, me mande a hash com /tx <hash> 😉")
+async def tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = update.effective_message
+    user = update.effective_user
+
+    if not context.args:
+        return await msg.reply_text("Uso: /tx <hash_da_transacao>")
+
+    tx_hash = context.args[0].strip().lower()
+
+    # sanity checks básicos
+    if not tx_hash.startswith("0x") or len(tx_hash) != 66:
+        return await msg.reply_text("Hash inválido. Deve começar com 0x e ter 66 caracteres.")
+
+    # Já existe?
+    with SessionLocal() as s:
+        existing = s.query(Payment).filter(Payment.tx_hash == tx_hash).first()
+
+    if existing and existing.status == "approved":
+        # garante VIP e reenvia invite
+        m = vip_upsert_start_or_extend(user.id, user.username, existing.tx_hash, extra_days=30)
+        try:
+            invite = await application.bot.export_chat_invite_link(chat_id=GROUP_VIP_ID)
+            await dm(user.id, f"✅ Seu pagamento já estava aprovado!\nVIP até {m.expires_at:%d/%m/%Y} ({human_left(m.expires_at)}).\nEntre no VIP: {invite}", parse_mode=None)
+            return await msg.reply_text("Esse hash já estava aprovado. Reenviei o convite no seu privado. ✅")
+        except Exception as e:
+            return await msg.reply_text(f"Hash aprovado, mas falhou ao reenviar o convite: {e}")
+    elif existing and existing.status == "pending":
+        return await msg.reply_text("Esse hash já foi registrado e está pendente. Aguarde a validação.")
+    elif existing and existing.status == "rejected":
+        return await msg.reply_text("Esse hash já foi rejeitado. Fale com um administrador.")
+
+    # Verificação on-chain
+    try:
+        res = await verify_tx_any(tx_hash)
+    except Exception as e:
+        logging.exception("Erro verificando transação")
+        return await msg.reply_text(f"❌ Erro ao verificar on-chain: {e}")
+
+    # Checagem de preço configurado (se houver)
+    paid_ok = res.get("ok", False)
+    if paid_ok:
+        if TOKEN_CONTRACT:
+            price_tok = get_vip_price_token()
+            if price_tok is not None:
+                amount_raw = res.get("amount_raw")
+                min_units  = int(round(price_tok * (10 ** TOKEN_DECIMALS)))
+                if amount_raw is None or amount_raw < min_units:
+                    paid_ok = False
+        else:
+            price_nat = get_vip_price_native()
+            if price_nat is not None:
+                amount_wei = res.get("amount_wei")
+                if amount_wei is None or amount_wei < _to_wei(price_nat, 18):
+                    paid_ok = False
+
+    if not paid_ok:
+        human_reason = res.get("reason") or "Valor insuficiente/aguardando confirmações"
+        # registra como pendente
+        with SessionLocal() as s:
+            try:
+                p = Payment(
+                    user_id=user.id, username=user.username, tx_hash=tx_hash, chain=CHAIN_NAME,
+                    amount=str(res.get("amount_wei") or res.get("amount_raw") or ""),
+                    status="pending", notes=human_reason
+                )
+                s.add(p); s.commit()
+            except Exception:
+                s.rollback(); raise
+        await msg.reply_text(f"⏳ Hash recebido. Status: {human_reason}")
+        # Notifica admins (melhor esforço)
+        try:
+            for aid in list_admin_ids():
+                txt = f"📥 Pagamento pendente:\nuser_id:{user.id} @{user.username or '-'}\nhash:{tx_hash}\ninfo:{human_reason}"
+                await dm(aid, txt, parse_mode=None)
+        except Exception:
+            pass
+        return
+
+    # Aprovado — grava e cria/renova VIP 30 dias
+    with SessionLocal() as s:
+        try:
+            p = Payment(
+                user_id=user.id, username=user.username, tx_hash=tx_hash, chain=CHAIN_NAME,
+                status="approved", amount=str(res.get("amount_wei") or res.get("amount_raw") or ""),
+                decided_at=now_utc(),
+            )
+            s.add(p); s.commit()
+        except Exception:
+            s.rollback(); raise
+
+    m = vip_upsert_start_or_extend(user.id, user.username, tx_hash, extra_days=30)
+
+    try:
+        invite = await application.bot.export_chat_invite_link(chat_id=GROUP_VIP_ID)
+        await dm(
+            user.id,
+            f"✅ Pagamento confirmado na rede {CHAIN_NAME}!\n"
+            f"VIP válido até {m.expires_at:%d/%m/%Y} ({human_left(m.expires_at)}).\n"
+            f"Entre no VIP: {invite}",
+            parse_mode=None
+        )
+        return await msg.reply_text("✅ Verifiquei sua transação e já liberei seu acesso. Confira seu privado.")
+    except Exception as e:
+        logging.exception("Erro enviando invite auto-approve")
+        return await msg.reply_text(f"Pagamento OK, mas falhou ao enviar o convite: {e}")
+
 
         tx_hash = context.args[0].strip().lower()
 
@@ -2216,7 +2325,7 @@ async def on_startup():
 
     # ==== Error handler
     application.add_error_handler(error_handler)
-    
+
     # ===== Guard GLOBAL para não-admin (vem BEM cedo)
     application.add_handler(MessageHandler(filters.COMMAND, _block_non_admin_commands), group=-2)
 
