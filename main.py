@@ -125,21 +125,22 @@ class ConfigKV(Base):
     updated_at = Column(DateTime, default=now_utc, onupdate=now_utc)
 
 def cfg_get(key: str, default: Optional[str] = None) -> Optional[str]:
-    s = SessionLocal(); 
-    try:
+    with SessionLocal() as s:
         row = s.query(ConfigKV).filter(ConfigKV.key == key).first()
         return row.value if row else default
-    finally: s.close()
 
 def cfg_set(key: str, value: Optional[str]):
-    s = SessionLocal()
-    try:
-        row = s.query(ConfigKV).filter(ConfigKV.key == key).first()
-        if not row: s.add(ConfigKV(key=key, value=value))
-        else: row.value = value
-        s.commit()
-    finally: s.close()
-
+    with SessionLocal() as s:
+        try:
+            row = s.query(ConfigKV).filter(ConfigKV.key == key).first()
+            if not row:
+                s.add(ConfigKV(key=key, value=value))
+            else:
+                row.value = value
+            s.commit()
+        except Exception:
+            s.rollback()
+            raise
 class Admin(Base):
     __tablename__ = "admins"
     id = Column(Integer, primary_key=True)
@@ -195,52 +196,68 @@ class ScheduledMessage(Base):
     __table_args__ = (UniqueConstraint('id', name='uq_scheduled_messages_id'),)
 
 def scheduled_create(hhmm: str, text: str, tier: str = "vip", tz_name: str = "America/Sao_Paulo") -> 'ScheduledMessage':
-    s = SessionLocal()
-    try:
-        m = ScheduledMessage(hhmm=hhmm, text=text, tz=tz_name, enabled=True, tier=tier); s.add(m); s.commit(); s.refresh(m); return m
-    finally: s.close()
+    with SessionLocal() as s:
+        try:
+            m = ScheduledMessage(hhmm=hhmm, text=text, tz=tz_name, enabled=True, tier=tier)
+            s.add(m); s.commit(); s.refresh(m)
+            return m
+        except Exception:
+            s.rollback()
+            raise
 
 def scheduled_all(tier: Optional[str] = None) -> List['ScheduledMessage']:
-    s = SessionLocal()
-    try:
-        q = s.query(ScheduledMessage); 
-        if tier: q = q.filter(ScheduledMessage.tier == tier)
+    with SessionLocal() as s:
+        q = s.query(ScheduledMessage)
+        if tier:
+            q = q.filter(ScheduledMessage.tier == tier)
         return q.order_by(ScheduledMessage.hhmm.asc(), ScheduledMessage.id.asc()).all()
-    finally: s.close()
 
 def scheduled_get(sid: int) -> Optional['ScheduledMessage']:
-    s = SessionLocal(); 
-    try: return s.query(ScheduledMessage).filter(ScheduledMessage.id == sid).first()
-    finally: s.close()
+    with SessionLocal() as s:
+        return s.query(ScheduledMessage).filter(ScheduledMessage.id == sid).first()
 
 def scheduled_update(sid: int, hhmm: Optional[str], text: Optional[str]) -> bool:
-    s = SessionLocal()
-    try:
-        m = s.query(ScheduledMessage).filter(ScheduledMessage.id == sid).first()
-        if not m: return False
-        if hhmm: m.hhmm = hhmm
-        if text is not None: m.text = text
-        s.commit(); return True
-    except Exception: s.rollback(); raise
-    finally: s.close()
+    with SessionLocal() as s:
+        try:
+            m = s.query(ScheduledMessage).filter(ScheduledMessage.id == sid).first()
+            if not m:
+                return False
+            if hhmm:
+                m.hhmm = hhmm
+            if text is not None:
+                m.text = text
+            s.commit()
+            return True
+        except Exception:
+            s.rollback()
+            raise
 
 def scheduled_toggle(sid: int) -> Optional[bool]:
-    s = SessionLocal()
-    try:
-        m = s.query(ScheduledMessage).filter(ScheduledMessage.id == sid).first()
-        if not m: return None
-        m.enabled = not m.enabled; s.commit(); return m.enabled
-    except Exception: s.rollback(); raise
-    finally: s.close()
+    with SessionLocal() as s:
+        try:
+            m = s.query(ScheduledMessage).filter(ScheduledMessage.id == sid).first()
+            if not m:
+                return None
+            m.enabled = not m.enabled
+            s.commit()
+            return m.enabled
+        except Exception:
+            s.rollback()
+            raise
 
 def scheduled_delete(sid: int) -> bool:
-    s = SessionLocal()
-    try:
-        m = s.query(ScheduledMessage).filter(ScheduledMessage.id == sid).first()
-        if not m: return False
-        s.delete(m); s.commit(); return True
-    except Exception: s.rollback(); raise
-    finally: s.close()
+    with SessionLocal() as s:
+        try:
+            m = s.query(ScheduledMessage).filter(ScheduledMessage.id == sid).first()
+            if not m:
+                return False
+            s.delete(m)
+            s.commit()
+            return True
+        except Exception:
+            s.rollback()
+            raise
+
 
 def ensure_bigint_columns():
     if not url.get_backend_name().startswith("postgresql"): return
@@ -280,12 +297,15 @@ def init_db():
     Base.metadata.create_all(bind=engine)
     initial_admin_id = os.getenv("INITIAL_ADMIN_ID")
     if initial_admin_id:
-        s = SessionLocal()
-        try:
-            uid = int(initial_admin_id)
-            if not s.query(Admin).filter(Admin.user_id == uid).first():
-                s.add(Admin(user_id=uid)); s.commit()
-        finally: s.close()
+        with SessionLocal() as s:
+            try:
+                uid = int(initial_admin_id)
+                if not s.query(Admin).filter(Admin.user_id == uid).first():
+                    s.add(Admin(user_id=uid))
+                    s.commit()
+            except Exception:
+                s.rollback()
+                raise
     if not cfg_get("daily_pack_vip_hhmm"):  cfg_set("daily_pack_vip_hhmm", "09:00")
     if not cfg_get("daily_pack_free_hhmm"): cfg_set("daily_pack_free_hhmm", "09:30")
 
@@ -295,52 +315,75 @@ ensure_bigint_columns(); ensure_pack_tier_column(); ensure_packfile_src_columns(
 # DB helpers
 # =========================
 def is_admin(user_id: int) -> bool:
-    s = SessionLocal(); 
-    try: return s.query(Admin).filter(Admin.user_id == user_id).first() is not None
-    finally: s.close()
+   with SessionLocal() as s:
+        return s.query(Admin).filter(Admin.user_id == user_id).first() is not None
 
 def list_admin_ids() -> List[int]:
-    s = SessionLocal()
-    try: return [a.user_id for a in s.query(Admin).order_by(Admin.added_at.asc()).all()]
-    finally: s.close()
+    with SessionLocal() as s:
+        return [a.user_id for a in s.query(Admin).order_by(Admin.added_at.asc()).all()]
 
 def add_admin_db(user_id: int) -> bool:
-    s = SessionLocal()
-    try:
-        if s.query(Admin).filter(Admin.user_id == user_id).first(): return False
-        s.add(Admin(user_id=user_id)); s.commit(); return True
-    finally: s.close()
+   with SessionLocal() as s:
+        try:
+            if s.query(Admin).filter(Admin.user_id == user_id).first():
+                return False
+            s.add(Admin(user_id=user_id))
+            s.commit()
+            return True
+        except Exception:
+            s.rollback()
+            raise
 
 def remove_admin_db(user_id: int) -> bool:
-    s = SessionLocal()
-    try:
-        a = s.query(Admin).filter(Admin.user_id == user_id).first()
-        if not a: return False
-        s.delete(a); s.commit(); return True
-    finally: s.close()
+   with SessionLocal() as s:
+        try:
+            a = s.query(Admin).filter(Admin.user_id == user_id).first()
+            if not a:
+                return False
+            s.delete(a)
+            s.commit()
+            return True
+        except Exception:
+            s.rollback()
+            raise
 
 def create_pack(title: str, header_message_id: Optional[int] = None, tier: str = "vip") -> 'Pack':
-    s = SessionLocal()
-    try:
-        p = Pack(title=title.strip(), header_message_id=header_message_id, tier=tier)
-        s.add(p); s.commit(); s.refresh(p); return p
-    finally: s.close()
+   with SessionLocal() as s:
+        try:
+            p = Pack(title=title.strip(), header_message_id=header_message_id, tier=tier)
+            s.add(p)
+            s.commit()
+            s.refresh(p)
+            return p
+        except Exception:
+            s.rollback()
+            raise
 
 def get_pack_by_header(header_message_id: int) -> Optional['Pack']:
-    s = SessionLocal(); 
-    try: return s.query(Pack).filter(Pack.header_message_id == header_message_id).first()
-    finally: s.close()
+     with SessionLocal() as s:
+        return s.query(Pack).filter(Pack.header_message_id == header_message_id).first()
 
 def add_file_to_pack(pack_id: int, file_id: str, file_unique_id: Optional[str], file_type: str, role: str,
-                     file_name: Optional[str] = None, src_chat_id: Optional[int] = None, src_message_id: Optional[int] = None):
-    s = SessionLocal()
-    try:
-        pf = PackFile(
-            pack_id=pack_id, file_id=file_id, file_unique_id=file_unique_id, file_type=file_type,
-            role=role, file_name=file_name, src_chat_id=src_chat_id, src_message_id=src_message_id
-        )
-        s.add(pf); s.commit(); s.refresh(pf); return pf
-    finally: s.close()
+     file_name: Optional[str] = None, src_chat_id: Optional[int] = None, src_message_id: Optional[int] = None):
+     with SessionLocal() as s:
+        try:
+            pf = PackFile(
+                pack_id=pack_id,
+                file_id=file_id,
+                file_unique_id=file_unique_id,
+                file_type=file_type,
+                role=role,
+                file_name=file_name,
+                src_chat_id=src_chat_id,
+                src_message_id=src_message_id,
+            )
+            s.add(pf)
+            s.commit()
+            s.refresh(pf)
+            return pf
+        except Exception:
+            s.rollback()
+            raise
 
 def get_next_unsent_pack(tier: str = "vip") -> Optional['Pack']:
     s = SessionLocal()
@@ -348,17 +391,26 @@ def get_next_unsent_pack(tier: str = "vip") -> Optional['Pack']:
     finally: s.close()
 
 def mark_pack_sent(pack_id: int):
-    s = SessionLocal()
-    try:
-        p = s.query(Pack).filter(Pack.id == pack_id).first()
-        if p: p.sent = True; s.commit()
-    finally: s.close()
+    with SessionLocal() as s:
+        try:
+            p = s.query(Pack).filter(Pack.id == pack_id).first()
+            if p:
+                p.sent = True
+                s.commit()
+        except Exception:
+            s.rollback()
+            raise
 
 def list_packs_by_tier(tier: str):
-    s = SessionLocal()
-    try: return s.query(Pack).filter(Pack.tier == tier).order_by(Pack.created_at.desc()).all()
-    finally: s.close()
-
+   with SessionLocal() as s:
+        try:
+            p = s.query(Pack).filter(Pack.id == pack_id).first()
+            if p:
+                p.sent = True
+                s.commit()
+        except Exception:
+            s.rollback()
+            raise   
 # =========================
 # STORAGE GROUP handlers
 # =========================
@@ -532,11 +584,9 @@ async def enviar_pack_job(context: ContextTypes.DEFAULT_TYPE, tier: str, target_
         pack = get_next_unsent_pack(tier=tier)
         if not pack: return f"Nenhum pack pendente para envio ({tier})."
 
-        s = SessionLocal()
-        try:
+        with SessionLocal() as s:
             p = s.query(Pack).filter(Pack.id == pack.id).first()
             files = s.query(PackFile).filter(PackFile.pack_id == p.id).order_by(PackFile.id.asc()).all()
-        finally: s.close()
 
         if not files:
             mark_pack_sent(p.id); return f"Pack '{p.title}' ({tier}) não possui arquivos. Marcado como enviado."
@@ -704,23 +754,22 @@ async def simularfree_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def listar_packsvip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not (update.effective_user and is_admin(update.effective_user.id)): return await update.effective_message.reply_text("Apenas admins.")
-    s = SessionLocal()
-    try:
+    with SessionLocal() as s:
         packs = list_packs_by_tier("vip")
-        if not packs: return await update.effective_message.reply_text("Nenhum pack VIP registrado.")
+        if not packs:
+            return await update.effective_message.reply_text("Nenhum pack VIP registrado.")
         lines = []
         for p in packs:
             previews = s.query(PackFile).filter(PackFile.pack_id == p.id, PackFile.role == "preview").count()
-            docs    = s.query(PackFile).filter(PackFile.pack_id == p.id, PackFile.role == "file").count()
+            docs = s.query(PackFile).filter(PackFile.pack_id == p.id, PackFile.role == "file").count()
             status = "ENVIADO" if p.sent else "PENDENTE"
             lines.append(f"[{p.id}] {esc(p.title)} — {status} — previews:{previews} arquivos:{docs} — {p.created_at.strftime('%d/%m %H:%M')}")
         await update.effective_message.reply_text("\n".join(lines))
-    finally: s.close()
+    
 
 async def listar_packsfree_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not (update.effective_user and is_admin(update.effective_user.id)): return await update.effective_message.reply_text("Apenas admins.")
-    s = SessionLocal()
-    try:
+    with SessionLocal() as s:
         packs = list_packs_by_tier("free")
         if not packs: return await update.effective_message.reply_text("Nenhum pack FREE registrado.")
         lines = []
@@ -730,15 +779,14 @@ async def listar_packsfree_cmd(update: Update, context: ContextTypes.DEFAULT_TYP
             status = "ENVIADO" if p.sent else "PENDENTE"
             lines.append(f"[{p.id}] {esc(p.title)} — {status} — previews:{previews} arquivos:{docs} — {p.created_at.strftime('%d/%m %H:%M')}")
         await update.effective_message.reply_text("\n".join(lines))
-    finally: s.close()
+   
 
 async def pack_info_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not (update.effective_user and is_admin(update.effective_user.id)): return await update.effective_message.reply_text("Apenas admins.")
     if not context.args: return await update.effective_message.reply_text("Uso: /pack_info <id>")
     try: pid = int(context.args[0])
     except: return await update.effective_message.reply_text("ID inválido.")
-    s = SessionLocal()
-    try:
+    with SessionLocal() as s:
         p = s.query(Pack).filter(Pack.id == pid).first()
         if not p: return await update.effective_message.reply_text("Pack não encontrado.")
         files = s.query(PackFile).filter(PackFile.pack_id == p.id).order_by(PackFile.id.asc()).all()
@@ -746,10 +794,10 @@ async def pack_info_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lines = [f"Pack [{p.id}] {esc(p.title)} — {'ENVIADO' if p.sent else 'PENDENTE'} — {p.tier.upper()}"]
         for f in files:
             name = f.file_name or ""
-            src  = f" src:{f.src_chat_id}/{f.src_message_id}" if f.src_chat_id and f.src_message_id else ""
+            src = f" src:{f.src_chat_id}/{f.src_message_id}" if f.src_chat_id and f.src_message_id else ""
             lines.append(f" - item #{f.id} | {f.file_type} ({f.role}) {name}{src}")
         await update.effective_message.reply_text("\n".join(lines))
-    finally: s.close()
+
 
 async def excluir_item_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not (update.effective_user and is_admin(update.effective_user.id)): return await update.effective_message.reply_text("Apenas admins.")
@@ -757,30 +805,34 @@ async def excluir_item_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try: item_id = int(context.args[0])
     except: return await update.effective_message.reply_text("ID inválido. Use: /excluir_item <id_item>")
 
-    s = SessionLocal()
-    try:
-        item = s.query(PackFile).filter(PackFile.id == item_id).first()
-        if not item: return await update.effective_message.reply_text("Item não encontrado.")
-        pack = s.query(Pack).filter(Pack.id == item.pack_id).first()
-        s.delete(item); s.commit()
-        await update.effective_message.reply_text(f"✅ Item #{item_id} removido do pack '{pack.title if pack else '?'}'.")
-    except Exception as e:
-        s.rollback(); logging.exception("Erro ao remover item"); await update.effective_message.reply_text(f"❌ Erro ao remover item: {e}")
-    finally: s.close()
+    with SessionLocal() as s:
+        try:
+            item = s.query(PackFile).filter(PackFile.id == item_id).first()
+            if not item:
+                return await update.effective_message.reply_text("Item não encontrado.")
+            pack = s.query(Pack).filter(Pack.id == item.pack_id).first()
+            s.delete(item)
+            s.commit()
+            await update.effective_message.reply_text(f"✅ Item #{item_id} removido do pack '{pack.title if pack else '?'}'.")
+        except Exception as e:
+            s.rollback()
+            logging.exception("Erro ao remover item")
+            await update.effective_message.reply_text(f"❌ Erro ao remover item: {e}")
 
-DELETE_PACK_CONFIRM = range(1)
+DELETE_PACK_CONFIRM = 1
 async def excluir_pack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not (update.effective_user and is_admin(update.effective_user.id)):
         await update.effective_message.reply_text("Apenas admins."); return ConversationHandler.END
     if not context.args:
-        s = SessionLocal()
-        try:
-            packs = list_packs_by_tier("vip") + list_packs_by_tier("free")
-            if not packs: await update.effective_message.reply_text("Nenhum pack registrado."); return ConversationHandler.END
-            lines = ["🗑 <b>Excluir Pack</b>\n", "Envie: <code>/excluir_pack &lt;id&gt;</code> para escolher um."]
-            for p in packs: lines.append(f"[{p.id}] {esc(p.title)} ({p.tier.upper()})")
-            await update.effective_message.reply_text("\n".join(lines), parse_mode="HTML"); return ConversationHandler.END
-        finally: s.close()
+        packs = list_packs_by_tier("vip") + list_packs_by_tier("free")
+        if not packs:
+            await update.effective_message.reply_text("Nenhum pack registrado.")
+            return ConversationHandler.END
+        lines = ["🗑 <b>Excluir Pack</b>\n", "Envie: <code>/excluir_pack &lt;id&gt;</code> para escolher um."]
+        for p in packs:
+            lines.append(f"[{p.id}] {esc(p.title)} ({p.tier.upper()})")
+        await update.effective_message.reply_text("\n".join(lines), parse_mode="HTML")
+        return ConversationHandler.END
     try: pid = int(context.args[0])
     except: await update.effective_message.reply_text("Uso: /excluir_pack <id>"); return ConversationHandler.END
     context.user_data["delete_pid"] = pid
@@ -794,15 +846,20 @@ async def excluir_pack_confirm(update: Update, context: ContextTypes.DEFAULT_TYP
         return DELETE_PACK_CONFIRM
     pid = context.user_data.get("delete_pid"); context.user_data.pop("delete_pid", None)
     if ans in ("não", "nao"): await update.effective_message.reply_text("Cancelado."); return ConversationHandler.END
-    s = SessionLocal()
-    try:
-        p = s.query(Pack).filter(Pack.id == pid).first()
-        if not p: await update.effective_message.reply_text("Pack não encontrado."); return ConversationHandler.END
-        title = p.title; s.delete(p); s.commit()
-        await update.effective_message.reply_text(f"✅ Pack <b>{esc(title)}</b> (#{pid}) excluído.", parse_mode="HTML")
-    except Exception as e:
-        s.rollback(); logging.exception("Erro ao excluir pack"); await update.effective_message.reply_text(f"❌ Erro ao excluir: {e}")
-    finally: s.close()
+    with SessionLocal() as s:
+        try:
+            p = s.query(Pack).filter(Pack.id == pid).first()
+            if not p:
+                await update.effective_message.reply_text("Pack não encontrado.")
+                return ConversationHandler.END
+            title = p.title
+            s.delete(p)
+            s.commit()
+            await update.effective_message.reply_text(f"✅ Pack <b>{esc(title)}</b> (#{pid}) excluído.", parse_mode="HTML")
+        except Exception as e:
+            s.rollback()
+            logging.exception("Erro ao excluir pack")
+            await update.effective_message.reply_text(f"❌ Erro ao excluir: {e}")
     return ConversationHandler.END
 
 async def _set_sent_by_tier(update: Update, context: ContextTypes.DEFAULT_TYPE, tier: str, sent: bool):
@@ -812,18 +869,20 @@ async def _set_sent_by_tier(update: Update, context: ContextTypes.DEFAULT_TYPE, 
         return await update.effective_message.reply_text(f"Uso: /{'set_enviado' if sent else 'set_pendente'}{tier} <id_do_pack>")
     try: pid = int(context.args[0])
     except: return await update.effective_message.reply_text("ID inválido.")
-    s = SessionLocal()
-    try:
-        p = s.query(Pack).filter(Pack.id == pid, Pack.tier == tier).first()
-        if not p: return await update.effective_message.reply_text(f"Pack não encontrado para {tier.upper()}.")
-        p.sent = sent; s.commit()
-        await update.effective_message.reply_text(
-            f"✅ Pack #{p.id} — “{esc(p.title)}” marcado como <b>{'ENVIADO' if sent else 'PENDENTE'}</b> ({tier}).",
-            parse_mode="HTML"
-        )
-    except Exception as e:
-        s.rollback(); await update.effective_message.reply_text(f"❌ Erro ao atualizar: {e}")
-    finally: s.close()
+    with SessionLocal() as s:
+        try:
+            p = s.query(Pack).filter(Pack.id == pid, Pack.tier == tier).first()
+            if not p:
+                return await update.effective_message.reply_text(f"Pack não encontrado para {tier.upper()}.")
+            p.sent = sent
+            s.commit()
+            await update.effective_message.reply_text(
+                f"✅ Pack #{p.id} — “{esc(p.title)}” marcado como <b>{'ENVIADO' if sent else 'PENDENTE'}</b> ({tier}).",
+                parse_mode="HTML",
+            )
+        except Exception as e:
+            s.rollback()
+            await update.effective_message.reply_text(f"❌ Erro ao atualizar: {e}")
 
 async def set_pendentefree_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE): await _set_sent_by_tier(update, context, tier="free", sent=False)
 async def set_pendentevip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE): await _set_sent_by_tier(update, context, tier="vip", sent=False)
@@ -1088,7 +1147,11 @@ async def pagar_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await dm(user.id, texto)
     if update.effective_chat.type != "private":
-        await update.effective_message.reply_text("Te enviei o passo a passo no privado. 👌")
+        try:
+            await update.effective_message.delete()
+        except Exception:
+            pass
+        await update.effective_chat.send_message("Te enviei o passo a passo no privado. 👌")
 
 async def tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.effective_message
@@ -1098,11 +1161,8 @@ async def tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tx_hash = context.args[0].strip().lower()
 
     # === Verifica se já existe no banco
-    s = SessionLocal()
-    try:
+    with SessionLocal() as s:
         existing = s.query(Payment).filter(Payment.tx_hash == tx_hash).first()
-    finally:
-        s.close()
 
     if existing:
         if existing.status == "approved":
@@ -1125,17 +1185,22 @@ async def tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await msg.reply_text(f"❌ Erro ao verificar on-chain: {e}")
 
     status = "approved" if (AUTO_APPROVE_CRYPTO and res.get("ok")) else "pending"
-    s = SessionLocal()
-    try:
-        p = Payment(
-            user_id=user.id, username=user.username, tx_hash=tx_hash,
-            chain=CHAIN_NAME, status=status,
-            amount=str(res.get("amount_wei") or res.get("amount_raw") or ""),
-            decided_at=now_utc() if status == "approved" else None
-        )
-        s.add(p); s.commit()
-    finally:
-        s.close()
+    with SessionLocal() as s:
+        try:
+            p = Payment(
+                user_id=user.id,
+                username=user.username,
+                tx_hash=tx_hash,
+                chain=CHAIN_NAME,
+                status=status,
+                amount=str(res.get("amount_wei") or res.get("amount_raw") or ""),
+                decided_at=now_utc() if status == "approved" else None,
+            )
+            s.add(p)
+            s.commit()
+        except Exception:
+            s.rollback()
+            raise
 
     if status == "approved":
         try:
@@ -1157,88 +1222,65 @@ async def tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
 
 
-
-    # Verificação on-chain
-    try:
-        res = await verify_tx_any(tx_hash)
-    except Exception as e:
-        logging.exception("Erro verificando transação")
-        return await msg.reply_text(f"Não consegui verificar on-chain agora: {e}")
-
-    s = SessionLocal()
-    try:
-        status = "approved" if (AUTO_APPROVE_CRYPTO and res.get("ok")) else "pending"
-        p = Payment(
-            user_id=user.id, username=user.username, tx_hash=tx_hash, chain=CHAIN_NAME,
-            status=status, amount=str(res.get('amount_wei') or res.get('amount_raw') or ""), decided_at=now_utc() if status=="approved" else None
-        )
-        s.add(p); s.commit()
-    finally: s.close()
-
-    if res.get("ok") and AUTO_APPROVE_CRYPTO:
-        try:
-            invite = await application.bot.export_chat_invite_link(chat_id=GROUP_VIP_ID)
-            await dm(user.id, f"✅ Pagamento confirmado na rede {CHAIN_NAME}!\nEntre no VIP: {invite}", parse_mode=None)
-            return await msg.reply_text("✅ Verifiquei sua transação e já liberei seu acesso. Confira seu privado. 🙌")
-        except Exception as e:
-            logging.exception("Erro enviando invite auto-approve")
-            return await msg.reply_text(f"Pagamento OK, mas falhou ao enviar o convite: {e}")
-    else:
-        human = res.get("reason", "Aguardando confirmação dos nós.")
-        await msg.reply_text(f"⏳ Recebi seu hash. Status: {'OK' if res.get('ok') else human}. Quando confirmar, liberamos.")
-        # ping admins se pendente
-        try:
-            admin_list = list_admin_ids()
-            if admin_list:
-                txt = f"📥 Pagamento {'OK' if res.get('ok') else 'pendente'}:\nuser_id:{user.id} @{user.username or '-'}\nhash:{tx_hash}\ninfo:{human}"
-                for aid in admin_list: await dm(aid, txt, parse_mode=None)
-        except Exception: pass
-
 async def listar_pendentes_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not (update.effective_user and is_admin(update.effective_user.id)): return await update.effective_message.reply_text("Apenas admins.")
-    s = SessionLocal()
-    try:
+    with SessionLocal() as s:
         pend = s.query(Payment).filter(Payment.status == "pending").order_by(Payment.created_at.asc()).all()
-        if not pend: return await update.effective_message.reply_text("Sem pagamentos pendentes.")
+        if not pend:
+            return await update.effective_message.reply_text("Sem pagamentos pendentes.")
         lines = ["⏳ <b>Pendentes</b>"] + [
             f"- user_id:{p.user_id} @{p.username or '-'} | {p.tx_hash} | {p.chain} | {p.created_at.strftime('%d/%m %H:%M')}" for p in pend
         ]
         await update.effective_message.reply_text("\n".join(lines), parse_mode="HTML")
-    finally: s.close()
+    
 
 async def aprovar_tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not (update.effective_user and is_admin(update.effective_user.id)): return await update.effective_message.reply_text("Apenas admins.")
     if not context.args: return await update.effective_message.reply_text("Uso: /aprovar_tx <user_id>")
     try: uid = int(context.args[0])
     except: return await update.effective_message.reply_text("user_id inválido.")
-    s = SessionLocal()
-    try:
-        p = s.query(Payment).filter(Payment.user_id == uid, Payment.status == "pending").order_by(Payment.created_at.asc()).first()
-        if not p: return await update.effective_message.reply_text("Nenhum pagamento pendente para este usuário.")
-        p.status = "approved"; p.decided_at = now_utc(); s.commit()
+    with SessionLocal() as s:
         try:
-            invite = await application.bot.export_chat_invite_link(chat_id=GROUP_VIP_ID)
-            await application.bot.send_message(chat_id=uid, text=f"✅ Pagamento aprovado! Entre no VIP: {invite}")
-            await update.effective_message.reply_text(f"Aprovado e convite enviado para {uid}.")
+            p = s.query(Payment).filter(Payment.user_id == uid, Payment.status == "pending").order_by(Payment.created_at.asc()).first()
+            if not p:
+                return await update.effective_message.reply_text("Nenhum pagamento pendente para este usuário.")
+            p.status = "approved"
+            p.decided_at = now_utc()
+            s.commit()
+            try:
+                invite = await application.bot.export_chat_invite_link(chat_id=GROUP_VIP_ID)
+                await application.bot.send_message(chat_id=uid, text=f"✅ Pagamento aprovado! Entre no VIP: {invite}")
+                await update.effective_message.reply_text(f"Aprovado e convite enviado para {uid}.")
+            except Exception as e:
+                logging.exception("Erro enviando invite")
+                await update.effective_message.reply_text(f"Aprovado, mas falhou ao enviar convite: {e}")
         except Exception as e:
-            logging.exception("Erro enviando invite"); await update.effective_message.reply_text(f"Aprovado, mas falhou ao enviar convite: {e}")
-    finally: s.close()
-
+             s.rollback()
+             await update.effective_message.reply_text(f"❌ Erro ao aprovar: {e}")
+        
 async def rejeitar_tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not (update.effective_user and is_admin(update.effective_user.id)): return await update.effective_message.reply_text("Apenas admins.")
     if not context.args: return await update.effective_message.reply_text("Uso: /rejeitar_tx <user_id> [motivo]")
     try: uid = int(context.args[0])
     except: return await update.effective_message.reply_text("user_id inválido.")
     motivo = " ".join(context.args[1:]).strip() if len(context.args) > 1 else "Não especificado"
-    s = SessionLocal()
-    try:
-        p = s.query(Payment).filter(Payment.user_id == uid, Payment.status == "pending").order_by(Payment.created_at.asc()).first()
-        if not p: return await update.effective_message.reply_text("Nenhum pagamento pendente para este usuário.")
-        p.status = "rejected"; p.notes = motivo; p.decided_at = now_utc(); s.commit()
-        try: await application.bot.send_message(chat_id=uid, text=f"❌ Pagamento rejeitado. Motivo: {motivo}")
-        except: pass
-        await update.effective_message.reply_text("Pagamento rejeitado.")
-    finally: s.close()
+    with SessionLocal() as s:
+        try:
+            p = s.query(Payment).filter(Payment.user_id == uid, Payment.status == "pending").order_by(Payment.created_at.asc()).first()
+            if not p:
+                return await update.effective_message.reply_text("Nenhum pagamento pendente para este usuário.")
+            p.status = "rejected"
+            p.notes = motivo
+            p.decided_at = now_utc()
+            s.commit()
+            try:
+                await application.bot.send_message(chat_id=uid, text=f"❌ Pagamento rejeitado. Motivo: {motivo}")
+            except Exception:
+                pass
+            await update.effective_message.reply_text("Pagamento rejeitado.")
+        except Exception as e:
+            s.rollback()
+            await update.effective_message.reply_text(f"❌ Erro ao rejeitar: {e}")
 
 # =========================
 # Mensagens agendadas / Jobs
@@ -1408,19 +1450,26 @@ async def crypto_webhook(request: Request):
     except Exception as e:
         logging.exception("Erro verificando no webhook"); 
         return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
-
-    s = SessionLocal()
-    try:
-        pay = s.query(Payment).filter(Payment.tx_hash == tx_hash).first()
-        if not pay:
-            pay = Payment(user_id=int(uid), tx_hash=tx_hash, amount=str(res.get('amount_wei') or res.get('amount_raw') or amount or ""), chain=chain,
-                          status="approved" if res.get("ok") else "pending", decided_at=now_utc() if res.get("ok") else None)
-            s.add(pay)
-        else:
-            pay.status = "approved" if res.get("ok") else "pending"
-            pay.decided_at = now_utc() if res.get("ok") else None
-        s.commit()
-    finally: s.close()
+    with SessionLocal() as s:
+        try:
+            pay = s.query(Payment).filter(Payment.tx_hash == tx_hash).first()
+            if not pay:
+                pay = Payment(
+                    user_id=int(uid),
+                    tx_hash=tx_hash,
+                    amount=str(res.get('amount_wei') or res.get('amount_raw') or amount or ""),
+                    chain=chain,
+                    status="approved" if res.get("ok") else "pending",
+                    decided_at=now_utc() if res.get("ok") else None,
+                )
+                s.add(pay)
+            else:
+                pay.status = "approved" if res.get("ok") else "pending"
+                pay.decided_at = now_utc() if res.get("ok") else None
+            s.commit()
+        except Exception:
+            s.rollback()
+            raise
 
     if res.get("ok"):
         try:
@@ -1461,10 +1510,10 @@ async def _ignore_non_admin_commands_in_groups(update: Update, context: ContextT
     chat = update.effective_chat; user = update.effective_user
     if not chat or not user: return
     if chat.type in ("group", "supergroup") and not is_admin(user.id):
-        # opcional: deletar comandos do usuário
-        # try: await application.bot.delete_message(chat_id=chat.id, message_id=update.effective_message.message_id)
-        # except Exception: pass
-                raise ApplicationHandlerStop
+        cmd = (update.effective_message.text or "").split()[0].lower()
+        if cmd in {"/pagar"}:
+            return
+        raise ApplicationHandlerStop
 
 
 # =========================
