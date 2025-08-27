@@ -3,9 +3,11 @@ import os
 import logging
 import asyncio
 import datetime as dt
+from enum import Enum
 from typing import Optional, List, Dict, Any, Tuple
 
 import html
+import json
 import pytz
 from dotenv import load_dotenv
 
@@ -99,6 +101,33 @@ def ensure_vip_invite_column():
             except Exception: pass
     except Exception as e:
         logging.warning("Falha ensure_vip_invite_column: %s", e)
+def ensure_vip_plan_column():
+    try:
+        with engine.begin() as conn:
+            try:
+                conn.execute(text("ALTER TABLE vip_memberships ADD COLUMN plan VARCHAR"))
+            except Exception:
+                pass
+            try:
+                conn.execute(text("UPDATE vip_memberships SET plan='TRIMESTRAL' WHERE plan IS NULL"))
+            except Exception:
+                pass
+    except Exception as e:
+        logging.warning("Falha ensure_vip_plan_column: %s", e)
+
+class VipPlan(str, Enum):
+    TRIMESTRAL = "TRIMESTRAL"
+    SEMESTRAL = "SEMESTRAL"
+    ANUAL = "ANUAL"
+    MENSAL = "MENSAL"
+
+PLAN_DAYS = {
+    VipPlan.TRIMESTRAL: 90,
+    VipPlan.SEMESTRAL: 180,
+    VipPlan.ANUAL: 365,
+    VipPlan.MENSAL: 30,
+
+}
 
 def init_db():
     Base.metadata.create_all(bind=engine)
@@ -122,6 +151,7 @@ def ensure_schema():
     ensure_pack_tier_column()
     ensure_packfile_src_columns()
     ensure_vip_invite_column()
+    ensure_vip_plan_column()
 
 
 # =========================
@@ -175,6 +205,48 @@ def get_vip_price_token() -> Optional[float]:
 def set_vip_price_token(value: float):
     cfg_set("vip_price_token", str(value))
 
+# ----- Preços dos planos VIP (dias -> preço)
+def get_vip_plan_prices_native() -> Dict[int, float]:
+    v = cfg_get("vip_plan_prices_native")
+    if not v:
+        return {}
+    try:
+        data = json.loads(v)
+        return {int(k): float(val) for k, val in data.items()}
+    except Exception:
+        logging.warning("vip_plan_prices_native inválido: %s", v)
+        return {}
+
+def get_vip_plan_prices_token() -> Dict[int, float]:
+    v = cfg_get("vip_plan_prices_token")
+    if not v:
+        return {}
+    try:
+        data = json.loads(v)
+        return {int(k): float(val) for k, val in data.items()}
+    except Exception:
+        logging.warning("vip_plan_prices_token inválido: %s", v)
+        return {}
+
+def infer_plan_days(amount_wei: Optional[int] = None, amount_raw: Optional[int] = None) -> Optional[int]:
+    if TOKEN_CONTRACT:
+        plans = get_vip_plan_prices_token()
+        if not plans:
+            return None
+        for days, price in plans.items():
+            expected = int(round(price * (10 ** TOKEN_DECIMALS)))
+            if amount_raw == expected:
+                return days
+    else:
+        plans = get_vip_plan_prices_native()
+        if not plans:
+            return None
+        for days, price in plans.items():
+            if amount_wei == _to_wei(price, 18):
+                return days
+    return None
+
+
 
 async def create_and_store_personal_invite(user_id: int) -> str:
     """
@@ -211,8 +283,8 @@ def vip_get(user_id: int) -> Optional['VipMembership']:
     
 
 
-def vip_upsert_start_or_extend(user_id: int, username: Optional[str], tx_hash: Optional[str], extra_days: int = 30) -> 'VipMembership':
-    now = now_utc()
+def vip_upsert_start_or_extend(user_id: int, username: Optional[str], tx_hash: Optional[str], plan: VipPlan) -> 'VipMembership':
+    now = now_utc(); days = PLAN_DAYS.get(plan, 90)
     with SessionLocal() as s:
         m = s.query(VipMembership).filter(VipMembership.user_id == user_id).first()
         if not m:
@@ -221,8 +293,9 @@ def vip_upsert_start_or_extend(user_id: int, username: Optional[str], tx_hash: O
                 username=username,
                 tx_hash=tx_hash,
                 start_at=now,
-                expires_at=now + timedelta(days=extra_days),
+                expires_at=now + timedelta(days=days),
                 active=True,
+                plan=plan.value,
             )
             s.add(m)
         else:
@@ -429,6 +502,7 @@ class VipMembership(Base):
     start_at = Column(DateTime, nullable=False, default=now_utc)
     expires_at = Column(DateTime, nullable=False)
     active = Column(Boolean, default=True)
+    plan = Column(String, default=VipPlan.TRIMESTRAL.value)
     created_at = Column(DateTime, default=now_utc)
     updated_at = Column(DateTime, default=now_utc, onupdate=now_utc)
     invite_link = Column(Text, nullable=True)  # << NOVO
@@ -620,8 +694,9 @@ async def assign_and_send_invite(user_id: int, username: Optional[str], tx_hash:
     with SessionLocal() as s:
         m = s.query(VipMembership).filter(VipMembership.user_id == user_id).first()
         if not m:
-            # cria/renova 30d por padrão e então gere link
-            m = vip_upsert_start_or_extend(user_id, username, tx_hash, extra_days=30)
+
+             # cria/renova plano trimestral por padrão e então gere link
+            m = vip_upsert_start_or_extend(user_id, username, tx_hash, VipPlan.TRIMESTRAL)
 
         # revoga o anterior, se existir
         if m.invite_link:
@@ -1233,7 +1308,11 @@ async def vip_set_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         dias = int(context.args[1])
     except Exception:
         return await update.effective_message.reply_text("Parâmetros inválidos.")
-    m = vip_upsert_start_or_extend(uid, None, None, extra_days=dias)
+    plan_map = {90: VipPlan.TRIMESTRAL, 180: VipPlan.SEMESTRAL, 365: VipPlan.ANUAL}
+    plan = plan_map.get(dias)
+    if not plan:
+        return await update.effective_message.reply_text("Dias devem ser 90, 180 ou 365.")
+    m = vip_upsert_start_or_extend(uid, None, None, plan)
     await update.effective_message.reply_text(
         f"✅ VIP válido até {m.expires_at.strftime('%d/%m/%Y')} ({human_left(m.expires_at)})"
     )
@@ -1614,6 +1693,18 @@ def _hex_to_int(h: Optional[str]) -> int:
 def _to_wei(amount_native: float, decimals: int = 18) -> int:
     return int(round(amount_native * (10 ** decimals)))
 
+PLAN_PRICE_WEI = {
+    VipPlan.TRIMESTRAL: _to_wei(70, 18),
+    VipPlan.SEMESTRAL: _to_wei(110, 18),
+    VipPlan.ANUAL: _to_wei(179, 18),
+    VipPlan.MENSAL: _to_wei(30,18),
+}
+
+def plan_from_amount(amount_wei: int) -> Optional[VipPlan]:
+    for plan, wei in PLAN_PRICE_WEI.items():
+        if amount_wei == wei:
+            return plan
+    return None
 async def rpc_call(method: str, params: list) -> Any:
     if not RPC_URL:
         raise RuntimeError("RPC_URL ausente")
@@ -1683,10 +1774,14 @@ async def verify_erc20_payment(tx_hash: str) -> Dict[str, Any]:
 async def verify_tx_any(tx_hash: str) -> Dict[str, Any]:
     if TOKEN_CONTRACT:
         res = await verify_erc20_payment(tx_hash)
-        if res.get("ok"): return res
-        return res
     else:
-        return await verify_native_payment(tx_hash)
+        res = await verify_native_payment(tx_hash)
+    if res.get("ok"):
+        plan_days = infer_plan_days(amount_wei=res.get("amount_wei"), amount_raw=res.get("amount_raw"))
+        res["plan_days"] = plan_days
+        if plan_days is None:
+            res["reason"] = res.get("reason") or "Valor não corresponde a nenhum plano"
+    return res
     
 
 # =========================
@@ -1718,8 +1813,8 @@ async def simular_tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             s.rollback()
             return await update.effective_message.reply_text("❌ Erro ao simular pagamento.")
 
-    # cria/renova VIP por 30 dias
-    m = vip_upsert_start_or_extend(user.id, user.username, tx_hash, extra_days=30)
+     # cria/renova VIP no plano trimestral
+    m = vip_upsert_start_or_extend(user.id, user.username, tx_hash, VipPlan.TRIMESTRAL)
 
     try:
         invite_link = await create_and_store_personal_invite(user.id)
@@ -1844,7 +1939,8 @@ async def tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         existing = s.query(Payment).filter(Payment.tx_hash == tx_hash).first()
 
     if existing and existing.status == "approved":
-        m = vip_upsert_start_or_extend(user.id, user.username, existing.tx_hash, extra_days=30)
+        plan = plan_from_amount(int(existing.amount or 0)) or VipPlan.TRIMESTRAL
+        m = vip_upsert_start_or_extend(user.id, user.username, existing.tx_hash, plan)
         try:
             invite_link = await create_and_store_personal_invite(user.id)
             await dm(user.id, f"✅ Seu pagamento já estava aprovado!\nVIP até {m.expires_at:%d/%m/%Y} ({human_left(m.expires_at)}).\nEntre no VIP: {invite_link}", parse_mode=None)
@@ -1863,22 +1959,15 @@ async def tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logging.exception("Erro verificando transação")
         return await msg.reply_text(f"❌ Erro ao verificar on-chain: {e}")
 
-    # Checagem de preço configurado (se houver)
+    # Checagem de plano
     paid_ok = res.get("ok", False)
+    plan_days = None
     if paid_ok:
-        if TOKEN_CONTRACT:
-            price_tok = get_vip_price_token()
-            if price_tok is not None:
-                amount_raw = res.get("amount_raw")
-                min_units  = int(round(price_tok * (10 ** TOKEN_DECIMALS)))
-                if amount_raw is None or amount_raw < min_units:
-                    paid_ok = False
-        else:
-            price_nat = get_vip_price_native()
-            if price_nat is not None:
-                amount_wei = res.get("amount_wei")
-                if amount_wei is None or amount_wei < _to_wei(price_nat, 18):
-                    paid_ok = False
+        plan_days = res.get("plan_days") or infer_plan_days(amount_wei=res.get("amount_wei"), amount_raw=res.get("amount_raw"))
+        if not plan_days:
+            logging.warning("Valor da transação não corresponde a nenhum plano: %s", res.get("amount_raw") or res.get("amount_wei"))
+            paid_ok = False
+            res["reason"] = res.get("reason") or "Valor não corresponde a nenhum plano"
 
     status = "approved" if (AUTO_APPROVE_CRYPTO and paid_ok) else "pending"
 
@@ -1901,7 +1990,9 @@ async def tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if status == "approved":
         try:
-            m = vip_upsert_start_or_extend(user.id, user.username, tx_hash, extra_days=30)
+            amt = int(res.get("amount_wei") or res.get("amount_raw") or 0)
+            plan = plan_from_amount(amt) or VipPlan.TRIMESTRAL
+            m = vip_upsert_start_or_extend(user.id, user.username, tx_hash, plan)
             invite_link = await create_and_store_personal_invite(user.id)
             await dm(
                 user.id,
@@ -1950,13 +2041,14 @@ async def aprovar_tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             p.status = "approved"
             p.decided_at = now_utc()
             s.commit()
-            vip_upsert_start_or_extend(uid, None, p.tx_hash, extra_days=30)
+            plan = plan_from_amount(int(p.amount or 0)) or VipPlan.TRIMESTRAL
+            vip_upsert_start_or_extend(uid, None, p.tx_hash, plan)
             txh = p.tx_hash
         except Exception as e:
             s.rollback()
             return await update.effective_message.reply_text(f"❌ Erro ao aprovar: {e}")
 
-    # cria/renova VIP 30 dias e vincula a hash aprovada
+       # cria/renova VIP conforme plano e vincula a hash aprovada
     try:
         # tenta pegar username atual via bot (se conseguir)
         try:
@@ -1965,7 +2057,7 @@ async def aprovar_tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             username = None
 
-        m = vip_upsert_start_or_extend(uid, username, txh, extra_days=30)
+        m = vip_upsert_start_or_extend(uid, username, txh, plan)
 
         invite_link = await create_and_store_personal_invite(uid)
         await application.bot.send_message(
@@ -2176,10 +2268,9 @@ async def crypto_webhook(request: Request):
         return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
 
     approved = bool(res.get("ok"))
-
-   
-
-
+    amt_val = int(res.get('amount_wei') or res.get('amount_raw') or amount or 0)
+    plan = plan_from_amount(amt_val) or VipPlan.TRIMESTRAL
+    
     with SessionLocal() as s:
         try:
             pay = s.query(Payment).filter(Payment.tx_hash == tx_hash).first()
@@ -2201,7 +2292,7 @@ async def crypto_webhook(request: Request):
             s.rollback()
             raise
 
-    # Se aprovado, renova VIP 30d e manda convite
+     # Se aprovado, renova VIP conforme plano e manda convite
     if approved:
         try:
             # melhor esforço para obter username atual
@@ -2211,12 +2302,12 @@ async def crypto_webhook(request: Request):
             except Exception:
                 username = None
 
-            vip_upsert_start_or_extend(int(uid), username, tx_hash, extra_days=30)
+            vip_upsert_start_or_extend(int(uid), username, tx_hash, plan)
             invite_link = await create_and_store_personal_invite(int(uid))
             await application.bot.send_message(
     chat_id=int(uid),
     text=(f"✅ Pagamento confirmado!\n"
-          f"Seu VIP foi ativado por 30 dias.\n"
+          f"Seu VIP foi ativado por {PLAN_DAYS[plan]} dias.\n"
           f"Entre no VIP: {invite_link}")
 )
 
