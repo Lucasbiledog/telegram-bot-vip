@@ -301,10 +301,11 @@ def vip_upsert_start_or_extend(user_id: int, username: Optional[str], tx_hash: O
         else:
             # Se ainda ativo, soma dias a partir do expires_at; senão reinicia a partir de agora
             base = m.expires_at if m.active and m.expires_at and m.expires_at > now else now
-            m.expires_at = base + timedelta(days=extra_days)
+            m.expires_at = base + timedelta(days=days)
             m.tx_hash = tx_hash or m.tx_hash
             m.active = True
             m.username = username or m.username
+            m.plan = plan.value
         s.commit(); s.refresh(m)
         return m
 
@@ -1308,10 +1309,10 @@ async def vip_set_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         dias = int(context.args[1])
     except Exception:
         return await update.effective_message.reply_text("Parâmetros inválidos.")
-    plan_map = {90: VipPlan.TRIMESTRAL, 180: VipPlan.SEMESTRAL, 365: VipPlan.ANUAL}
+    plan_map = {30: VipPlan.MENSAL, 90: VipPlan.TRIMESTRAL, 180: VipPlan.SEMESTRAL, 365: VipPlan.ANUAL}
     plan = plan_map.get(dias)
     if not plan:
-        return await update.effective_message.reply_text("Dias devem ser 90, 180 ou 365.")
+        return await update.effective_message.reply_text("Dias devem ser 30, 90, 180 ou 365 dias.")
     m = vip_upsert_start_or_extend(uid, None, None, plan)
     await update.effective_message.reply_text(
         f"✅ VIP válido até {m.expires_at.strftime('%d/%m/%Y')} ({human_left(m.expires_at)})"
@@ -1865,6 +1866,12 @@ async def pagar_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"✅ Aprovando, te envio o convite do VIP no privado."
     )
 
+    plan_lines = [
+        f"- {plan.name.title()}: {PLAN_DAYS[plan]} dias por {PLAN_PRICE_WEI[plan]/10**18} {TOKEN_SYMBOL}"
+        for plan in VipPlan
+    ]
+    texto += "\n\nPlanos:\n" + "\n".join(plan_lines)
+
     sent = await dm(user.id, texto)
 
     if chat.type != "private":
@@ -1990,6 +1997,7 @@ async def tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if status == "approved":
         try:
+            m = vip_upsert_start_or_extend(user.id, user.username, tx_hash, extra_days=plan_days)
             amt = int(res.get("amount_wei") or res.get("amount_raw") or 0)
             plan = plan_from_amount(amt) or VipPlan.TRIMESTRAL
             m = vip_upsert_start_or_extend(user.id, user.username, tx_hash, plan)
@@ -2268,6 +2276,13 @@ async def crypto_webhook(request: Request):
         return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
 
     approved = bool(res.get("ok"))
+    plan_days = None
+    if approved:
+        plan_days = res.get("plan_days") or infer_plan_days(amount_wei=res.get("amount_wei"), amount_raw=res.get("amount_raw"))
+        if not plan_days:
+            logging.warning("Webhook: valor da transação não corresponde a nenhum plano: %s", res.get("amount_raw") or res.get("amount_wei"))
+            approved = False
+            res["reason"] = res.get("reason") or "Valor não corresponde a nenhum plano"
     amt_val = int(res.get('amount_wei') or res.get('amount_raw') or amount or 0)
     plan = plan_from_amount(amt_val) or VipPlan.TRIMESTRAL
     
