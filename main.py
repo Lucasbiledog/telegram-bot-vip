@@ -1747,46 +1747,57 @@ async def fetch_price_usd(cfg: Dict[str, Any]) -> Optional[float]:
             r.raise_for_status()
             data = r.json()
             return data.get(asset_id, {}).get("usd")
-        except Exception as e:
+    except Exception as e:
         logging.warning("Falha ao obter cotação USD: %s", e)
-        return None
+        return Nonee
     
 async def fetch_price_usd_for_contract(contract_addr: str) -> Optional[Tuple[float, int]]:
-     """Retorna preço em USD e casas decimais para um contrato ERC-20.
+    """Retorna preço em USD e casas decimais para um contrato ERC-20.
 
     Busca o preço via ``simple/token_price`` e obtém os metadados do token
     em ``coins/{platform}/contract/{address}`` para descobrir as ``decimals``.
     Retorna ``(preço, decimals)`` quando ambos forem encontrados ou ``None``
     se qualquer chamada falhar.
     """
-     if not contract_addr:
+    if not contract_addr:
         return None
-     contract_addr = contract_addr.lower()
-     platform = COINGECKO_PLATFORM or "ethereum"
-     price_url = (
+    contract_addr = contract_addr.lower()
+    platform = COINGECKO_PLATFORM or "ethereum"
+    price_url = (
         "https://api.coingecko.com/api/v3/simple/token_price/"
         f"{platform}?contract_addresses={contract_addr}&vs_currencies=usd"
     )
-     meta_url = (
+    meta_url = (
         "https://api.coingecko.com/api/v3/coins/"
         f"{platform}/contract/{contract_addr}?localization=false&tickers=false"
         "&market_data=false&community_data=false&developer_data=false&sparkline=false"
     )
-     try:
+    try:
         async with httpx.AsyncClient(timeout=15) as client:
-            r = await client.get(url)
-            r.raise_for_status()
-            data = r.json()
-            info = data.get(contract_addr)
-            if not info:
+            price_resp, meta_resp = await asyncio.gather(
+                client.get(price_url),
+                client.get(meta_url),
+            )
+            price_resp.raise_for_status()
+            meta_resp.raise_for_status()
+
+            price_info = price_resp.json().get(contract_addr)
+            if not price_info:
                 return None
-            price = info.get("usd")
-            decimals = info.get("decimals")
+            price = price_info.get("usd")
+
+            meta = meta_resp.json()
+            decimals = (
+                meta.get("detail_platforms", {})
+                .get(platform, {})
+                .get("decimal_place")
+            )
+
             if price is None or decimals is None:
                 return None
-            return price, decimals
-    except Exception as e:
-        logging.warning("Falha ao obter cotação USD (token): %s", e)
+            return price, int(decimals)
+        except Exception as e:
+        logging.warning("Falha ao obter cotação USD/decimals (token): %s", e)
         return None
 async def rpc_call(cfg: Dict[str, Any], method: str, params: list) -> Any:
     rpc_url = cfg.get("rpc_url")
