@@ -2159,6 +2159,35 @@ async def cancel_tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             s.rollback()
             return await msg.reply_text(f"Erro ao remover: {e}")
         
+async def clear_tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = update.effective_message
+    user = update.effective_user
+    if not (user and is_admin(user.id)):
+        await msg.reply_text("Apenas admins.")
+        raise ApplicationHandlerStop
+    if not context.args:
+        return await msg.reply_text("Uso: /clear_tx <hash_da_transacao>")
+
+    tx_raw = context.args[0]
+    tx_hash = normalize_tx_hash(tx_raw)
+    if not tx_hash:
+        return await msg.reply_text("Hash inválida.")
+
+    with SessionLocal() as s:
+        p = s.query(Payment).filter(Payment.tx_hash == tx_hash).first()
+        if not p:
+            return await msg.reply_text("Nenhum registro encontrado para essa hash.")
+        if p.status != "rejected":
+            return await msg.reply_text("Apenas transações rejeitadas podem ser limpas.")
+        try:
+            s.delete(p)
+            s.commit()
+            return await msg.reply_text("Registro removido.")
+        except Exception as e:
+            s.rollback()
+            return await msg.reply_text(f"Erro ao remover: {e}")
+
+
 async def aprovar_tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not (update.effective_user and is_admin(update.effective_user.id)):
         await update.effective_message.reply_text("Apenas admins.")
@@ -2763,6 +2792,7 @@ async def on_startup():
     application.add_handler(CommandHandler("pagar", pagar_cmd), group=1)
     application.add_handler(CommandHandler("tx", tx_cmd), group=1)
     application.add_handler(CommandHandler("cancel_tx", cancel_tx_cmd), group=1)
+    application.add_handler(CommandHandler("clear_tx", clear_tx_cmd), group=1
     application.add_handler(CommandHandler("listar_pendentes", listar_pendentes_cmd), group=1)
     application.add_handler(CommandHandler("aprovar_tx", aprovar_tx_cmd), group=1)
     application.add_handler(CommandHandler("rejeitar_tx", rejeitar_tx_cmd), group=1)
