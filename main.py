@@ -2792,7 +2792,7 @@ async def on_startup():
     application.add_handler(CommandHandler("pagar", pagar_cmd), group=1)
     application.add_handler(CommandHandler("tx", tx_cmd), group=1)
     application.add_handler(CommandHandler("cancel_tx", cancel_tx_cmd), group=1)
-    application.add_handler(CommandHandler("clear_tx", clear_tx_cmd), group=1
+    application.add_handler(CommandHandler("clear_tx", clear_tx_cmd), group=1)
     application.add_handler(CommandHandler("listar_pendentes", listar_pendentes_cmd), group=1)
     application.add_handler(CommandHandler("aprovar_tx", aprovar_tx_cmd), group=1)
     application.add_handler(CommandHandler("rejeitar_tx", rejeitar_tx_cmd), group=1)
