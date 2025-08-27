@@ -1706,7 +1706,10 @@ async def novopack_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # Pagamento / Verificação on-chain (JSON-RPC)
 # =========================
 HEX_0X = "0x"
-TRANSFER_TOPIC = "0x40dDBD27F878d07808339F9965f013F1CBc2F812"  # keccak("Transfer(address,address,uint256)")
+# keccak("Transfer(address,address,uint256)")
+TRANSFER_TOPIC = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+# method selector for ERC-20 decimals()
+ERC20_DECIMALS_SELECTOR = "0x313ce567"
 
 def _hex_to_int(h: Optional[str]) -> int:
     if not h: return 0
@@ -1731,32 +1734,46 @@ def plan_from_amount(amount_usd: float) -> Optional[VipPlan]:
     return None
 
 async def fetch_price_usd(cfg: Dict[str, Any]) -> Optional[float]:
-    token_contract = cfg.get("token_contract")
+    """Obtém o preço em USD do ativo nativo configurado."""
     chain_name = cfg.get("chain_name", "").lower()
+    asset_id = COINGECKO_NATIVE_ID or chain_name
     try:
         async with httpx.AsyncClient(timeout=15) as client:
-            if token_contract:
-                platform = COINGECKO_PLATFORM or "ethereum"
-                url = (
-                    "https://api.coingecko.com/api/v3/simple/token_price/"
-                    f"{platform}?contract_addresses={token_contract}&vs_currencies=usd"
-                )
-                r = await client.get(url)
-                r.raise_for_status()
-                data = r.json()
-                f"{platform}?contract_addresses={token_contract}&vs_currencies=usd"
-            else:
-                asset_id = COINGECKO_NATIVE_ID or chain_name
-                url = (
-                    "https://api.coingecko.com/api/v3/simple/price?ids="
-                    f"{asset_id}&vs_currencies=usd"
-                )
-                r = await client.get(url)
-                r.raise_for_status()
-                data = r.json()
-                return data.get(asset_id, {}).get("usd")
+            url = (
+                "https://api.coingecko.com/api/v3/simple/price?ids="
+                f"{asset_id}&vs_currencies=usd"
+            )
+            r = await client.get(url)
+            r.raise_for_status()
+            data = r.json()
+            return data.get(asset_id, {}).get("usd")
+
+
+async def fetch_price_usd_for_contract(contract_addr: str) -> Optional[Tuple[float, int]]:
+    """Retorna preço em USD e decimals para um contrato ERC-20 no CoinGecko."""
+    if not contract_addr:
+        return None
+    contract_addr = contract_addr.lower()
+    platform = COINGECKO_PLATFORM or "ethereum"
+    url = (
+        "https://api.coingecko.com/api/v3/simple/token_price/"
+        f"{platform}?contract_addresses={contract_addr}&vs_currencies=usd"
+    )
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            r = await client.get(url)
+            r.raise_for_status()
+            data = r.json()
+            info = data.get(contract_addr)
+            if not info:
+                return None
+            price = info.get("usd")
+            decimals = info.get("decimals")
+            if price is None or decimals is None:
+                return None
+            return price, decimals
     except Exception as e:
-        logging.warning("Falha ao obter cotação USD: %s", e)
+        logging.warning("Falha ao obter cotação USD (token): %s", e)
         return None
 async def rpc_call(cfg: Dict[str, Any], method: str, params: list) -> Any:
     rpc_url = cfg.get("rpc_url")
@@ -1795,6 +1812,7 @@ async def verify_native_payment(cfg: Dict[str, Any], tx_hash: str) -> Dict[str, 
         "to": to_addr,
         "amount_wei": value_wei,
         "confirmations": confirmations,
+         "contract": token_contract,
     }
 
 def _topic_address(topic_hex: str) -> str:
@@ -1804,31 +1822,47 @@ def _topic_address(topic_hex: str) -> str:
     return addr.lower()
 
 async def verify_erc20_payment(cfg: Dict[str, Any], tx_hash: str) -> Dict[str, Any]:
-    token_contract = cfg.get("token_contract")
-    if not token_contract:
-        return {"ok": False, "reason": "TOKEN_CONTRACT não configurado"}
+    
     receipt = await rpc_call(cfg, "eth_getTransactionReceipt", [tx_hash])
     if not receipt or receipt.get("status") != "0x1":
         return {"ok": False, "reason": "Transação não confirmada/sucesso ainda"}
+    
     logs = receipt.get("logs", [])
-    found = None
+    wallet = cfg.get("wallet_address")
+    found: Optional[Dict[str, Any]] = None
+    reason = "Nenhum Transfer para a carteira"
     for lg in logs:
-        if (lg.get("address") or "").lower() != token_contract:
-            continue
+    
         topics = [t.lower() for t in lg.get("topics", [])]
         if not topics or topics[0] != TRANSFER_TOPIC:
             continue
         to_addr = _topic_address(topics[2]) if len(topics) >= 3 else ""
-        if to_addr == cfg.get("wallet_address"):
-            amount = _hex_to_int(lg.get("data"))
-            found = {"amount_raw": amount, "to": to_addr}
-            break
+        if to_addr != wallet:
+            continue
+        contract_addr = (lg.get("address") or "").lower()
+        amount = _hex_to_int(lg.get("data"))
+        try:
+            decimals_hex = await rpc_call(
+                cfg,
+                "eth_call",
+                [{"to": contract_addr, "data": ERC20_DECIMALS_SELECTOR}, "latest"],
+            )
+            decimals = _hex_to_int(decimals_hex)
+        except Exception:
+            decimals = 18
+        min_units = int(round(MIN_TOKEN_AMOUNT * (10 ** decimals)))
+        if amount < min_units:
+            reason = f"Quantidade de token abaixo do mínimo ({MIN_TOKEN_AMOUNT})"
+            continue
+        found = {
+            "amount_raw": amount,
+            "to": to_addr,
+            "contract": contract_addr,
+            "decimals": decimals,
+        }
+        break
     if not found:
-        return {"ok": False, "reason": "Nenhum Transfer para a carteira no contrato informado"}
-    decimals = cfg.get("decimals", 18)
-    min_units = int(round(MIN_TOKEN_AMOUNT * (10 ** decimals)))
-    if found["amount_raw"] < min_units:
-        return {"ok": False, "reason": f"Quantidade de token abaixo do mínimo ({MIN_TOKEN_AMOUNT})"}
+        return {"ok": False, "reason": reason}
     current_block_hex = await rpc_call(cfg, "eth_blockNumber", [])
     confirmations = _hex_to_int(current_block_hex) - _hex_to_int(receipt.get("blockNumber", "0x0"))
     if confirmations < MIN_CONFIRMATIONS:
@@ -1838,6 +1872,8 @@ async def verify_erc20_payment(cfg: Dict[str, Any], tx_hash: str) -> Dict[str, A
         "type": "erc20",
         "to": found["to"],
         "amount_raw": found["amount_raw"],
+        "contract": found["contract"],
+        "decimals": found["decimals"],
         "confirmations": confirmations,
     }
 
@@ -1852,13 +1888,21 @@ async def verify_tx_any(tx_hash: str) -> Dict[str, Any]:
             logging.warning("Erro verificando na cadeia %s: %s", cfg.get("chain_name"), e)
             continue
         if res.get("ok"):
+            if res.get("type") == "erc20":
+                 price_dec = await fetch_price_usd_for_contract(res.get("contract"))
+                 if not price_dec:
+                    res["ok"] = False
+                    res["reason"] = "Falha ao obter cotação do ativo"
+                    return res
+            price, decimals = price_dec
+            amount_native = res.get("amount_raw", 0) / (10 ** decimals)
+        else:
             price = await fetch_price_usd(cfg)
             if price is None:
-                res["ok"] = False
-                res["reason"] = "Falha ao obter cotação do ativo"
-                return res
-            if res.get("type") == "erc20":
-                amount_native = res.get("amount_raw", 0) / (10 ** cfg.get("decimals", 18))
+                    res["ok"] = False
+                    res["reason"] = "Falha ao obter cotação do ativo"
+                    return res
+                
             else:
                 amount_native = res.get("amount_wei", 0) / (10 ** 18)
             res["amount_usd"] = amount_native * price
