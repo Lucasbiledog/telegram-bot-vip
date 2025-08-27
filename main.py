@@ -26,6 +26,19 @@ from telegram.ext import (
     filters,
     ApplicationHandlerStop,
 )
+# === Imports ===
+import os, logging
+from sqlalchemy import create_engine, Column, Integer, BigInteger, String, Boolean, DateTime, Text
+from sqlalchemy.orm import sessionmaker, declarative_base
+from sqlalchemy.engine import URL
+
+# === Config DB ===
+DB_URL = os.getenv("DATABASE_URL", "sqlite:///./bot.db")
+url = URL.create(DB_URL) if not DB_URL.startswith("sqlite") else DB_URL
+engine = create_engine(url, pool_pre_ping=True, future=True)
+SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+Base = declarative_base()
+
 
 from sqlalchemy import text
 
