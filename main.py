@@ -158,7 +158,7 @@ def ensure_schema():
 # Helpers
 # =========================
 # Quais comandos usuários comuns podem usar
-ALLOWED_FOR_NON_ADM = {"pagar", "tx", "start" }
+ALLOWED_FOR_NON_ADM = {"pagar", "tx", "start", "cancel_tx" }
 
 def esc(s): return html.escape(str(s) if s is not None else "")
 def now_utc(): return dt.datetime.utcnow()
@@ -2132,7 +2132,33 @@ async def tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             pass
 
+async def cancel_tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = update.effective_message
+    user = update.effective_user
+    if not context.args:
+        return await msg.reply_text("Uso: /cancel_tx <hash_da_transacao>")
 
+    tx_raw = context.args[0]
+    tx_hash = normalize_tx_hash(tx_raw)
+    if not tx_hash:
+        return await msg.reply_text("Hash inválida.")
+
+    with SessionLocal() as s:
+        p = s.query(Payment).filter(Payment.tx_hash == tx_hash).first()
+        if not p:
+            return await msg.reply_text("Nenhum registro encontrado para essa hash.")
+        if p.status != "pending":
+            return await msg.reply_text("Apenas transações pendentes podem ser canceladas.")
+        if p.user_id != user.id and not is_admin(user.id):
+            return await msg.reply_text("Você não pode cancelar essa transação.")
+        try:
+            s.delete(p)
+            s.commit()
+            return await msg.reply_text("Registro removido. Envie a hash novamente com /tx.")
+        except Exception as e:
+            s.rollback()
+            return await msg.reply_text(f"Erro ao remover: {e}")
+        
 async def aprovar_tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not (update.effective_user and is_admin(update.effective_user.id)):
         await update.effective_message.reply_text("Apenas admins.")
@@ -2736,6 +2762,7 @@ async def on_startup():
 
     application.add_handler(CommandHandler("pagar", pagar_cmd), group=1)
     application.add_handler(CommandHandler("tx", tx_cmd), group=1)
+    application.add_handler(CommandHandler("cancel_tx", cancel_tx_cmd), group=1)
     application.add_handler(CommandHandler("listar_pendentes", listar_pendentes_cmd), group=1)
     application.add_handler(CommandHandler("aprovar_tx", aprovar_tx_cmd), group=1)
     application.add_handler(CommandHandler("rejeitar_tx", rejeitar_tx_cmd), group=1)
@@ -2760,7 +2787,13 @@ async def on_startup():
     schedule_pending_tx_recheck()
 
     application.job_queue.run_daily(vip_expiration_warn_job, time=dt.time(hour=9, minute=0, tzinfo=pytz.timezone("America/Sao_Paulo")), name="vip_warn")
-    application.job_queue.run_repeating(keepalive_job, interval=dt.timedelta(minutes=4), first=dt.timedelta(seconds=20), name="keepalive")
+    application.job_queue.run_repeating(
+        keepalive_job,
+        interval=dt.timedelta(minutes=4),
+        first=dt.timedelta(seconds=20),
+        name="keepalive",
+        job_kwargs={"misfire_grace_time": 10},
+    )
     logging.info("Handlers e jobs registrados.")
 
 # =========================
