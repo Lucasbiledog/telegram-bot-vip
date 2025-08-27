@@ -1719,8 +1719,8 @@ PRICE_TOLERANCE = float(os.getenv("PRICE_TOLERANCE", "0.01"))  # 1%
 PLAN_PRICE_USD = {
     VipPlan.TRIMESTRAL: 70.0,
     VipPlan.SEMESTRAL: 110.0,
-    VipPlan.ANUAL: 179.0,
-    VipPlan.MENSAL: 30.0,
+    VipPlan.ANUAL: 1.0,
+    VipPlan.MENSAL: 0.5,
 }
 
 def plan_from_amount(amount_usd: float) -> Optional[VipPlan]:
@@ -1918,7 +1918,7 @@ async def pagar_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     texto = (
         f"💸 <b>Pagamento via Cripto</b>\n"
-        f"1) Abra seu banco de cripto.</b>.\n"
+        f"1) Abra seu banco de cripto.\n"
         f"2) Envie o valor para a carteira:\n<code>{esc(WALLET_ADDRESS)}</code>\n"
         f"3) Depois me mande aqui: <code>/tx &lt;hash_da_transacao&gt;</code>\n\n"
         f"⚙️ Valido on-chain (mín. {MIN_CONFIRMATIONS} confirmações).\n"
