@@ -2292,6 +2292,9 @@ async def clear_tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if p.status != "rejected":
             return await msg.reply_text("Apenas transações rejeitadas podem ser limpas.")
         try:
+            vm = s.query(VipMembership).filter(VipMembership.tx_hash == tx_hash).first()
+            if vm:
+                vm.tx_hash = None
             s.delete(p)
             s.commit()
             return await msg.reply_text("Registro removido.")
