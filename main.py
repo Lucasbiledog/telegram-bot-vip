@@ -1,4 +1,3 @@
-# main.py
 import os
 import logging
 import asyncio
@@ -10,6 +9,7 @@ import html
 import json
 import pytz
 from dotenv import load_dotenv
+from config import CHAIN_CONFIGS
 
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import PlainTextResponse, JSONResponse
@@ -394,9 +394,12 @@ GROUP_FREE_ID          = int(os.getenv("GROUP_FREE_ID", "-1002932075976"))
 PORT = int(os.getenv("PORT", 8000))
 
 # Pagamento / Cadeia
-WALLET_ADDRESS = (os.getenv("WALLET_ADDRESS", "").strip() or "").lower()
-CHAIN_NAME     = os.getenv("CHAIN_NAME", "Polygon").strip()
-RPC_URL        = os.getenv("RPC_URL", "").strip()
+DEFAULT_CHAIN = CHAIN_CONFIGS[0] if CHAIN_CONFIGS else {}
+WALLET_ADDRESS = DEFAULT_CHAIN.get("wallet_address", "")
+CHAIN_NAME     = DEFAULT_CHAIN.get("chain_name", "")
+RPC_URL        = DEFAULT_CHAIN.get("rpc_url", "")
+TOKEN_CONTRACT = DEFAULT_CHAIN.get("token_contract")
+TOKEN_DECIMALS = DEFAULT_CHAIN.get("decimals", 18)
 AUTO_APPROVE_CRYPTO = os.getenv("AUTO_APPROVE_CRYPTO", "1") == "1"
 MIN_CONFIRMATIONS = int(os.getenv("MIN_CONFIRMATIONS", "5"))
 
@@ -404,8 +407,6 @@ MIN_CONFIRMATIONS = int(os.getenv("MIN_CONFIRMATIONS", "5"))
 MIN_NATIVE_AMOUNT = float(os.getenv("MIN_NATIVE_AMOUNT", "0"))  # em moeda nativa
 
 # ERC-20 (opcional)
-TOKEN_CONTRACT   = (os.getenv("TOKEN_CONTRACT", "").strip() or "").lower()
-TOKEN_DECIMALS   = int(os.getenv("TOKEN_DECIMALS", "18"))
 TOKEN_SYMBOL    = os.getenv("TOKEN_SYMBOL", "TOKEN").strip()
 COINGECKO_NATIVE_ID = os.getenv("COINGECKO_NATIVE_ID", CHAIN_NAME.lower()).strip().lower()
 COINGECKO_PLATFORM = os.getenv("COINGECKO_PLATFORM", "ethereum").strip().lower()
@@ -1729,21 +1730,23 @@ def plan_from_amount(amount_usd: float) -> Optional[VipPlan]:
             return plan
     return None
 
-async def fetch_price_usd() -> Optional[float]:
+async def fetch_price_usd(cfg: Dict[str, Any]) -> Optional[float]:
+    token_contract = cfg.get("token_contract")
+    chain_name = cfg.get("chain_name", "").lower()
     try:
         async with httpx.AsyncClient(timeout=15) as client:
-            if TOKEN_CONTRACT:
+            if token_contract:
                 platform = COINGECKO_PLATFORM or "ethereum"
                 url = (
                     "https://api.coingecko.com/api/v3/simple/token_price/"
-                    f"{platform}?contract_addresses={TOKEN_CONTRACT}&vs_currencies=usd"
+                    f"{platform}?contract_addresses={token_contract}&vs_currencies=usd"
                 )
                 r = await client.get(url)
                 r.raise_for_status()
                 data = r.json()
-                return data.get(TOKEN_CONTRACT.lower(), {}).get("usd")
+                f"{platform}?contract_addresses={token_contract}&vs_currencies=usd"
             else:
-                asset_id = COINGECKO_NATIVE_ID or CHAIN_NAME.lower()
+                asset_id = COINGECKO_NATIVE_ID or chain_name
                 url = (
                     "https://api.coingecko.com/api/v3/simple/price?ids="
                     f"{asset_id}&vs_currencies=usd"
@@ -1755,37 +1758,43 @@ async def fetch_price_usd() -> Optional[float]:
     except Exception as e:
         logging.warning("Falha ao obter cotação USD: %s", e)
         return None
-async def rpc_call(method: str, params: list) -> Any:
-    if not RPC_URL:
+async def rpc_call(cfg: Dict[str, Any], method: str, params: list) -> Any:
+    rpc_url = cfg.get("rpc_url")
+    if not rpc_url:
         raise RuntimeError("RPC_URL ausente")
     async with httpx.AsyncClient(timeout=15) as client:
-        r = await client.post(RPC_URL, json={"jsonrpc": "2.0", "id": 1, "method": method, "params": params})
+        r = await client.post(rpc_url, json={"jsonrpc": "2.0", "id": 1, "method": method, "params": params})
         r.raise_for_status()
         data = r.json()
         if "error" in data:
             raise RuntimeError(f"RPC error: {data['error']}")
         return data.get("result")
 
-async def verify_native_payment(tx_hash: str) -> Dict[str, Any]:
-    tx = await rpc_call("eth_getTransactionByHash", [tx_hash])
-    if not tx: return {"ok": False, "reason": "Transação não encontrada"}
+async def verify_native_payment(cfg: Dict[str, Any], tx_hash: str) -> Dict[str, Any]:
+    tx = await rpc_call(cfg, "eth_getTransactionByHash", [tx_hash])
+    if not tx:
+        return {"ok": False, "reason": "Transação não encontrada"}
     to_addr = (tx.get("to") or "").lower()
-    if to_addr != WALLET_ADDRESS:
+    if to_addr != cfg.get("wallet_address"):
         return {"ok": False, "reason": "Destinatário diferente da carteira configurada"}
     value_wei = _hex_to_int(tx.get("value"))
     min_wei = _to_wei(MIN_NATIVE_AMOUNT, 18)
     if value_wei < min_wei:
         return {"ok": False, "reason": f"Valor abaixo do mínimo ({MIN_NATIVE_AMOUNT})"}
-    receipt = await rpc_call("eth_getTransactionReceipt", [tx_hash])
+    receipt = await rpc_call(cfg, "eth_getTransactionReceipt", [tx_hash])
     if not receipt or receipt.get("status") != "0x1":
         return {"ok": False, "reason": "Transação não confirmada/sucesso ainda"}
-    current_block_hex = await rpc_call("eth_blockNumber", [])
+    current_block_hex = await rpc_call(cfg, "eth_blockNumber", [])
     confirmations = _hex_to_int(current_block_hex) - _hex_to_int(receipt.get("blockNumber", "0x0"))
     if confirmations < MIN_CONFIRMATIONS:
         return {"ok": False, "reason": f"Confirmações insuficientes ({confirmations}/{MIN_CONFIRMATIONS})"}
     return {
-        "ok": True, "type": "native", "from": (tx.get("from") or "").lower(),
-        "to": to_addr, "amount_wei": value_wei, "confirmations": confirmations
+        "ok": True,
+        "type": "native",
+        "from": (tx.get("from") or "").lower(),
+        "to": to_addr,
+        "amount_wei": value_wei,
+        "confirmations": confirmations,
     }
 
 def _topic_address(topic_hex: str) -> str:
@@ -1794,55 +1803,74 @@ def _topic_address(topic_hex: str) -> str:
     addr = "0x" + topic_hex[-40:]
     return addr.lower()
 
-async def verify_erc20_payment(tx_hash: str) -> Dict[str, Any]:
-    if not TOKEN_CONTRACT:
+async def verify_erc20_payment(cfg: Dict[str, Any], tx_hash: str) -> Dict[str, Any]:
+    token_contract = cfg.get("token_contract")
+    if not token_contract:
         return {"ok": False, "reason": "TOKEN_CONTRACT não configurado"}
-    receipt = await rpc_call("eth_getTransactionReceipt", [tx_hash])
+    receipt = await rpc_call(cfg, "eth_getTransactionReceipt", [tx_hash])
     if not receipt or receipt.get("status") != "0x1":
         return {"ok": False, "reason": "Transação não confirmada/sucesso ainda"}
     logs = receipt.get("logs", [])
     found = None
     for lg in logs:
-        if (lg.get("address") or "").lower() != TOKEN_CONTRACT: continue
+        if (lg.get("address") or "").lower() != token_contract:
+            continue
         topics = [t.lower() for t in lg.get("topics", [])]
-        if not topics or topics[0] != TRANSFER_TOPIC: continue
+        if not topics or topics[0] != TRANSFER_TOPIC:
+            continue
         to_addr = _topic_address(topics[2]) if len(topics) >= 3 else ""
-        if to_addr == WALLET_ADDRESS:
+        if to_addr == cfg.get("wallet_address"):
             amount = _hex_to_int(lg.get("data"))
-            found = {"amount_raw": amount, "to": to_addr}; break
+            found = {"amount_raw": amount, "to": to_addr}
+            break
     if not found:
         return {"ok": False, "reason": "Nenhum Transfer para a carteira no contrato informado"}
-    min_units = int(round(MIN_TOKEN_AMOUNT * (10 ** TOKEN_DECIMALS)))
+    decimals = cfg.get("decimals", 18)
+    min_units = int(round(MIN_TOKEN_AMOUNT * (10 ** decimals)))
     if found["amount_raw"] < min_units:
         return {"ok": False, "reason": f"Quantidade de token abaixo do mínimo ({MIN_TOKEN_AMOUNT})"}
-    current_block_hex = await rpc_call("eth_blockNumber", [])
+    current_block_hex = await rpc_call(cfg, "eth_blockNumber", [])
     confirmations = _hex_to_int(current_block_hex) - _hex_to_int(receipt.get("blockNumber", "0x0"))
     if confirmations < MIN_CONFIRMATIONS:
         return {"ok": False, "reason": f"Confirmações insuficientes ({confirmations}/{MIN_CONFIRMATIONS})"}
-    return {"ok": True, "type": "erc20", "to": found["to"], "amount_raw": found["amount_raw"], "confirmations": confirmations}
+    return {
+        "ok": True,
+        "type": "erc20",
+        "to": found["to"],
+        "amount_raw": found["amount_raw"],
+        "confirmations": confirmations,
+    }
 
 async def verify_tx_any(tx_hash: str) -> Dict[str, Any]:
-    if TOKEN_CONTRACT:
-        res = await verify_erc20_payment(tx_hash)
-    else:
-        res = await verify_native_payment(tx_hash)
-    if res.get("ok"):
-        price = await fetch_price_usd()
-        if price is None:
-            res["ok"] = False
-            res["reason"] = "Falha ao obter cotação do ativo"
+    for cfg in CHAIN_CONFIGS:
+        try:
+            if cfg.get("token_contract"):
+                res = await verify_erc20_payment(cfg, tx_hash)
+            else:
+                res = await verify_native_payment(cfg, tx_hash)
+        except Exception as e:
+            logging.warning("Erro verificando na cadeia %s: %s", cfg.get("chain_name"), e)
+            continue
+        if res.get("ok"):
+            price = await fetch_price_usd(cfg)
+            if price is None:
+                res["ok"] = False
+                res["reason"] = "Falha ao obter cotação do ativo"
+                return res
+            if res.get("type") == "erc20":
+                amount_native = res.get("amount_raw", 0) / (10 ** cfg.get("decimals", 18))
+            else:
+                amount_native = res.get("amount_wei", 0) / (10 ** 18)
+            res["amount_usd"] = amount_native * price
+            plan_days = infer_plan_days(amount_usd=res["amount_usd"])
+            res["plan_days"] = plan_days
+            if plan_days is None:
+                res["reason"] = res.get("reason") or "Valor não corresponde a nenhum plano"
+            res["chain_name"] = cfg.get("chain_name")
             return res
-        if "amount_raw" in res:
-            amount_native = res.get("amount_raw", 0) / (10 ** TOKEN_DECIMALS)
-        else:
-            amount_native = res.get("amount_wei", 0) / (10 ** 18)
-        res["amount_usd"] = amount_native * price
-        plan_days = infer_plan_days(amount_usd=res["amount_usd"])
-        res["plan_days"] = plan_days
-        if plan_days is None:
-            res["reason"] = res.get("reason") or "Valor não corresponde a nenhum plano"
-    return res
     
+
+
 
 # =========================
 # Pagamento – comandos
@@ -1880,7 +1908,7 @@ async def simular_tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         invite_link = await create_and_store_personal_invite(user.id)
         await dm(
     user.id,
-    f"✅ Pagamento confirmado na rede {CHAIN_NAME}!\n"
+    f"✅ Pagamento confirmado na rede {p.chain}!\n"
     f"VIP válido até {m.expires_at:%d/%m/%Y} ({human_left(m.expires_at)}).\n"
     f"Entre no VIP: {invite_link}",
     parse_mode=None
@@ -1892,7 +1920,7 @@ async def simular_tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         invite = await assign_and_send_invite(user.id, user.username, tx_hash)
         await dm(
     user.id,
-    f"✅ Pagamento confirmado na rede {CHAIN_NAME}!\n"
+    f"✅ Pagamento confirmado na rede {p.chain}!\n"
     f"VIP válido até {m.expires_at:%d/%m/%Y} ({human_left(m.expires_at)}).\n"
     f"Convite (válido 2h, uso único): {invite}",
     parse_mode=None
@@ -1909,19 +1937,22 @@ async def delete_later(chat_id: int, message_id: int, seconds: int = 5):
         pass
 
 async def pagar_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not WALLET_ADDRESS:
-        return await update.effective_message.reply_text("Método de pagamento não configurado. (WALLET_ADDRESS ausente)")
+    if not CHAIN_CONFIGS:
+        return await update.effective_message.reply_text(
+            "Método de pagamento não configurado. (CHAIN_CONFIGS ausente)"
+        )
 
     user = update.effective_user
     chat = update.effective_chat
     msg  = update.effective_message
+    wallets = [f"{cfg['chain_name']}: <code>{esc(cfg['wallet_address'])}</code>" for cfg in CHAIN_CONFIGS]
 
     texto = (
         f"💸 <b>Pagamento via Cripto</b>\n"
         f"1) Abra seu banco de cripto.\n"
-        f"2) Envie o valor para a carteira:\n<code>{esc(WALLET_ADDRESS)}</code>\n"
+        f"2) Envie o valor para <b>uma</b> das carteiras abaixo:\n" + "\n".join(wallets) + "\n"
         f"3) Depois me mande aqui: <code>/tx &lt;hash_da_transacao&gt;</code>\n\n"
-        f"⚙️ Valido on-chain (mín. {MIN_CONFIRMATIONS} confirmações).\n"
+        f"⚙️ Válido on-chain (mín. {MIN_CONFIRMATIONS} confirmações).\n"
         f"✅ Aprovando, te envio o convite do VIP no privado."
     )
 
@@ -2056,16 +2087,20 @@ async def tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 user_id=user.id,
                 username=user.username,
                 tx_hash=tx_hash,
-                chain=CHAIN_NAME,
+                chain=res.get("chain_name", CHAIN_NAME),
                 status=status,
                 amount=str(res.get("amount_usd") or ""),
                 decided_at=now_utc() if status == "approved" else None,
+                notes=res.get("reason") if status == "pending" else None,
             )
             s.add(p)
             s.commit()
         except Exception:
             s.rollback()
             raise
+    if status == "pending" and (res.get("reason") or "").startswith("Transação não encontrada"):
+        schedule_pending_tx_recheck()
+        
 
     if status == "approved":
         try:
@@ -2074,7 +2109,7 @@ async def tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             invite_link = await create_and_store_personal_invite(user.id)
             await dm(
                 user.id,
-                f"✅ Pagamento confirmado na rede {CHAIN_NAME}!\n",
+                f"✅ Pagamento confirmado na rede {res.get('chain_name', CHAIN_NAME)}!\n",
                 f"VIP válido até {m.expires_at:%d/%m/%Y} ({human_left(m.expires_at)}).\n",
                 f"Entre no VIP: {invite_link}",
                 parse_mode=None
@@ -2088,7 +2123,11 @@ async def tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await msg.reply_text(f"⏳ Hash recebido. Status: {human}")
         try:
             for aid in list_admin_ids():
-                txt = f"📥 Pagamento pendente:\nuser_id:{user.id} @{user.username or '-'}\nhash:{tx_hash}\ninfo:{human}"
+                txt = (
+                    "📥 Pagamento pendente:\n"
+                    f"user_id:{user.id} @{user.username or '-'}\n"
+                    f"hash:{tx_hash}\nrede:{res.get('chain_name')}\ninfo:{human}"
+                )
                 await dm(aid, txt, parse_mode=None)
         except Exception:
             pass
@@ -2141,10 +2180,13 @@ async def aprovar_tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         invite_link = await create_and_store_personal_invite(uid)
         await application.bot.send_message(
     chat_id=uid,
-    text=(f"✅ Pagamento aprovado!\n"
-          f"Seu VIP vai até {m.expires_at:%d/%m/%Y} ({human_left(m.expires_at)}).\n"
-          f"Entre no VIP: {invite_link}")
-)
+            text=(
+                f"✅ Pagamento aprovado na rede {p.chain}!\n"
+                f"Seu VIP vai até {m.expires_at:%d/%m/%Y} ({human_left(m.expires_at)}).\n"
+                f"Entre no VIP: {invite_link}"
+            ),
+        )
+
 
         await update.effective_message.reply_text(f"Aprovado e convite enviado para {uid}.")
     except Exception as e:
@@ -2176,6 +2218,81 @@ async def rejeitar_tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             s.rollback()
             await update.effective_message.reply_text(f"❌ Erro ao rejeitar: {e}")
 
+# ----- Verificação periódica de TX não encontradas
+JOB_PENDING_TX = "pending_tx_recheck"
+
+async def pending_tx_recheck_job(context: ContextTypes.DEFAULT_TYPE):
+    with SessionLocal() as s:
+        pendings = (
+            s.query(Payment)
+             .filter(Payment.status == "pending", Payment.notes.ilike("%Transação não encontrada%"))
+             .all()
+        )
+    if not pendings:
+        return
+    for p in pendings:
+        try:
+            res = await verify_tx_any(p.tx_hash)
+        except Exception:
+            logging.exception("Erro rechecando tx %s", p.tx_hash)
+            continue
+        if res.get("ok"):
+            plan = plan_from_amount(float(p.amount or 0)) or VipPlan.TRIMESTRAL
+            with SessionLocal() as s2:
+                try:
+                    pay = s2.query(Payment).filter(Payment.id == p.id).first()
+                    if pay:
+                        pay.status = "approved"
+                        pay.decided_at = now_utc()
+                        pay.notes = None
+                        s2.commit()
+                except Exception:
+                    s2.rollback()
+                    logging.exception("Erro atualizando pagamento %s", p.id)
+                    continue
+            try:
+                m = vip_upsert_start_or_extend(p.user_id, p.username, p.tx_hash, plan)
+                invite_link = await create_and_store_personal_invite(p.user_id)
+                await dm(
+                    p.user_id,
+                    f"✅ Pagamento confirmado na rede {CHAIN_NAME}!\n"
+                    f"VIP válido até {m.expires_at:%d/%m/%Y} ({human_left(m.expires_at)}).\n"
+                    f"Entre no VIP: {invite_link}",
+                    parse_mode=None,
+                )
+            except Exception:
+                logging.exception("Erro enviando invite recheck")
+        else:
+            with SessionLocal() as s2:
+                try:
+                    pay = s2.query(Payment).filter(Payment.id == p.id).first()
+                    if pay:
+                        pay.notes = res.get("reason")
+                        s2.commit()
+                except Exception:
+                    s2.rollback()
+                    logging.exception("Erro atualizando motivo pendente")
+    with SessionLocal() as s:
+        remaining = (
+            s.query(Payment)
+             .filter(Payment.status == "pending", Payment.notes.ilike("%Transação não encontrada%"))
+             .count()
+        )
+    if remaining:
+        context.job_queue.run_once(pending_tx_recheck_job, dt.timedelta(minutes=5), name=JOB_PENDING_TX)
+
+def schedule_pending_tx_recheck():
+    jq = application.job_queue
+    if jq.get_jobs_by_name(JOB_PENDING_TX):
+        return
+    with SessionLocal() as s:
+        exists = (
+            s.query(Payment)
+             .filter(Payment.status == "pending", Payment.notes.ilike("%Transação não encontrada%"))
+             .count()
+        )
+    if exists:
+        jq.run_once(pending_tx_recheck_job, dt.timedelta(minutes=5), name=JOB_PENDING_TX)
 # =========================
 # Mensagens agendadas / Jobs
 # =========================
@@ -2342,6 +2459,7 @@ async def crypto_webhook(request: Request):
 
     try:
         res = await verify_tx_any(tx_hash)
+        chain = res.get("chain_name", chain)
     except Exception as e:
         logging.exception("Erro verificando no webhook")
         return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
@@ -2371,17 +2489,23 @@ async def crypto_webhook(request: Request):
                     chain=chain,
                     status="approved" if approved else "pending",
                     decided_at=now_utc() if approved else None,
+                    notes=res.get("reason") if not approved else None,
                 )
                 s.add(pay)
             else:
                 pay.status = "approved" if approved else "pending"
                 pay.decided_at = now_utc() if approved else None
+                if not approved:
+                    pay.notes = res.get("reason")
             s.commit()
         except Exception:
             s.rollback()
             raise
 
-     # Se aprovado, renova VIP conforme plano e manda convite
+    if not approved and (res.get("reason") or "").startswith("Transação não encontrada"):
+        schedule_pending_tx_recheck()
+
+    # Se aprovado, renova VIP conforme plano e manda convite
     if approved:
         try:
             # melhor esforço para obter username atual
@@ -2395,7 +2519,7 @@ async def crypto_webhook(request: Request):
             invite_link = await create_and_store_personal_invite(int(uid))
             await application.bot.send_message(
     chat_id=int(uid),
-    text=(f"✅ Pagamento confirmado!\n"
+    text=(f"✅ Pagamento confirmado na rede {chain}!\n"
           f"Seu VIP foi ativado por {PLAN_DAYS[plan]} dias.\n"
           f"Entre no VIP: {invite_link}")
 )
@@ -2633,6 +2757,7 @@ async def on_startup():
     # Jobs
     await _reschedule_daily_packs()
     _register_all_scheduled_messages(application.job_queue)
+    schedule_pending_tx_recheck()
 
     application.job_queue.run_daily(vip_expiration_warn_job, time=dt.time(hour=9, minute=0, tzinfo=pytz.timezone("America/Sao_Paulo")), name="vip_warn")
     application.job_queue.run_repeating(keepalive_job, interval=dt.timedelta(minutes=4), first=dt.timedelta(seconds=20), name="keepalive")
