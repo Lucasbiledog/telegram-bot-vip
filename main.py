@@ -27,28 +27,29 @@ from telegram.ext import (
     ApplicationHandlerStop,
 )
 # === Imports ===
-from sqlalchemy import create_engine
-from sqlalchemy.engine import URL, make_url  # <- use isto
-from sqlalchemy.orm import declarative_base, sessionmaker
-
-DB_URL = os.getenv("DATABASE_URL", "sqlite:///./bot_data.db")
-url = make_url(DB_URL)
-
-if url.get_backend_name().startswith("sqlite"):
-    engine = create_engine(DB_URL, connect_args={"check_same_thread": False})
-else:
-    engine = create_engine(DB_URL, pool_pre_ping=True, pool_size=5, max_overflow=5)
+from sqlalchemy import (
+    create_engine,
+    Column,
+    Integer,
+    String,
+    DateTime,
+    Boolean,
+    ForeignKey,
+    Text,
+    BigInteger,
+    UniqueConstraint,
+    text,
+)
+from sqlalchemy.orm import declarative_base, sessionmaker, relationship
+from sqlalchemy.engine import make_url
 
 
 # === Config DB ===
 DB_URL = os.getenv("DATABASE_URL", "sqlite:///./bot.db")
-url = URL.create(DB_URL) if not DB_URL.startswith("sqlite") else DB_URL
+url = make_url(DB_URL)
 engine = create_engine(url, pool_pre_ping=True, future=True)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 Base = declarative_base()
-
-
-from sqlalchemy import text
 
 def ensure_bigint_columns():
     if not url.get_backend_name().startswith("postgresql"):
@@ -344,25 +345,6 @@ application = ApplicationBuilder().token(BOT_TOKEN).build()
 bot = None
 BOT_USERNAME = None
 
-# =========================
-# DB setup
-# =========================
-from sqlalchemy import (
-    create_engine, Column, Integer, String, DateTime, Boolean, ForeignKey, Text, BigInteger, UniqueConstraint, text
-)
-from sqlalchemy.orm import declarative_base, sessionmaker, relationship
-from sqlalchemy.engine import make_url
-
-DB_URL = os.getenv("DATABASE_URL", "sqlite:///./bot_data.db")
-url = make_url(DB_URL)
-
-if url.get_backend_name().startswith("sqlite"):
-    engine = create_engine(DB_URL, connect_args={"check_same_thread": False})
-else:
-    engine = create_engine(DB_URL, pool_pre_ping=True, pool_size=5, max_overflow=5)
-
-SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
-Base = declarative_base()
 
 class ConfigKV(Base):
     __tablename__ = "config_kv"
@@ -464,76 +446,6 @@ class ScheduledMessage(Base):
     created_at = Column(DateTime, default=now_utc)
     __table_args__ = (UniqueConstraint('id', name='uq_scheduled_messages_id'),)
 
-def ensure_bigint_columns():
-    if not url.get_backend_name().startswith("postgresql"):
-        return
-    try:
-        with engine.begin() as conn:
-            try:
-                conn.execute(text("ALTER TABLE admins ALTER COLUMN user_id TYPE BIGINT USING user_id::bigint"))
-            except Exception:
-                pass
-            try:
-                conn.execute(text("ALTER TABLE payments ALTER COLUMN user_id TYPE BIGINT USING user_id::bigint"))
-            except Exception:
-                pass
-    except Exception as e:
-        logging.warning("Falha em ensure_bigint_columns: %s", e)
-
-def ensure_pack_tier_column():
-    try:
-        with engine.begin() as conn:
-            try: conn.execute(text("ALTER TABLE packs ADD COLUMN tier VARCHAR"))
-            except Exception: pass
-            try: conn.execute(text("UPDATE packs SET tier='vip' WHERE tier IS NULL"))
-            except Exception: pass
-            try: conn.execute(text("ALTER TABLE scheduled_messages ADD COLUMN tier VARCHAR"))
-            except Exception: pass
-            try: conn.execute(text("UPDATE scheduled_messages SET tier='vip' WHERE tier IS NULL"))
-            except Exception: pass
-    except Exception:
-        pass
-
-def ensure_packfile_src_columns():
-    try:
-        with engine.begin() as conn:
-            try: conn.execute(text("ALTER TABLE pack_files ADD COLUMN src_chat_id BIGINT"))
-            except Exception: pass
-            try: conn.execute(text("ALTER TABLE pack_files ADD COLUMN src_message_id INTEGER"))
-            except Exception: pass
-    except Exception as e:
-        logging.warning("Falha em ensure_packfile_src_columns: %s", e)
-
-def ensure_vip_invite_column():
-    try:
-        with engine.begin() as conn:
-            try: conn.execute(text("ALTER TABLE vip_memberships ADD COLUMN invite_link TEXT"))
-            except Exception: pass
-    except Exception as e:
-        logging.warning("Falha ensure_vip_invite_column: %s", e)
-
-def init_db():
-    Base.metadata.create_all(bind=engine)
-    initial_admin_id = os.getenv("INITIAL_ADMIN_ID")
-    if initial_admin_id:
-        with SessionLocal() as s:
-            try:
-                uid = int(initial_admin_id)
-                if not s.query(Admin).filter(Admin.user_id == uid).first():
-                    s.add(Admin(user_id=uid))
-                    s.commit()
-            except Exception:
-                s.rollback()
-                raise
-    if not cfg_get("daily_pack_vip_hhmm"):  cfg_set("daily_pack_vip_hhmm", "09:00")
-    if not cfg_get("daily_pack_free_hhmm"): cfg_set("daily_pack_free_hhmm", "09:30")
-
-def ensure_schema():
-    Base.metadata.create_all(bind=engine)
-    ensure_bigint_columns()
-    ensure_pack_tier_column()
-    ensure_packfile_src_columns()
-    ensure_vip_invite_column()
 
 def scheduled_create(hhmm: str, text: str, tier: str = "vip", tz_name: str = "America/Sao_Paulo") -> 'ScheduledMessage':
     with SessionLocal() as s:
