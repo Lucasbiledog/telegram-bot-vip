@@ -2286,14 +2286,15 @@ async def clear_tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await msg.reply_text("Hash inválida.")
 
     with SessionLocal() as s:
-        p = s.query(Payment).filter(Payment.tx_hash == tx_hash).first()
-        if not p:
+        pays = s.query(Payment).filter(Payment.tx_hash == tx_hash).all()
+        vms = s.query(VipMembership).filter(VipMembership.tx_hash == tx_hash).all()
+        if not pays and not vms:
             return await msg.reply_text("Nenhum registro encontrado para essa hash.")
         try:
-            vm = s.query(VipMembership).filter(VipMembership.tx_hash == tx_hash).first()
-            if vm:
+            for p in pays:
+                s.delete(p)
+            for vm in vms:
                 vm.tx_hash = None
-            s.delete(p)
             s.commit()
             return await msg.reply_text("Registro removido.")
         except Exception as e:
