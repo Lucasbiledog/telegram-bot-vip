@@ -523,6 +523,70 @@ def ensure_vip_invite_column():
     except Exception as e:
         logging.warning("Falha em ensure_vip_invite_column: %s", e)
 
+from sqlalchemy import text
+
+def ensure_bigint_columns():
+    # Só faz sentido em Postgres
+    if not url.get_backend_name().startswith("postgresql"):
+        return
+    try:
+        with engine.begin() as conn:
+            try:
+                conn.execute(text(
+                    "ALTER TABLE admins ALTER COLUMN user_id TYPE BIGINT USING user_id::bigint"
+                ))
+            except Exception:
+                pass
+            try:
+                conn.execute(text(
+                    "ALTER TABLE payments ALTER COLUMN user_id TYPE BIGINT USING user_id::bigint"
+                ))
+            except Exception:
+                pass
+    except Exception as e:
+        logging.warning("Falha em ensure_bigint_columns: %s", e)
+
+def ensure_pack_tier_column():
+    try:
+        with engine.begin() as conn:
+            try: conn.execute(text("ALTER TABLE packs ADD COLUMN tier VARCHAR"))
+            except Exception: pass
+            try: conn.execute(text("UPDATE packs SET tier='vip' WHERE tier IS NULL"))
+            except Exception: pass
+            try: conn.execute(text("ALTER TABLE scheduled_messages ADD COLUMN tier VARCHAR"))
+            except Exception: pass
+            try: conn.execute(text("UPDATE scheduled_messages SET tier='vip' WHERE tier IS NULL"))
+            except Exception: pass
+    except Exception:
+        pass
+
+def ensure_packfile_src_columns():
+    try:
+        with engine.begin() as conn:
+            try: conn.execute(text("ALTER TABLE pack_files ADD COLUMN src_chat_id BIGINT"))
+            except Exception: pass
+            try: conn.execute(text("ALTER TABLE pack_files ADD COLUMN src_message_id INTEGER"))
+            except Exception: pass
+    except Exception as e:
+        logging.warning("Falha em ensure_packfile_src_columns: %s", e)
+
+def ensure_vip_invite_column():
+    try:
+        with engine.begin() as conn:
+            try: conn.execute(text("ALTER TABLE vip_memberships ADD COLUMN invite_link TEXT"))
+            except Exception: pass
+    except Exception as e:
+        logging.warning("Falha em ensure_vip_invite_column: %s", e)
+
+def ensure_schema():
+    # cria tabelas e aplica “mutações” tolerantes a erro
+    Base.metadata.create_all(bind=engine)
+    ensure_bigint_columns()
+    ensure_pack_tier_column()
+    ensure_packfile_src_columns()
+    ensure_vip_invite_column()
+        
+
 # chame junto com as outras ensures
 ensure_schema()
 init_db()
@@ -578,7 +642,9 @@ def init_db():
     if not cfg_get("daily_pack_vip_hhmm"):  cfg_set("daily_pack_vip_hhmm", "09:00")
     if not cfg_get("daily_pack_free_hhmm"): cfg_set("daily_pack_free_hhmm", "09:30")
 
-ensure_bigint_columns(); ensure_pack_tier_column(); ensure_packfile_src_columns(); init_db()
+ensure_schema()
+init_db()
+
 
 # =========================
 # DB helpers
