@@ -78,10 +78,53 @@ def get_vip_price_token() -> Optional[float]:
 def set_vip_price_token(value: float):
     cfg_set("vip_price_token", str(value))
 
+
+async def create_and_store_personal_invite(user_id: int) -> str:
+    """
+    Cria um link exclusivo (1 uso) que expira junto do VIP e salva em VipMembership.invite_link.
+    Retorna a URL do convite.
+    """
+    m = vip_get(user_id)
+    if not m or not m.active or not m.expires_at:
+        # só cria se o VIP estiver ativo
+        raise RuntimeError("VIP inativo ou sem data de expiração")
+
+    expire_ts = int(m.expires_at.timestamp())
+
+    invite = await application.bot.create_chat_invite_link(
+        chat_id=GROUP_VIP_ID,
+        expire_date=expire_ts,
+        member_limit=1
+    )
+
+    with SessionLocal() as s:
+        vm = s.query(VipMembership).filter(VipMembership.user_id == user_id).first()
+        if vm:
+            vm.invite_link = invite.invite_link
+            s.commit()
+
+    return invite.invite_link
+
+
 # ----- Assinaturas
 def vip_get(user_id: int) -> Optional['VipMembership']:
     with SessionLocal() as s:
         return s.query(VipMembership).filter(VipMembership.user_id == user_id).first()
+    
+    
+def ensure_vip_invite_column():
+    try:
+        with engine.begin() as conn:
+            try:
+                conn.execute(text("ALTER TABLE vip_memberships ADD COLUMN invite_link VARCHAR"))
+            except Exception:
+                pass
+    except Exception as e:
+        logging.warning("Falha ensure_vip_invite_column: %s", e)
+
+# chame junto das outras ensures, antes do init_db():
+ensure_vip_invite_column()
+
 
 def vip_upsert_start_or_extend(user_id: int, username: Optional[str], tx_hash: Optional[str], extra_days: int = 30) -> 'VipMembership':
     now = now_utc()
@@ -316,12 +359,13 @@ class VipMembership(Base):
     id = Column(Integer, primary_key=True)
     user_id = Column(BigInteger, index=True, unique=True)
     username = Column(String, nullable=True)
-    tx_hash = Column(String, nullable=True)  # última transação que ativou/renovou
+    tx_hash = Column(String, nullable=True)
     start_at = Column(DateTime, nullable=False, default=now_utc)
     expires_at = Column(DateTime, nullable=False)
     active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=now_utc)
     updated_at = Column(DateTime, default=now_utc, onupdate=now_utc)
+    invite_link = Column(String, nullable=True)  # <<<<< NOVO
 
 
 
@@ -399,6 +443,24 @@ def scheduled_delete(sid: int) -> bool:
         except Exception:
             s.rollback()
             raise
+
+
+def ensure_vip_invite_column():
+    try:
+        with engine.begin() as conn:
+            try:
+                conn.execute(text("ALTER TABLE vip_memberships ADD COLUMN invite_link VARCHAR"))
+            except Exception:
+                pass
+    except Exception as e:
+        logging.warning("Falha em ensure_vip_invite_column: %s", e)
+
+# chame junto com as outras ensures
+ensure_bigint_columns()
+ensure_pack_tier_column()
+ensure_packfile_src_columns()
+ensure_vip_invite_column()  # <<<<<
+init_db()
 
 
 def ensure_bigint_columns():
@@ -529,6 +591,59 @@ def remove_admin_db(user_id: int) -> bool:
             s.rollback()
             raise
 
+
+async def create_user_invite_link(user_id: int, validity_hours: int = 2, single_use: bool = True, join_request: bool = True) -> str:
+    """
+    Cria um link de convite para o grupo VIP:
+    - expira em `validity_hours`
+    - uso único (member_limit=1) se `single_use=True`
+    - em modo 'pedido de entrada' se `join_request=True` (recomendado)
+    """
+    expire_ts = int((now_utc() + dt.timedelta(hours=validity_hours)).timestamp())
+    try:
+        link = await application.bot.create_chat_invite_link(
+            chat_id=GROUP_VIP_ID,
+            expire_date=expire_ts,
+            member_limit=1 if single_use else None,
+            creates_join_request=join_request
+        )
+        return link.invite_link
+    except Exception as e:
+        logging.exception("create_user_invite_link falhou")
+        # fallback absoluto (não-recomendado): link geral
+        return await application.bot.export_chat_invite_link(chat_id=GROUP_VIP_ID)
+
+async def revoke_invite_link(invite_link: str):
+    try:
+        await application.bot.revoke_chat_invite_link(chat_id=GROUP_VIP_ID, invite_link=invite_link)
+    except Exception as e:
+        # se já expirou/foi revogado, ignoramos
+        logging.debug(f"revoke_invite_link: {e}")
+
+async def assign_and_send_invite(user_id: int, username: Optional[str], tx_hash: Optional[str]) -> str:
+    """
+    Gera um novo invite (expira em 2h, uso único, com join request),
+    revoga o anterior (se houver) e salva no registro do VIP.
+    Retorna o link para envio ao usuário.
+    """
+    with SessionLocal() as s:
+        m = s.query(VipMembership).filter(VipMembership.user_id == user_id).first()
+        if not m:
+            # cria/renova 30d por padrão e então gere link
+            m = vip_upsert_start_or_extend(user_id, username, tx_hash, extra_days=30)
+
+        # revoga o anterior, se existir
+        if m.invite_link:
+            try:
+                asyncio.create_task(revoke_invite_link(m.invite_link))
+            except Exception:
+                pass
+
+        # cria novo
+        new_link = await create_user_invite_link(user_id, validity_hours=2, single_use=True, join_request=True)
+        m.invite_link = new_link
+        s.commit()
+        return new_link
 
 def create_pack(title: str, header_message_id: Optional[int] = None, tier: str = "vip") -> 'Pack':
     with SessionLocal() as s:
@@ -1088,29 +1203,61 @@ async def vip_set_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception:
         return await update.effective_message.reply_text("Parâmetros inválidos.")
     m = vip_upsert_start_or_extend(uid, None, None, extra_days=dias)
+    try:
+    invite_link = await create_and_store_personal_invite(uid)
+    await dm(uid, f"✅ VIP válido até {m.expires_at:%d/%m/%Y}. Entre no VIP: {invite_link}", parse_mode=None)
+except Exception:
+    pass
+
     await update.effective_message.reply_text(
         f"✅ VIP válido até {m.expires_at.strftime('%d/%m/%Y')} ({human_left(m.expires_at)})"
     )
 
+
+
 async def vip_remove_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not (update.effective_user and is_admin(update.effective_user.id)):
         return await update.effective_message.reply_text("Apenas admins.")
+
     if not context.args:
         return await update.effective_message.reply_text("Uso: /vip_remove <user_id>")
+
     try:
         uid = int(context.args[0])
     except Exception:
         return await update.effective_message.reply_text("user_id inválido.")
+
+    # pega o registro antes de desativar (para ter o invite_link)
+    m = vip_get(uid)
+
+    # revoga link antigo se existir
+    if m and getattr(m, "invite_link", None):
+        try:
+            await revoke_invite_link(m.invite_link)
+        except Exception:
+            pass
+        # limpa o campo no banco
+        with SessionLocal() as s:
+            vm = s.query(VipMembership).filter(VipMembership.user_id == uid).first()
+            if vm:
+                vm.invite_link = None
+                s.commit()
+
+    # desativa VIP
     ok = vip_deactivate(uid)
+
     if ok:
+        # “kick técnico” para remover acesso atual, mesmo se ainda tiver link antigo em conversas
         try:
             await application.bot.ban_chat_member(chat_id=GROUP_VIP_ID, user_id=uid)
             await application.bot.unban_chat_member(chat_id=GROUP_VIP_ID, user_id=uid)
         except Exception:
             pass
-        await update.effective_message.reply_text("✅ VIP removido/desativado.")
+        return await update.effective_message.reply_text("✅ VIP removido/desativado.")
     else:
-        await update.effective_message.reply_text("Usuário não era VIP.")
+        return await update.effective_message.reply_text("Usuário não era VIP.")
+
+
 
 
 async def simularvip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1550,11 +1697,26 @@ async def simular_tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     m = vip_upsert_start_or_extend(user.id, user.username, tx_hash, extra_days=30)
 
     try:
-        invite = await application.bot.export_chat_invite_link(chat_id=GROUP_VIP_ID)
-        await dm(user.id, f"✅ SIMULAÇÃO de pagamento!\nVIP até {m.expires_at:%d/%m/%Y} ({human_left(m.expires_at)}).\nEntre no VIP: {invite}", parse_mode=None)
+        invite_link = await create_and_store_personal_invite(user.id)
+        await dm(
+    user.id,
+    f"✅ Pagamento confirmado na rede {CHAIN_NAME}!\n"
+    f"VIP válido até {m.expires_at:%d/%m/%Y} ({human_left(m.expires_at)}).\n"
+    f"Entre no VIP: {invite_link}",
+    parse_mode=None
+)
+
         await update.effective_message.reply_text("✅ Pagamento simulado com sucesso. Veja seu privado.")
     except Exception as e:
         await update.effective_message.reply_text(f"Simulado OK, mas falhou enviar convite: {e}")
+        invite = await assign_and_send_invite(user.id, user.username, tx_hash)
+        await dm(
+    user.id,
+    f"✅ Pagamento confirmado na rede {CHAIN_NAME}!\n"
+    f"VIP válido até {m.expires_at:%d/%m/%Y} ({human_left(m.expires_at)}).\n"
+    f"Convite (válido 2h, uso único): {invite}",
+    parse_mode=None
+)
 
 
 
@@ -1716,14 +1878,15 @@ async def tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     m = vip_upsert_start_or_extend(user.id, user.username, tx_hash, extra_days=30)
 
     try:
-        invite = await application.bot.export_chat_invite_link(chat_id=GROUP_VIP_ID)
+        invite_link = await create_and_store_personal_invite(user.id)
         await dm(
-            user.id,
-            f"✅ Pagamento confirmado na rede {CHAIN_NAME}!\n"
-            f"VIP válido até {m.expires_at:%d/%m/%Y} ({human_left(m.expires_at)}).\n"
-            f"Entre no VIP: {invite}",
-            parse_mode=None
-        )
+    user.id,
+    f"✅ Pagamento confirmado na rede {CHAIN_NAME}!\n"
+    f"VIP válido até {m.expires_at:%d/%m/%Y} ({human_left(m.expires_at)}).\n"
+    f"Entre no VIP: {invite_link}",
+    parse_mode=None
+)
+
         return await msg.reply_text("✅ Verifiquei sua transação e já liberei seu acesso. Confira seu privado.")
     except Exception as e:
         logging.exception("Erro enviando invite auto-approve")
@@ -2033,11 +2196,14 @@ async def aprovar_tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         m = vip_upsert_start_or_extend(uid, username, txh, extra_days=30)
 
-        invite = await application.bot.export_chat_invite_link(chat_id=GROUP_VIP_ID)
+        invite_link = await create_and_store_personal_invite(uid)
         await application.bot.send_message(
-            chat_id=uid,
-            text=f"✅ Pagamento aprovado!\nSeu VIP vai até {m.expires_at:%d/%m/%Y} ({human_left(m.expires_at)}).\nEntre no VIP: {invite}"
-        )
+    chat_id=uid,
+    text=(f"✅ Pagamento aprovado!\n"
+          f"Seu VIP vai até {m.expires_at:%d/%m/%Y} ({human_left(m.expires_at)}).\n"
+          f"Entre no VIP: {invite_link}")
+)
+
         await update.effective_message.reply_text(f"Aprovado e convite enviado para {uid}.")
     except Exception as e:
         logging.exception("Erro enviando invite")
@@ -2275,12 +2441,14 @@ async def crypto_webhook(request: Request):
                 username = None
 
             vip_upsert_start_or_extend(int(uid), username, tx_hash, extra_days=30)
-
-            invite = await application.bot.export_chat_invite_link(chat_id=GROUP_VIP_ID)
+            invite_link = await create_and_store_personal_invite(int(uid))
             await application.bot.send_message(
-                chat_id=int(uid),
-                text=f"✅ Pagamento confirmado!\nSeu VIP foi ativado por 30 dias.\nEntre no VIP: {invite}"
-            )
+    chat_id=int(uid),
+    text=(f"✅ Pagamento confirmado!\n"
+          f"Seu VIP foi ativado por 30 dias.\n"
+          f"Entre no VIP: {invite_link}")
+)
+
         except Exception:
             logging.exception("Erro enviando invite")
 
