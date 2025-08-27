@@ -1287,7 +1287,13 @@ async def vip_list_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     linhas = []
     for m in membros:
         hash_abrev = (m.tx_hash[:10] + '...') if m.tx_hash else '-'
-        user = f"@{m.username}" if m.username else '-'
+        if m.username:
+            if re.fullmatch(r"[A-Za-z0-9_]+", m.username):
+                user = f"@{m.username}"
+            else:
+                user = m.username
+        else:
+            user = '-'
         linhas.append(f"{m.user_id} | {user} | {hash_abrev} | {human_left(m.expires_at)}")
     await update.effective_message.reply_text("\n".join(linhas))
 
@@ -1320,7 +1326,7 @@ async def vip_set_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await update.effective_message.reply_text("Parâmetros inválidos.")
     try:
         chat = await context.bot.get_chat(uid)
-        username = chat.username
+        username = chat.username or chat.full_name
     except Exception:
         username = None
     plan_map = {30: VipPlan.MENSAL, 90: VipPlan.TRIMESTRAL, 180: VipPlan.SEMESTRAL, 365: VipPlan.ANUAL}
