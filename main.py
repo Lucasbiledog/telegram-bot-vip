@@ -1868,6 +1868,7 @@ async def verify_tx_any(tx_hash: str) -> Dict[str, Any]:
                 res["reason"] = res.get("reason") or "Valor não corresponde a nenhum plano"
             res["chain_name"] = cfg.get("chain_name")
             return res
+            return {"ok": False, "reason": "Transação não encontrada em nenhuma cadeia."}
     
 
 
@@ -2065,6 +2066,8 @@ async def tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logging.exception("Erro verificando transação")
         return await msg.reply_text(f"❌ Erro ao verificar on-chain: {e}")
+    if res is None:
+        return await msg.reply_text("❌ Transação não encontrada em nenhuma cadeia.")
 
     # Checagem de plano
     paid_ok = res.get("ok", False)
