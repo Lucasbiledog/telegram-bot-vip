@@ -1747,19 +1747,32 @@ async def fetch_price_usd(cfg: Dict[str, Any]) -> Optional[float]:
             r.raise_for_status()
             data = r.json()
             return data.get(asset_id, {}).get("usd")
-
-
-async def fetch_price_usd_for_contract(contract_addr: str) -> Optional[Tuple[float, int]]:
-    """Retorna preço em USD e decimals para um contrato ERC-20 no CoinGecko."""
-    if not contract_addr:
+        except Exception as e:
+        logging.warning("Falha ao obter cotação USD: %s", e)
         return None
-    contract_addr = contract_addr.lower()
-    platform = COINGECKO_PLATFORM or "ethereum"
-    url = (
+    
+async def fetch_price_usd_for_contract(contract_addr: str) -> Optional[Tuple[float, int]]:
+     """Retorna preço em USD e casas decimais para um contrato ERC-20.
+
+    Busca o preço via ``simple/token_price`` e obtém os metadados do token
+    em ``coins/{platform}/contract/{address}`` para descobrir as ``decimals``.
+    Retorna ``(preço, decimals)`` quando ambos forem encontrados ou ``None``
+    se qualquer chamada falhar.
+    """
+     if not contract_addr:
+        return None
+     contract_addr = contract_addr.lower()
+     platform = COINGECKO_PLATFORM or "ethereum"
+     price_url = (
         "https://api.coingecko.com/api/v3/simple/token_price/"
         f"{platform}?contract_addresses={contract_addr}&vs_currencies=usd"
     )
-    try:
+     meta_url = (
+        "https://api.coingecko.com/api/v3/coins/"
+        f"{platform}/contract/{contract_addr}?localization=false&tickers=false"
+        "&market_data=false&community_data=false&developer_data=false&sparkline=false"
+    )
+     try:
         async with httpx.AsyncClient(timeout=15) as client:
             r = await client.get(url)
             r.raise_for_status()
@@ -1849,7 +1862,9 @@ async def verify_erc20_payment(cfg: Dict[str, Any], tx_hash: str) -> Dict[str, A
             )
             decimals = _hex_to_int(decimals_hex)
         except Exception:
-            decimals = 18
+            decimals = cfg.get("decimals")
+            if decimals is None:
+                return {"ok": False, "reason": "Falha ao obter decimals do token"}
         min_units = int(round(MIN_TOKEN_AMOUNT * (10 ** decimals)))
         if amount < min_units:
             reason = f"Quantidade de token abaixo do mínimo ({MIN_TOKEN_AMOUNT})"
@@ -1887,32 +1902,32 @@ async def verify_tx_any(tx_hash: str) -> Dict[str, Any]:
         except Exception as e:
             logging.warning("Erro verificando na cadeia %s: %s", cfg.get("chain_name"), e)
             continue
-        if res.get("ok"):
-            if res.get("type") == "erc20":
-                 price_dec = await fetch_price_usd_for_contract(res.get("contract"))
-                 if not price_dec:
-                    res["ok"] = False
-                    res["reason"] = "Falha ao obter cotação do ativo"
-                    return res
+        if not res.get("ok"):
+            continue
+        if res.get("type") == "erc20":
+            price_dec = await fetch_price_usd_for_contract(res.get("contract"))
+            if not price_dec:
+                res["ok"] = False
+                res["reason"] = "Falha ao obter cotação do ativo"
+                return res
             price, decimals = price_dec
+            res["decimals"] = decimals
             amount_native = res.get("amount_raw", 0) / (10 ** decimals)
         else:
             price = await fetch_price_usd(cfg)
             if price is None:
-                    res["ok"] = False
-                    res["reason"] = "Falha ao obter cotação do ativo"
-                    return res
-                
-            else:
-                amount_native = res.get("amount_wei", 0) / (10 ** 18)
-            res["amount_usd"] = amount_native * price
-            plan_days = infer_plan_days(amount_usd=res["amount_usd"])
-            res["plan_days"] = plan_days
-            if plan_days is None:
-                res["reason"] = res.get("reason") or "Valor não corresponde a nenhum plano"
-            res["chain_name"] = cfg.get("chain_name")
-            return res
-            return {"ok": False, "reason": "Transação não encontrada em nenhuma cadeia."}
+                res["ok"] = False
+                res["reason"] = "Falha ao obter cotação do ativo"
+                return res
+            amount_native = res.get("amount_wei", 0) / (10 ** 18)
+        res["amount_usd"] = amount_native * price
+        plan_days = infer_plan_days(amount_usd=res["amount_usd"])
+        res["plan_days"] = plan_days
+        if plan_days is None:
+            res["reason"] = res.get("reason") or "Valor não corresponde a nenhum plano"
+        res["chain_name"] = cfg.get("chain_name")
+        return res
+    return {"ok": False, "reason": "Transação não encontrada em nenhuma cadeia."}
     
 
 
