@@ -228,7 +228,14 @@ def get_vip_plan_prices_token() -> Dict[int, float]:
         logging.warning("vip_plan_prices_token inválido: %s", v)
         return {}
 
-def infer_plan_days(amount_wei: Optional[int] = None, amount_raw: Optional[int] = None) -> Optional[int]:
+def infer_plan_days(
+    amount_usd: Optional[float] = None,
+    amount_wei: Optional[int] = None,
+    amount_raw: Optional[int] = None,
+) -> Optional[int]:
+    if amount_usd is not None:
+        plan = plan_from_amount(amount_usd)
+        return PLAN_DAYS.get(plan) if plan else None
     if TOKEN_CONTRACT:
         plans = get_vip_plan_prices_token()
         if not plans:
@@ -400,7 +407,8 @@ MIN_NATIVE_AMOUNT = float(os.getenv("MIN_NATIVE_AMOUNT", "0"))  # em moeda nativ
 TOKEN_CONTRACT   = (os.getenv("TOKEN_CONTRACT", "").strip() or "").lower()
 TOKEN_DECIMALS   = int(os.getenv("TOKEN_DECIMALS", "18"))
 TOKEN_SYMBOL    = os.getenv("TOKEN_SYMBOL", "TOKEN").strip()
-MIN_TOKEN_AMOUNT = float(os.getenv("MIN_TOKEN_AMOUNT", "0"))
+COINGECKO_NATIVE_ID = os.getenv("COINGECKO_NATIVE_ID", CHAIN_NAME.lower()).strip().lower()
+COINGECKO_PLATFORM = os.getenv("COINGECKO_PLATFORM", "ethereum").strip().lower()
 
 FREE_PREVIEW_TEXT = os.getenv(
     "FREE_PREVIEW_TEXT",
@@ -1695,18 +1703,47 @@ def _hex_to_int(h: Optional[str]) -> int:
 def _to_wei(amount_native: float, decimals: int = 18) -> int:
     return int(round(amount_native * (10 ** decimals)))
 
-PLAN_PRICE_WEI = {
-    VipPlan.TRIMESTRAL: _to_wei(70, TOKEN_DECIMALS),
-    VipPlan.SEMESTRAL: _to_wei(110, TOKEN_DECIMALS),
-    VipPlan.ANUAL: _to_wei(179, TOKEN_DECIMALS),
-    VipPlan.MENSAL: _to_wei(30, TOKEN_DECIMALS),
+PRICE_TOLERANCE = float(os.getenv("PRICE_TOLERANCE", "0.01"))  # 1%
+
+PLAN_PRICE_USD = {
+    VipPlan.TRIMESTRAL: 70.0,
+    VipPlan.SEMESTRAL: 110.0,
+    VipPlan.ANUAL: 179.0,
+    VipPlan.MENSAL: 30.0,
 }
 
-def plan_from_amount(amount_wei: int) -> Optional[VipPlan]:
-    for plan, wei in PLAN_PRICE_WEI.items():
-        if amount_wei == wei:
+def plan_from_amount(amount_usd: float) -> Optional[VipPlan]:
+    for plan, price in PLAN_PRICE_USD.items():
+        if abs(amount_usd - price) <= price * PRICE_TOLERANCE:
             return plan
     return None
+
+async def fetch_price_usd() -> Optional[float]:
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            if TOKEN_CONTRACT:
+                platform = COINGECKO_PLATFORM or "ethereum"
+                url = (
+                    "https://api.coingecko.com/api/v3/simple/token_price/"
+                    f"{platform}?contract_addresses={TOKEN_CONTRACT}&vs_currencies=usd"
+                )
+                r = await client.get(url)
+                r.raise_for_status()
+                data = r.json()
+                return data.get(TOKEN_CONTRACT.lower(), {}).get("usd")
+            else:
+                asset_id = COINGECKO_NATIVE_ID or CHAIN_NAME.lower()
+                url = (
+                    "https://api.coingecko.com/api/v3/simple/price?ids="
+                    f"{asset_id}&vs_currencies=usd"
+                )
+                r = await client.get(url)
+                r.raise_for_status()
+                data = r.json()
+                return data.get(asset_id, {}).get("usd")
+    except Exception as e:
+        logging.warning("Falha ao obter cotação USD: %s", e)
+        return None
 async def rpc_call(method: str, params: list) -> Any:
     if not RPC_URL:
         raise RuntimeError("RPC_URL ausente")
@@ -1779,7 +1816,17 @@ async def verify_tx_any(tx_hash: str) -> Dict[str, Any]:
     else:
         res = await verify_native_payment(tx_hash)
     if res.get("ok"):
-        plan_days = infer_plan_days(amount_wei=res.get("amount_wei"), amount_raw=res.get("amount_raw"))
+        price = await fetch_price_usd()
+        if price is None:
+            res["ok"] = False
+            res["reason"] = "Falha ao obter cotação do ativo"
+            return res
+        if "amount_raw" in res:
+            amount_native = res.get("amount_raw", 0) / (10 ** TOKEN_DECIMALS)
+        else:
+            amount_native = res.get("amount_wei", 0) / (10 ** 18)
+        res["amount_usd"] = amount_native * price
+        plan_days = infer_plan_days(amount_usd=res["amount_usd"])
         res["plan_days"] = plan_days
         if plan_days is None:
             res["reason"] = res.get("reason") or "Valor não corresponde a nenhum plano"
@@ -1868,11 +1915,7 @@ async def pagar_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     plan_lines = [
-         (
-            f"- {plan.name.title()}: {PLAN_DAYS[plan]} dias por "
-            f"{format(PLAN_PRICE_WEI[plan] / (10 ** TOKEN_DECIMALS), '.6f').rstrip('0').rstrip('.')} "
-            f"{TOKEN_SYMBOL}"
-        )
+          f"- {plan.name.title()}: {PLAN_DAYS[plan]} dias por ${PLAN_PRICE_USD[plan]:.2f} USD"
         for plan in VipPlan
     ]
     texto += "\n\nPlanos:\n" + "\n".join(plan_lines)
@@ -1951,7 +1994,7 @@ async def tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         existing = s.query(Payment).filter(Payment.tx_hash == tx_hash).first()
 
     if existing and existing.status == "approved":
-        plan = plan_from_amount(int(existing.amount or 0)) or VipPlan.TRIMESTRAL
+        plan = plan_from_amount(float(existing.amount or 0)) or VipPlan.TRIMESTRAL
         m = vip_upsert_start_or_extend(user.id, user.username, existing.tx_hash, plan)
         try:
             invite_link = await create_and_store_personal_invite(user.id)
@@ -1975,9 +2018,12 @@ async def tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     paid_ok = res.get("ok", False)
     plan_days = None
     if paid_ok:
-        plan_days = res.get("plan_days") or infer_plan_days(amount_wei=res.get("amount_wei"), amount_raw=res.get("amount_raw"))
+        plan_days = res.get("plan_days") or infer_plan_days(amount_usd=res.get("amount_usd"))
         if not plan_days:
-            logging.warning("Valor da transação não corresponde a nenhum plano: %s", res.get("amount_raw") or res.get("amount_wei"))
+            logging.warning(
+                "Valor da transação não corresponde a nenhum plano: %s",
+                res.get("amount_usd"),
+            )
             paid_ok = False
             res["reason"] = res.get("reason") or "Valor não corresponde a nenhum plano"
 
@@ -1991,7 +2037,7 @@ async def tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 tx_hash=tx_hash,
                 chain=CHAIN_NAME,
                 status=status,
-                amount=str(res.get("amount_wei") or res.get("amount_raw") or ""),
+                amount=str(res.get("amount_usd") or ""),
                 decided_at=now_utc() if status == "approved" else None,
             )
             s.add(p)
@@ -2054,7 +2100,7 @@ async def aprovar_tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             p.status = "approved"
             p.decided_at = now_utc()
             s.commit()
-            plan = plan_from_amount(int(p.amount or 0)) or VipPlan.TRIMESTRAL
+            plan = plan_from_amount(float(p.amount or 0)) or VipPlan.TRIMESTRAL
             vip_upsert_start_or_extend(uid, None, p.tx_hash, plan)
             txh = p.tx_hash
         except Exception as e:
@@ -2283,12 +2329,15 @@ async def crypto_webhook(request: Request):
     approved = bool(res.get("ok"))
     plan_days = None
     if approved:
-        plan_days = res.get("plan_days") or infer_plan_days(amount_wei=res.get("amount_wei"), amount_raw=res.get("amount_raw"))
+        plan_days = res.get("plan_days") or infer_plan_days(amount_usd=res.get("amount_usd"))
         if not plan_days:
-            logging.warning("Webhook: valor da transação não corresponde a nenhum plano: %s", res.get("amount_raw") or res.get("amount_wei"))
+            logging.warning(
+                "Webhook: valor da transação não corresponde a nenhum plano: %s",
+                res.get("amount_usd"),
+            )
             approved = False
             res["reason"] = res.get("reason") or "Valor não corresponde a nenhum plano"
-    amt_val = int(res.get('amount_wei') or res.get('amount_raw') or amount or 0)
+            amt_val = float(res.get('amount_usd') or amount or 0)
     plan = plan_from_amount(amt_val) or VipPlan.TRIMESTRAL
     
     with SessionLocal() as s:
@@ -2298,7 +2347,7 @@ async def crypto_webhook(request: Request):
                 pay = Payment(
                     user_id=int(uid),
                     tx_hash=tx_hash,
-                    amount=str(res.get('amount_wei') or res.get('amount_raw') or amount or ""),
+                    amount=str(res.get('amount_usd') or amount or ""),
                     chain=chain,
                     status="approved" if approved else "pending",
                     decided_at=now_utc() if approved else None,
