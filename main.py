@@ -1318,11 +1318,16 @@ async def vip_set_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         dias = int(context.args[1])
     except Exception:
         return await update.effective_message.reply_text("Parâmetros inválidos.")
+    try:
+        chat = await context.bot.get_chat(uid)
+        username = chat.username
+    except Exception:
+        username = None
     plan_map = {30: VipPlan.MENSAL, 90: VipPlan.TRIMESTRAL, 180: VipPlan.SEMESTRAL, 365: VipPlan.ANUAL}
     plan = plan_map.get(dias)
     if not plan:
         return await update.effective_message.reply_text("Dias devem ser 30, 90, 180 ou 365 dias.")
-    m = vip_upsert_start_or_extend(uid, None, None, plan)
+    m = vip_upsert_start_or_extend(uid, username, None, plan)
     await update.effective_message.reply_text(
         f"✅ VIP válido até {m.expires_at.strftime('%d/%m/%Y')} ({human_left(m.expires_at)})"
     )
