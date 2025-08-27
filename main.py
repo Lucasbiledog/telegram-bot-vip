@@ -399,6 +399,7 @@ MIN_NATIVE_AMOUNT = float(os.getenv("MIN_NATIVE_AMOUNT", "0"))  # em moeda nativ
 # ERC-20 (opcional)
 TOKEN_CONTRACT   = (os.getenv("TOKEN_CONTRACT", "").strip() or "").lower()
 TOKEN_DECIMALS   = int(os.getenv("TOKEN_DECIMALS", "18"))
+TOKEN_SYMBOL    = os.getenv("TOKEN_SYMBOL", "TOKEN").strip()
 MIN_TOKEN_AMOUNT = float(os.getenv("MIN_TOKEN_AMOUNT", "0"))
 
 FREE_PREVIEW_TEXT = os.getenv(
@@ -1695,10 +1696,10 @@ def _to_wei(amount_native: float, decimals: int = 18) -> int:
     return int(round(amount_native * (10 ** decimals)))
 
 PLAN_PRICE_WEI = {
-    VipPlan.TRIMESTRAL: _to_wei(70, 18),
-    VipPlan.SEMESTRAL: _to_wei(110, 18),
-    VipPlan.ANUAL: _to_wei(179, 18),
-    VipPlan.MENSAL: _to_wei(30,18),
+    VipPlan.TRIMESTRAL: _to_wei(70, TOKEN_DECIMALS),
+    VipPlan.SEMESTRAL: _to_wei(110, TOKEN_DECIMALS),
+    VipPlan.ANUAL: _to_wei(179, TOKEN_DECIMALS),
+    VipPlan.MENSAL: _to_wei(30, TOKEN_DECIMALS),
 }
 
 def plan_from_amount(amount_wei: int) -> Optional[VipPlan]:
@@ -1867,7 +1868,11 @@ async def pagar_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     plan_lines = [
-        f"- {plan.name.title()}: {PLAN_DAYS[plan]} dias por {PLAN_PRICE_WEI[plan]/10**18} {TOKEN_SYMBOL}"
+         (
+            f"- {plan.name.title()}: {PLAN_DAYS[plan]} dias por "
+            f"{format(PLAN_PRICE_WEI[plan] / (10 ** TOKEN_DECIMALS), '.6f').rstrip('0').rstrip('.')} "
+            f"{TOKEN_SYMBOL}"
+        )
         for plan in VipPlan
     ]
     texto += "\n\nPlanos:\n" + "\n".join(plan_lines)
