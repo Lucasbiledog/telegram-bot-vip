@@ -2085,7 +2085,8 @@ async def tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def aprovar_tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not (update.effective_user and is_admin(update.effective_user.id)):
-        return await update.effective_message.reply_text("Apenas admins.")
+        await update.effective_message.reply_text("Apenas admins.")
+        raise ApplicationHandlerStop
     if not context.args:
         return await update.effective_message.reply_text("Uso: /aprovar_tx <user_id>")
 
@@ -2563,12 +2564,19 @@ async def on_startup():
     application.add_handler(CommandHandler("say_free", say_free_cmd), group=1)
 
     application.add_handler(CommandHandler("simularvip", simularvip_cmd), group=1)
-    application.add_handler(CommandHandler([
-    "listar_packsvip",
-    "listar_packvip",
-    "listar_packs_vip",
-    "listar_pack_vip",
-], listar_packsvip_cmd), group=1,)
+    application.add_handler(
+        CommandHandler(
+            [
+                "listar_packsvip",
+                "listar_packvip",
+                "listar_packs_vip",
+                "listar_pack_vip",
+            ],
+            listar_packsvip_cmd,
+            block=True,
+        ),
+        group=1,
+    )
     application.add_handler(CommandHandler("listar_packsfree", listar_packsfree_cmd), group=1,)
     application.add_handler(CommandHandler("pack_info", pack_info_cmd), group=1)
     application.add_handler(CommandHandler("excluir_item", excluir_item_cmd), group=1)
