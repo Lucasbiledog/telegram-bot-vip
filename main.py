@@ -121,73 +121,6 @@ def ensure_schema():
     ensure_vip_invite_column()
 
 
-from sqlalchemy import text
-
-def ensure_bigint_columns():
-    # Só faz sentido em Postgres
-    if not url.get_backend_name().startswith("postgresql"):
-        return
-    try:
-        with engine.begin() as conn:
-            try:
-                conn.execute(text(
-                    "ALTER TABLE admins ALTER COLUMN user_id TYPE BIGINT USING user_id::bigint"
-                ))
-            except Exception:
-                pass
-            try:
-                conn.execute(text(
-                    "ALTER TABLE payments ALTER COLUMN user_id TYPE BIGINT USING user_id::bigint"
-                ))
-            except Exception:
-                pass
-    except Exception as e:
-        logging.warning("Falha em ensure_bigint_columns: %s", e)
-
-def ensure_pack_tier_column():
-    try:
-        with engine.begin() as conn:
-            try: conn.execute(text("ALTER TABLE packs ADD COLUMN tier VARCHAR"))
-            except Exception: pass
-            try: conn.execute(text("UPDATE packs SET tier='vip' WHERE tier IS NULL"))
-            except Exception: pass
-            try: conn.execute(text("ALTER TABLE scheduled_messages ADD COLUMN tier VARCHAR"))
-            except Exception: pass
-            try: conn.execute(text("UPDATE scheduled_messages SET tier='vip' WHERE tier IS NULL"))
-            except Exception: pass
-    except Exception:
-        pass
-
-def ensure_packfile_src_columns():
-    try:
-        with engine.begin() as conn:
-            try: conn.execute(text("ALTER TABLE pack_files ADD COLUMN src_chat_id BIGINT"))
-            except Exception: pass
-            try: conn.execute(text("ALTER TABLE pack_files ADD COLUMN src_message_id INTEGER"))
-            except Exception: pass
-    except Exception as e:
-        logging.warning("Falha em ensure_packfile_src_columns: %s", e)
-
-def ensure_vip_invite_column():
-    # adiciona a coluna para guardar o link pessoal de convite
-    try:
-        with engine.begin() as conn:
-            try:
-                conn.execute(text("ALTER TABLE vip_memberships ADD COLUMN invite_link TEXT"))
-            except Exception:
-                pass
-    except Exception as e:
-        logging.warning("Falha em ensure_vip_invite_column: %s", e)
-
-def ensure_schema():
-    # Base.metadata.create_all precisa vir primeiro para garantir as tabelas
-    Base.metadata.create_all(bind=engine)
-    ensure_bigint_columns()
-    ensure_pack_tier_column()
-    ensure_packfile_src_columns()
-    ensure_vip_invite_column()
-
-
 # =========================
 # Helpers
 # =========================
@@ -273,18 +206,6 @@ def vip_get(user_id: int) -> Optional['VipMembership']:
         return s.query(VipMembership).filter(VipMembership.user_id == user_id).first()
     
     
-def ensure_vip_invite_column():
-    try:
-        with engine.begin() as conn:
-            try:
-                conn.execute(text("ALTER TABLE vip_memberships ADD COLUMN invite_link VARCHAR"))
-            except Exception:
-                pass
-    except Exception as e:
-        logging.warning("Falha ensure_vip_invite_column: %s", e)
-
-# chame junto das outras ensures, antes do init_db():
-ensure_vip_invite_column()
 
 
 def vip_upsert_start_or_extend(user_id: int, username: Optional[str], tx_hash: Optional[str], extra_days: int = 30) -> 'VipMembership':
@@ -604,136 +525,7 @@ def scheduled_delete(sid: int) -> bool:
         except Exception:
             s.rollback()
             raise
-
-
-def ensure_vip_invite_column():
-    try:
-        with engine.begin() as conn:
-            try:
-                conn.execute(text("ALTER TABLE vip_memberships ADD COLUMN invite_link VARCHAR"))
-            except Exception:
-                pass
-    except Exception as e:
-        logging.warning("Falha em ensure_vip_invite_column: %s", e)
-
-from sqlalchemy import text
-
-def ensure_bigint_columns():
-    # Só faz sentido em Postgres
-    if not url.get_backend_name().startswith("postgresql"):
-        return
-    try:
-        with engine.begin() as conn:
-            try:
-                conn.execute(text(
-                    "ALTER TABLE admins ALTER COLUMN user_id TYPE BIGINT USING user_id::bigint"
-                ))
-            except Exception:
-                pass
-            try:
-                conn.execute(text(
-                    "ALTER TABLE payments ALTER COLUMN user_id TYPE BIGINT USING user_id::bigint"
-                ))
-            except Exception:
-                pass
-    except Exception as e:
-        logging.warning("Falha em ensure_bigint_columns: %s", e)
-
-def ensure_pack_tier_column():
-    try:
-        with engine.begin() as conn:
-            try: conn.execute(text("ALTER TABLE packs ADD COLUMN tier VARCHAR"))
-            except Exception: pass
-            try: conn.execute(text("UPDATE packs SET tier='vip' WHERE tier IS NULL"))
-            except Exception: pass
-            try: conn.execute(text("ALTER TABLE scheduled_messages ADD COLUMN tier VARCHAR"))
-            except Exception: pass
-            try: conn.execute(text("UPDATE scheduled_messages SET tier='vip' WHERE tier IS NULL"))
-            except Exception: pass
-    except Exception:
-        pass
-
-def ensure_packfile_src_columns():
-    try:
-        with engine.begin() as conn:
-            try: conn.execute(text("ALTER TABLE pack_files ADD COLUMN src_chat_id BIGINT"))
-            except Exception: pass
-            try: conn.execute(text("ALTER TABLE pack_files ADD COLUMN src_message_id INTEGER"))
-            except Exception: pass
-    except Exception as e:
-        logging.warning("Falha em ensure_packfile_src_columns: %s", e)
-
-def ensure_vip_invite_column():
-    try:
-        with engine.begin() as conn:
-            try: conn.execute(text("ALTER TABLE vip_memberships ADD COLUMN invite_link TEXT"))
-            except Exception: pass
-    except Exception as e:
-        logging.warning("Falha em ensure_vip_invite_column: %s", e)
-
-def ensure_schema():
-    # cria tabelas e aplica “mutações” tolerantes a erro
-    Base.metadata.create_all(bind=engine)
-    ensure_bigint_columns()
-    ensure_pack_tier_column()
-    ensure_packfile_src_columns()
-    ensure_vip_invite_column()
-        
-
-# chame junto com as outras ensures
-ensure_schema()
-init_db()
-
-
-def ensure_bigint_columns():
-    if not url.get_backend_name().startswith("postgresql"): return
-    try:
-        with engine.begin() as conn:
-            try: conn.execute(text("ALTER TABLE admins   ALTER COLUMN user_id TYPE BIGINT USING user_id::bigint"))
-            except Exception: pass
-            try: conn.execute(text("ALTER TABLE payments ALTER COLUMN user_id TYPE BIGINT USING user_id::bigint"))
-            except Exception: pass
-    except Exception as e:
-        logging.warning("Falha em ensure_bigint_columns: %s", e)
-
-def ensure_pack_tier_column():
-    try:
-        with engine.begin() as conn:
-            try: conn.execute(text("ALTER TABLE packs ADD COLUMN tier VARCHAR"))
-            except Exception: pass
-            try: conn.execute(text("UPDATE packs SET tier='vip' WHERE tier IS NULL"))
-            except Exception: pass
-            try: conn.execute(text("ALTER TABLE scheduled_messages ADD COLUMN tier VARCHAR"))
-            except Exception: pass
-            try: conn.execute(text("UPDATE scheduled_messages SET tier='vip' WHERE tier IS NULL"))
-            except Exception: pass
-    except Exception: pass
-
-def ensure_packfile_src_columns():
-    try:
-        with engine.begin() as conn:
-            try: conn.execute(text("ALTER TABLE pack_files ADD COLUMN src_chat_id BIGINT"))
-            except Exception: pass
-            try: conn.execute(text("ALTER TABLE pack_files ADD COLUMN src_message_id INTEGER"))
-            except Exception: pass
-    except Exception as e:
-        logging.warning("Falha em ensure_packfile_src_columns: %s", e)
-
-def init_db():
-    Base.metadata.create_all(bind=engine)
-    initial_admin_id = os.getenv("INITIAL_ADMIN_ID")
-    if initial_admin_id:
-        with SessionLocal() as s:
-            try:
-                uid = int(initial_admin_id)
-                if not s.query(Admin).filter(Admin.user_id == uid).first():
-                    s.add(Admin(user_id=uid))
-                    s.commit()
-            except Exception:
-                s.rollback()
-                raise
-    if not cfg_get("daily_pack_vip_hhmm"):  cfg_set("daily_pack_vip_hhmm", "09:00")
-    if not cfg_get("daily_pack_free_hhmm"): cfg_set("daily_pack_free_hhmm", "09:30")
+# Garante que o esquema do banco esteja atualizado
 
 ensure_schema()
 init_db()
@@ -752,22 +544,12 @@ def list_packs_by_tier(tier: str) -> List['Pack']:
         )
 
 
-def is_admin(user_id: int) -> bool:
-    try:
-        with SessionLocal() as s:
-            return s.query(Admin).filter(Admin.user_id == int(user_id)).first() is not None
-    except Exception:
-        return False
 
 
 def list_admin_ids() -> List[int]:
     with SessionLocal() as s:
         return [a.user_id for a in s.query(Admin).order_by(Admin.added_at.asc()).all()]
 
-def is_admin(user_id: int) -> bool:
-    with SessionLocal() as s:
-        return s.query(Admin).filter(Admin.user_id == int(user_id)).first() is not None
-    
 
 # --- ADMIN helper com cache simples (evita ida ao banco toda hora)
 _ADMIN_CACHE: set[int] = set()
@@ -2003,261 +1785,6 @@ async def pagar_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             asyncio.create_task(_delete_later(bot_msg.message_id))
     else:
         await msg.reply_text("Qualquer dúvida, me mande a hash com /tx <hash> 😉")
-async def tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = update.effective_message
-    user = update.effective_user
-
-    if not context.args:
-        return await msg.reply_text("Uso: /tx <hash_da_transacao>")
-
-    tx_hash = context.args[0].strip().lower()
-
-    # sanity checks básicos
-    if not tx_hash.startswith("0x") or len(tx_hash) != 66:
-        return await msg.reply_text("Hash inválido. Deve começar com 0x e ter 66 caracteres.")
-
-    # Já existe?
-    with SessionLocal() as s:
-        existing = s.query(Payment).filter(Payment.tx_hash == tx_hash).first()
-
-    if existing and existing.status == "approved":
-        # garante VIP e reenvia invite
-        m = vip_upsert_start_or_extend(user.id, user.username, existing.tx_hash, extra_days=30)
-        try:
-            invite = await application.bot.export_chat_invite_link(chat_id=GROUP_VIP_ID)
-            await dm(user.id, f"✅ Seu pagamento já estava aprovado!\nVIP até {m.expires_at:%d/%m/%Y} ({human_left(m.expires_at)}).\nEntre no VIP: {invite}", parse_mode=None)
-            return await msg.reply_text("Esse hash já estava aprovado. Reenviei o convite no seu privado. ✅")
-        except Exception as e:
-            return await msg.reply_text(f"Hash aprovado, mas falhou ao reenviar o convite: {e}")
-    elif existing and existing.status == "pending":
-        return await msg.reply_text("Esse hash já foi registrado e está pendente. Aguarde a validação.")
-    elif existing and existing.status == "rejected":
-        return await msg.reply_text("Esse hash já foi rejeitado. Fale com um administrador.")
-
-    # Verificação on-chain
-    try:
-        res = await verify_tx_any(tx_hash)
-    except Exception as e:
-        logging.exception("Erro verificando transação")
-        return await msg.reply_text(f"❌ Erro ao verificar on-chain: {e}")
-
-    # Checagem de preço configurado (se houver)
-    paid_ok = res.get("ok", False)
-    if paid_ok:
-        if TOKEN_CONTRACT:
-            price_tok = get_vip_price_token()
-            if price_tok is not None:
-                amount_raw = res.get("amount_raw")
-                min_units  = int(round(price_tok * (10 ** TOKEN_DECIMALS)))
-                if amount_raw is None or amount_raw < min_units:
-                    paid_ok = False
-        else:
-            price_nat = get_vip_price_native()
-            if price_nat is not None:
-                amount_wei = res.get("amount_wei")
-                if amount_wei is None or amount_wei < _to_wei(price_nat, 18):
-                    paid_ok = False
-
-    if not paid_ok:
-        human_reason = res.get("reason") or "Valor insuficiente/aguardando confirmações"
-        # registra como pendente
-        with SessionLocal() as s:
-            try:
-                p = Payment(
-                    user_id=user.id, username=user.username, tx_hash=tx_hash, chain=CHAIN_NAME,
-                    amount=str(res.get("amount_wei") or res.get("amount_raw") or ""),
-                    status="pending", notes=human_reason
-                )
-                s.add(p); s.commit()
-            except Exception:
-                s.rollback(); raise
-        await msg.reply_text(f"⏳ Hash recebido. Status: {human_reason}")
-        # Notifica admins (melhor esforço)
-        try:
-            for aid in list_admin_ids():
-                txt = f"📥 Pagamento pendente:\nuser_id:{user.id} @{user.username or '-'}\nhash:{tx_hash}\ninfo:{human_reason}"
-                await dm(aid, txt, parse_mode=None)
-        except Exception:
-            pass
-        return
-
-    # Aprovado — grava e cria/renova VIP 30 dias
-    with SessionLocal() as s:
-        try:
-            p = Payment(
-                user_id=user.id, username=user.username, tx_hash=tx_hash, chain=CHAIN_NAME,
-                status="approved", amount=str(res.get("amount_wei") or res.get("amount_raw") or ""),
-                decided_at=now_utc(),
-            )
-            s.add(p); s.commit()
-        except Exception:
-            s.rollback(); raise
-
-    m = vip_upsert_start_or_extend(user.id, user.username, tx_hash, extra_days=30)
-
-    try:
-        invite_link = await create_and_store_personal_invite(user.id)
-        await dm(
-    user.id,
-    f"✅ Pagamento confirmado na rede {CHAIN_NAME}!\n"
-    f"VIP válido até {m.expires_at:%d/%m/%Y} ({human_left(m.expires_at)}).\n"
-    f"Entre no VIP: {invite_link}",
-    parse_mode=None
-)
-
-        return await msg.reply_text("✅ Verifiquei sua transação e já liberei seu acesso. Confira seu privado.")
-    except Exception as e:
-        logging.exception("Erro enviando invite auto-approve")
-        return await msg.reply_text(f"Pagamento OK, mas falhou ao enviar o convite: {e}")
-
-
-        tx_hash = context.args[0].strip().lower()
-
-    # Já existe?
-    with SessionLocal() as s:
-        existing = s.query(Payment).filter(Payment.tx_hash == tx_hash).first()
-    if status == "approved":
-        try:
-            # >>> concede/renova 30 dias e vincula a hash
-            vip_upsert_start_or_extend(
-                user_id=user.id,
-                username=user.username,
-                tx_hash=tx_hash,
-                extra_days=30
-            )
-            invite = await application.bot.export_chat_invite_link(chat_id=GROUP_VIP_ID)
-            await dm(user.id, f"✅ Pagamento confirmado na rede {CHAIN_NAME}!\nEntre no VIP: {invite}", parse_mode=None)
-            return await msg.reply_text("✅ Verifiquei sua transação e já liberei seu acesso. Confira seu privado.")
-        except Exception as e:
-            logging.exception("Erro enviando invite auto-approve")
-            return await msg.reply_text(f"Pagamento OK, mas falhou ao enviar o convite: {e}")
-
-
-
-    if existing and existing.status == "approved":
-        # garante VIP e reenvia invite
-        m = vip_upsert_start_or_extend(user.id, user.username, existing.tx_hash, extra_days=30)
-        try:
-            invite = await application.bot.export_chat_invite_link(chat_id=GROUP_VIP_ID)
-            await dm(user.id, f"✅ Seu pagamento já estava aprovado!\nVIP até {m.expires_at:%d/%m/%Y} ({human_left(m.expires_at)}).\nEntre no VIP: {invite}", parse_mode=None)
-            return await msg.reply_text("Esse hash já estava aprovado. Reenviei o convite no seu privado. ✅")
-        except Exception as e:
-            return await msg.reply_text(f"Hash aprovado, mas falhou ao reenviar o convite: {e}")
-    elif existing and existing.status == "pending":
-        return await msg.reply_text("Esse hash já foi registrado e está pendente. Aguarde a validação.")
-    elif existing and existing.status == "rejected":
-        return await msg.reply_text("Esse hash já foi rejeitado. Fale com um administrador.")
-    
-    
-
-    # Verificação on-chain
-    try:
-        res = await verify_tx_any(tx_hash)
-    except Exception as e:
-        logging.exception("Erro verificando transação")
-        return await msg.reply_text(f"❌ Erro ao verificar on-chain: {e}")
-
-    # Checagem de preço configurado (se houver)
-    paid_ok = res.get("ok", False)
-    if paid_ok:
-        if TOKEN_CONTRACT:
-            price_tok = get_vip_price_token()
-            if price_tok is not None:
-                amount_raw = res.get("amount_raw")
-                min_units  = int(round(price_tok * (10 ** TOKEN_DECIMALS)))
-                if amount_raw is None or amount_raw < min_units:
-                    paid_ok = False
-        else:
-            price_nat = get_vip_price_native()
-            if price_nat is not None:
-                amount_wei = res.get("amount_wei")
-                if amount_wei is None or amount_wei < _to_wei(price_nat, 18):
-                    paid_ok = False
-
-    if not paid_ok:
-        human_reason = res.get("reason") or "Valor insuficiente"
-        # registra como pendente (com razão)
-        with SessionLocal() as s:
-            try:
-                p = Payment(
-                    user_id=user.id, username=user.username, tx_hash=tx_hash, chain=CHAIN_NAME,
-                    amount=str(res.get("amount_wei") or res.get("amount_raw") or ""),
-                    status="pending", notes=human_reason
-                )
-                s.add(p); s.commit()
-            except Exception:
-                s.rollback(); raise
-        return await msg.reply_text(f"⏳ Hash recebido. Status: {human_reason}")
-
-    # Aprovado — grava e cria/renova VIP
-    with SessionLocal() as s:
-        try:
-            p = Payment(
-                user_id=user.id, username=user.username, tx_hash=tx_hash, chain=CHAIN_NAME,
-                status="approved", amount=str(res.get("amount_wei") or res.get("amount_raw") or ""),
-                decided_at=now_utc(),
-            )
-            s.add(p); s.commit()
-        except Exception:
-            s.rollback(); raise
-
-    # vincula VIP 30 dias
-    
-    m = vip_upsert_start_or_extend(user.id, user.username, tx_hash, extra_days=30)
-    
-
-    try:
-        invite = await application.bot.export_chat_invite_link(chat_id=GROUP_VIP_ID)
-        await dm(
-            user.id,
-            f"✅ Pagamento confirmado na rede {CHAIN_NAME}!\n"
-            f"VIP válido até {m.expires_at:%d/%m/%Y} ({human_left(m.expires_at)}).\n"
-            f"Entre no VIP: {invite}",
-            parse_mode=None
-        )
-        return await msg.reply_text("✅ Verifiquei sua transação e já liberei seu acesso. Confira seu privado.")
-    except Exception as e:
-        logging.exception("Erro enviando invite auto-approve")
-        return await msg.reply_text(f"Pagamento OK, mas falhou ao enviar o convite: {e}")
-
-
-
-    status = "approved" if (AUTO_APPROVE_CRYPTO and res.get("ok")) else "pending"
-    with SessionLocal() as s:
-        try:
-            p = Payment(
-                user_id=user.id,
-                username=user.username,
-                tx_hash=tx_hash,
-                chain=CHAIN_NAME,
-                status=status,
-                amount=str(res.get("amount_wei") or res.get("amount_raw") or ""),
-                decided_at=now_utc() if status == "approved" else None,
-            )
-            s.add(p)
-            s.commit()
-        except Exception:
-            s.rollback()
-            raise
-
-    if status == "approved":
-        try:
-            invite = await application.bot.export_chat_invite_link(chat_id=GROUP_VIP_ID)
-            await dm(user.id, f"✅ Pagamento confirmado na rede {CHAIN_NAME}!\nEntre no VIP: {invite}", parse_mode=None)
-            return await msg.reply_text("✅ Verifiquei sua transação e já liberei seu acesso. Confira seu privado.")
-        except Exception as e:
-            logging.exception("Erro enviando invite auto-approve")
-            return await msg.reply_text(f"Pagamento OK, mas falhou ao enviar o convite: {e}")
-    else:
-        human = res.get("reason", "Aguardando confirmação dos nós.")
-        await msg.reply_text(f"⏳ Hash recebido. Status: {human}")
-        # Notifica admins
-        try:
-            for aid in list_admin_ids():
-                txt = f"📥 Pagamento pendente:\nuser_id:{user.id} @{user.username or '-'}\nhash:{tx_hash}\ninfo:{human}"
-                await dm(aid, txt, parse_mode=None)
-        except Exception:
-            pass
 
 
 async def listar_pendentes_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2273,6 +1800,7 @@ async def listar_pendentes_cmd(update: Update, context: ContextTypes.DEFAULT_TYP
     
 async def tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.effective_message
+    user = update.effective_user
     if not context.args:
         return await msg.reply_text("Uso: /tx <hash_da_transacao> (ex.: 0x… com 66 caracteres)")
 
@@ -2293,8 +1821,8 @@ async def tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if existing and existing.status == "approved":
         m = vip_upsert_start_or_extend(user.id, user.username, existing.tx_hash, extra_days=30)
         try:
-            invite = await application.bot.export_chat_invite_link(chat_id=GROUP_VIP_ID)
-            await dm(user.id, f"✅ Seu pagamento já estava aprovado!\nVIP até {m.expires_at:%d/%m/%Y} ({human_left(m.expires_at)}).\nEntre no VIP: {invite}", parse_mode=None)
+            invite_link = await create_and_store_personal_invite(user.id)
+            await dm(user.id, f"✅ Seu pagamento já estava aprovado!\nVIP até {m.expires_at:%d/%m/%Y} ({human_left(m.expires_at)}).\nEntre no VIP: {invite_link}", parse_mode=None)
             return await msg.reply_text("Esse hash já estava aprovado. Reenviei o convite no seu privado. ✅")
         except Exception as e:
             return await msg.reply_text(f"Hash aprovado, mas falhou ao reenviar o convite: {e}")
@@ -2349,12 +1877,12 @@ async def tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if status == "approved":
         try:
             m = vip_upsert_start_or_extend(user.id, user.username, tx_hash, extra_days=30)
-            invite = await application.bot.export_chat_invite_link(chat_id=GROUP_VIP_ID)
+            invite_link = await create_and_store_personal_invite(user.id)
             await dm(
                 user.id,
                 f"✅ Pagamento confirmado na rede {CHAIN_NAME}!\n"
                 f"VIP válido até {m.expires_at:%d/%m/%Y} ({human_left(m.expires_at)}).\n"
-                f"Entre no VIP: {invite}",
+                f"Entre no VIP: {invite_link}",
                 parse_mode=None
             )
             return await msg.reply_text("✅ Verifiquei sua transação e já liberei seu acesso. Confira seu privado.")
