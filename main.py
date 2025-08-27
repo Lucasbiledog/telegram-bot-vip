@@ -1929,6 +1929,54 @@ async def verify_tx_any(tx_hash: str) -> Dict[str, Any]:
             res["reason"] = res.get("reason") or "Valor não corresponde a nenhum plano"
         res["chain_name"] = cfg.get("chain_name")
         return res
+    return await verify_tx_blockchair(tx_hash)
+
+
+async def verify_tx_blockchair(tx_hash: str) -> Dict[str, Any]:
+    """Tentativa de verificação genérica usando a API pública do Blockchair."""
+    slugs = {
+        "ethereum": 18,
+        "binance-smart-chain": 18,
+        "polygon": 18,
+        "arbitrum": 18,
+        "avalanche": 18,
+        "fantom": 18,
+        "base": 18,
+    }
+    wallets = {cfg.get("wallet_address", "").lower() for cfg in CHAIN_CONFIGS if cfg.get("wallet_address")}
+    async with httpx.AsyncClient(timeout=10) as client:
+        for slug, decimals in slugs.items():
+            try:
+                url = f"https://api.blockchair.com/{slug}/dashboards/transaction/{tx_hash}"
+                r = await client.get(url)
+                if r.status_code != 200:
+                    continue
+                data = r.json().get("data", {}).get(tx_hash, {})
+                tx = data.get("transaction")
+                if not tx:
+                    continue
+                to_addr = (tx.get("recipient") or "").lower()
+                if wallets and to_addr not in wallets:
+                    continue
+                value = int(tx.get("value", 0))
+                price_usd = r.json().get("context", {}).get("state", {}).get("market_price_usd") or 0
+                amount_native = value / (10 ** decimals)
+                amount_usd = amount_native * float(price_usd)
+                plan_days = infer_plan_days(amount_usd=amount_usd)
+                res = {
+                    "ok": bool(plan_days),
+                    "type": "native",
+                    "amount_wei": value,
+                    "amount_usd": amount_usd,
+                    "plan_days": plan_days,
+                    "chain_name": slug.replace("-", " ").title(),
+                }
+                if not plan_days:
+                    res["reason"] = "Valor não corresponde a nenhum plano"
+                return res
+            except Exception as e:
+                logging.warning("Erro verificando Blockchair %s: %s", slug, e)
+                continue
     return {"ok": False, "reason": "Transação não encontrada em nenhuma cadeia."}
     
 
