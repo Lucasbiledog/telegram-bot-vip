@@ -1694,7 +1694,7 @@ async def novopack_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # Pagamento / Verificação on-chain (JSON-RPC)
 # =========================
 HEX_0X = "0x"
-TRANSFER_TOPIC = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"  # keccak("Transfer(address,address,uint256)")
+TRANSFER_TOPIC = "0x40dDBD27F878d07808339F9965f013F1CBc2F812"  # keccak("Transfer(address,address,uint256)")
 
 def _hex_to_int(h: Optional[str]) -> int:
     if not h: return 0
