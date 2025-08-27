@@ -1906,8 +1906,8 @@ async def pagar_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg  = update.effective_message
 
     texto = (
-        f"💸 <b>Pagamento via MetaMask</b>\n"
-        f"1) Abra a MetaMask e selecione a rede <b>{esc(CHAIN_NAME)}</b>.\n"
+        f"💸 <b>Pagamento via Cripto</b>\n"
+        f"1) Abra seu banco de cripto.</b>.\n"
         f"2) Envie o valor para a carteira:\n<code>{esc(WALLET_ADDRESS)}</code>\n"
         f"3) Depois me mande aqui: <code>/tx &lt;hash_da_transacao&gt;</code>\n\n"
         f"⚙️ Valido on-chain (mín. {MIN_CONFIRMATIONS} confirmações).\n"
@@ -1992,16 +1992,26 @@ async def tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Já existe?
     with SessionLocal() as s:
         existing = s.query(Payment).filter(Payment.tx_hash == tx_hash).first()
+        if existing and existing.user_id != user.id:
+            return await msg.reply_text("Esse hash já foi usado por outro usuário.")
 
     if existing and existing.status == "approved":
-        plan = plan_from_amount(float(existing.amount or 0)) or VipPlan.TRIMESTRAL
-        m = vip_upsert_start_or_extend(user.id, user.username, existing.tx_hash, plan)
-        try:
-            invite_link = await create_and_store_personal_invite(user.id)
-            await dm(user.id, f"✅ Seu pagamento já estava aprovado!\nVIP até {m.expires_at:%d/%m/%Y} ({human_left(m.expires_at)}).\nEntre no VIP: {invite_link}", parse_mode=None)
-            return await msg.reply_text("Esse hash já estava aprovado. Reenviei o convite no seu privado. ✅")
-        except Exception as e:
-            return await msg.reply_text(f"Hash aprovado, mas falhou ao reenviar o convite: {e}")
+        if existing.user_id == user.id:
+            m = vip_get(user.id)
+            try:
+                invite_link = (m.invite_link if m else None) or await create_and_store_personal_invite(user.id)
+                await dm(
+                    user.id,
+                    f"✅ Seu pagamento já estava aprovado!\n"
+                    f"VIP até {m.expires_at:%d/%m/%Y} ({human_left(m.expires_at)}).\n"
+                    f"Entre no VIP: {invite_link}",
+                    parse_mode=None,
+                )
+                return await msg.reply_text("Esse hash já estava aprovado. Reenviei o convite no seu privado. ✅")
+            except Exception as e:
+                return await msg.reply_text(f"Hash aprovado, mas falhou ao reenviar o convite: {e}")
+        else:
+            return await msg.reply_text("Esse hash já foi usado por outro usuário.")
     elif existing and existing.status == "pending":
         return await msg.reply_text("Esse hash já foi registrado e está pendente. Aguarde a validação.")
     elif existing and existing.status == "rejected":
@@ -2048,15 +2058,13 @@ async def tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if status == "approved":
         try:
-            m = vip_upsert_start_or_extend(user.id, user.username, tx_hash, extra_days=plan_days)
-            amt = int(res.get("amount_wei") or res.get("amount_raw") or 0)
-            plan = plan_from_amount(amt) or VipPlan.TRIMESTRAL
+            plan = plan_from_amount(float(res.get("amount_usd") or 0)) or VipPlan.TRIMESTRAL
             m = vip_upsert_start_or_extend(user.id, user.username, tx_hash, plan)
             invite_link = await create_and_store_personal_invite(user.id)
             await dm(
                 user.id,
-                f"✅ Pagamento confirmado na rede {CHAIN_NAME}!\n"
-                f"VIP válido até {m.expires_at:%d/%m/%Y} ({human_left(m.expires_at)}).\n"
+                f"✅ Pagamento confirmado na rede {CHAIN_NAME}!\n",
+                f"VIP válido até {m.expires_at:%d/%m/%Y} ({human_left(m.expires_at)}).\n",
                 f"Entre no VIP: {invite_link}",
                 parse_mode=None
             )
