@@ -27,10 +27,17 @@ from telegram.ext import (
     ApplicationHandlerStop,
 )
 # === Imports ===
-import os, logging
-from sqlalchemy import create_engine, Column, Integer, BigInteger, String, Boolean, DateTime, Text
-from sqlalchemy.orm import sessionmaker, declarative_base
-from sqlalchemy.engine import URL
+from sqlalchemy import create_engine
+from sqlalchemy.engine import make_url  # <- use isto
+
+DB_URL = os.getenv("DATABASE_URL", "sqlite:///./bot_data.db")
+url = make_url(DB_URL)
+
+if url.get_backend_name().startswith("sqlite"):
+    engine = create_engine(DB_URL, connect_args={"check_same_thread": False})
+else:
+    engine = create_engine(DB_URL, pool_pre_ping=True, pool_size=5, max_overflow=5)
+
 
 # === Config DB ===
 DB_URL = os.getenv("DATABASE_URL", "sqlite:///./bot.db")
