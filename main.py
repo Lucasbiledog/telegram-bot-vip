@@ -1389,7 +1389,7 @@ async def listar_packsvip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE
     with SessionLocal() as s:
         packs = (
             s.query(Pack)
-            .filter(Pack.tier == "vip")
+            .filter(Pack.tier == "vip", Pack.sent.is_(False))
             .order_by(Pack.created_at.asc())
             .all()
         )
