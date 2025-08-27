@@ -1203,12 +1203,6 @@ async def vip_set_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception:
         return await update.effective_message.reply_text("Parâmetros inválidos.")
     m = vip_upsert_start_or_extend(uid, None, None, extra_days=dias)
-    try:
-    invite_link = await create_and_store_personal_invite(uid)
-    await dm(uid, f"✅ VIP válido até {m.expires_at:%d/%m/%Y}. Entre no VIP: {invite_link}", parse_mode=None)
-except Exception:
-    pass
-
     await update.effective_message.reply_text(
         f"✅ VIP válido até {m.expires_at.strftime('%d/%m/%Y')} ({human_left(m.expires_at)})"
     )
