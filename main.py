@@ -2289,8 +2289,6 @@ async def clear_tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         p = s.query(Payment).filter(Payment.tx_hash == tx_hash).first()
         if not p:
             return await msg.reply_text("Nenhum registro encontrado para essa hash.")
-        if p.status != "rejected":
-            return await msg.reply_text("Apenas transações rejeitadas podem ser limpas.")
         try:
             vm = s.query(VipMembership).filter(VipMembership.tx_hash == tx_hash).first()
             if vm:
