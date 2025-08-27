@@ -1749,7 +1749,7 @@ async def fetch_price_usd(cfg: Dict[str, Any]) -> Optional[float]:
             return data.get(asset_id, {}).get("usd")
     except Exception as e:
         logging.warning("Falha ao obter cotação USD: %s", e)
-        return Nonee
+        return None
     
 async def fetch_price_usd_for_contract(contract_addr: str) -> Optional[Tuple[float, int]]:
     """Retorna preço em USD e casas decimais para um contrato ERC-20.
@@ -1774,31 +1774,22 @@ async def fetch_price_usd_for_contract(contract_addr: str) -> Optional[Tuple[flo
     )
     try:
         async with httpx.AsyncClient(timeout=15) as client:
-            price_resp, meta_resp = await asyncio.gather(
-                client.get(price_url),
-                client.get(meta_url),
-            )
-            price_resp.raise_for_status()
-            meta_resp.raise_for_status()
-
-            price_info = price_resp.json().get(contract_addr)
-            if not price_info:
+            r = await client.get(url)
+            r.raise_for_status()
+            data = r.json()
+            info = data.get(contract_addr)
+            if not info:
                 return None
-            price = price_info.get("usd")
-
-            meta = meta_resp.json()
-            decimals = (
-                meta.get("detail_platforms", {})
-                .get(platform, {})
-                .get("decimal_place")
-            )
-
+            price = info.get("usd")
+            decimals = info.get("decimals")
             if price is None or decimals is None:
                 return None
-            return price, int(decimals)
-        except Exception as e:
-        logging.warning("Falha ao obter cotação USD/decimals (token): %s", e)
+            return price, decimals
+    except Exception as e:
+        logging.warning("Falha ao obter cotação USD (token): %s", e)
         return None
+    
+
 async def rpc_call(cfg: Dict[str, Any], method: str, params: list) -> Any:
     rpc_url = cfg.get("rpc_url")
     if not rpc_url:
