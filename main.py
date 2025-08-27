@@ -25,6 +25,7 @@ from telegram.ext import (
     ConversationHandler,
     filters,
     ApplicationHandlerStop,
+    ChatJoinRequestHandler,
 )
 # === Imports ===
 from sqlalchemy import (
@@ -634,6 +635,46 @@ async def assign_and_send_invite(user_id: int, username: Optional[str], tx_hash:
         m.invite_link = new_link
         s.commit()
         return new_link
+
+async def vip_join_request_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Processa pedidos de entrada no grupo VIP via join request."""
+    req = update.chat_join_request
+    if not req or req.chat.id != GROUP_VIP_ID:
+        return
+
+    invite_link = req.invite_link.invite_link if req.invite_link else None
+    user_id = req.from_user.id
+
+    if not invite_link:
+        await context.bot.decline_chat_join_request(chat_id=req.chat.id, user_id=user_id)
+        return
+
+    with SessionLocal() as s:
+        vm = s.query(VipMembership).filter(VipMembership.invite_link == invite_link).first()
+        valid = (
+            vm is not None
+            and vm.user_id == user_id
+            and vm.active
+            and vm.expires_at and vm.expires_at > now_utc()
+        )
+
+    if valid:
+        await context.bot.approve_chat_join_request(chat_id=req.chat.id, user_id=user_id)
+    else:
+        await context.bot.decline_chat_join_request(chat_id=req.chat.id, user_id=user_id)
+
+    try:
+        await revoke_invite_link(invite_link)
+    except Exception:
+        pass
+
+    with SessionLocal() as s:
+        vm = s.query(VipMembership).filter(VipMembership.invite_link == invite_link).first()
+        if vm:
+            vm.invite_link = None
+            if not valid and vm.expires_at and vm.expires_at <= now_utc():
+                vm.active = False
+            s.commit()
 
 def create_pack(title: str, header_message_id: Optional[int] = None, tier: str = "vip") -> 'Pack':
     with SessionLocal() as s:
@@ -2273,6 +2314,7 @@ async def on_startup():
 
 
     application.add_handler(CommandHandler("simular_tx", simular_tx_cmd), group=1)
+    application.add_handler(ChatJoinRequestHandler(vip_join_request_handler), group=1)
 
 
     # ===== Guard GLOBAL para não-admin (vem BEM cedo)
