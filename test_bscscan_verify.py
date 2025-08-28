@@ -124,3 +124,24 @@ def test_verify_tx_bscscan_native(monkeypatch):
     assert res["plan_days"] == 90
     actions = [p[1]["action"] for p in client.calls]
     assert set(["eth_getTransactionReceipt", "eth_blockNumber", "eth_getTransactionByHash"]).issubset(actions)
+
+
+def test_verify_tx_bscscan_token_below_min(monkeypatch):
+    client = DummyClientToken()
+    monkeypatch.setattr(httpx, "AsyncClient", lambda timeout=10: client)
+
+    async def fake_price(addr):
+        return (14.0, 0)
+
+    monkeypatch.setattr(main, "fetch_price_usd_for_contract", fake_price)
+    monkeypatch.setattr(main, "MIN_TOKEN_AMOUNT", 10)
+
+    cfg = {
+        "wallet_address": WALLET,
+        "bscscan_api_key": "KEY",
+        "chain_name": "Binance Smart Chain",
+    }
+    tx_hash = "0x" + "1" * 64
+    res = asyncio.run(main.verify_tx_bscscan(cfg, tx_hash))
+    assert res["ok"] is False
+    assert "Quantidade de token abaixo do mínimo" in res["reason"]
