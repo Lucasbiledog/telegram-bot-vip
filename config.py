@@ -1,6 +1,6 @@
-from dotenv import load_dotenv
 import os
 from typing import Dict, List, Any
+from dotenv import load_dotenv
 
 load_dotenv()
 
@@ -18,12 +18,29 @@ CHAIN_ID_MAP = {
     "Base": 8453,
 }
 
+# Mapping to infer the native token symbol for common chains. This is used as a
+# sensible default when the environment does not explicitly define one.
+CHAIN_SYMBOL_MAP = {
+    "Ethereum": "ETH",
+    "Goerli": "ETH",
+    "Sepolia": "ETH",
+    "Binance Smart Chain": "BNB",
+    "Polygon": "MATIC",
+    "Avalanche": "AVAX",
+    "Fantom": "FTM",
+    # Rollups and L2s currently use ETH as their native token
+    "Arbitrum": "ETH",
+    "Optimism": "ETH",
+    "Base": "ETH",
+}
+
 
 def _load_default_chain() -> Dict[str, Any]:
     """Fallback to legacy single-chain env variables."""
     chain_name = os.getenv("CHAIN_NAME", "Polygon").strip()
     chain_id_env = os.getenv("CHAIN_ID")
     chain_id = int(chain_id_env) if chain_id_env else CHAIN_ID_MAP.get(chain_name, 0)
+    symbol = os.getenv("SYMBOL") or CHAIN_SYMBOL_MAP.get(chain_name, "")
     return {
         "chain_name": chain_name,
         "chain_id": chain_id,
@@ -33,6 +50,7 @@ def _load_default_chain() -> Dict[str, Any]:
         "decimals": int(os.getenv("TOKEN_DECIMALS", "18")),
         "bscscan_api_key": os.getenv("BSCSCAN_API_KEY", "").strip(),
         "etherscan_api_key": os.getenv("ETHERSCAN_API_KEY", "").strip(),
+        "symbol": symbol.strip(),
     }
 
 
@@ -42,6 +60,7 @@ def _load_chain(prefix: str) -> Dict[str, Any]:
     chain_name = os.getenv(f"{upp}_CHAIN_NAME", prefix).strip()
     chain_id_env = os.getenv(f"{upp}_CHAIN_ID")
     chain_id = int(chain_id_env) if chain_id_env else CHAIN_ID_MAP.get(chain_name, 0)
+    symbol = os.getenv(f"{upp}_SYMBOL") or CHAIN_SYMBOL_MAP.get(chain_name, "")
     return {
         "chain_name": chain_name,
         "chain_id": chain_id,
@@ -55,6 +74,7 @@ def _load_chain(prefix: str) -> Dict[str, Any]:
         "etherscan_api_key": os.getenv(
             f"{upp}_ETHERSCAN_API_KEY", os.getenv("ETHERSCAN_API_KEY", "")
         ).strip(),
+        "symbol": symbol.strip(),
     }
 
 

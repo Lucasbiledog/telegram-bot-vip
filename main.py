@@ -417,6 +417,7 @@ PORT = int(os.getenv("PORT", 8000))
 DEFAULT_CHAIN = CHAIN_CONFIGS[0] if CHAIN_CONFIGS else {}
 WALLET_ADDRESS = DEFAULT_CHAIN.get("wallet_address", "")
 CHAIN_NAME     = DEFAULT_CHAIN.get("chain_name", "")
+CHAIN_SYMBOL   = DEFAULT_CHAIN.get("symbol", "")
 RPC_URL        = DEFAULT_CHAIN.get("rpc_url", "")
 TOKEN_CONTRACT = DEFAULT_CHAIN.get("token_contract")
 TOKEN_DECIMALS = DEFAULT_CHAIN.get("decimals", 18)
@@ -1762,7 +1763,8 @@ def plan_from_amount(amount_usd: float) -> Optional[VipPlan]:
 async def fetch_price_usd(cfg: Dict[str, Any]) -> Optional[float]:
     """Obtém o preço em USD do ativo nativo configurado."""
     chain_name = cfg.get("chain_name", "").lower()
-    asset_id = COINGECKO_NATIVE_ID or chain_name
+    symbol = (cfg.get("symbol") or "").lower()
+    asset_id = COINGECKO_NATIVE_ID or symbol or chain_name
     try:
         async with httpx.AsyncClient(timeout=15) as client:
             url = (
@@ -2089,6 +2091,7 @@ async def verify_tx_blockscan(cfg: Dict[str, Any], tx_hash: str) -> Dict[str, An
                 "amount_usd": amount_usd,
                 "plan_days": plan_days,
                 "chain_name": cfg.get("chain_name"),
+                "symbol": cfg.get("symbol"),
             }
             if plan_days is None:
                 res["reason"] = "Valor não corresponde a nenhum plano"
@@ -2126,6 +2129,7 @@ async def verify_tx_blockscan(cfg: Dict[str, Any], tx_hash: str) -> Dict[str, An
             "amount_usd": amount_usd,
             "plan_days": plan_days,
             "chain_name": cfg.get("chain_name"),
+            "symbol": cfg.get("symbol"),
         }
         if plan_days is None:
             res["reason"] = "Valor não corresponde a nenhum plano"
@@ -2195,6 +2199,7 @@ async def verify_tx_bscscan(cfg: Dict[str, Any], tx_hash: str) -> Dict[str, Any]
                 "amount_usd": amount_usd,
                 "plan_days": plan_days,
                 "chain_name": cfg.get("chain_name"),
+                "symbol": cfg.get("symbol"),
             }
             if plan_days is None:
                 res["reason"] = "Valor não corresponde a nenhum plano"
@@ -2227,6 +2232,7 @@ async def verify_tx_bscscan(cfg: Dict[str, Any], tx_hash: str) -> Dict[str, Any]
             "amount_usd": amount_usd,
             "plan_days": plan_days,
             "chain_name": cfg.get("chain_name"),
+            "symbol": cfg.get("symbol"),
         }
         if plan_days is None:
             res["reason"] = "Valor não corresponde a nenhum plano"
@@ -2297,6 +2303,7 @@ async def verify_tx_etherscan(cfg: Dict[str, Any], tx_hash: str) -> Dict[str, An
                 "amount_usd": amount_usd,
                 "plan_days": plan_days,
                 "chain_name": cfg.get("chain_name"),
+                "symbol": cfg.get("symbol"),
             }
             if plan_days is None:
                 res["reason"] = "Valor não corresponde a nenhum plano"
@@ -2328,6 +2335,7 @@ async def verify_tx_etherscan(cfg: Dict[str, Any], tx_hash: str) -> Dict[str, An
             "amount_usd": amount_usd,
             "plan_days": plan_days,
             "chain_name": cfg.get("chain_name"),
+            "symbol": cfg.get("symbol"),
         }
         if plan_days is None:
             res["reason"] = "Valor não corresponde a nenhum plano"
@@ -2398,13 +2406,23 @@ async def verify_tx_blockchair(tx_hash: str, slug: Optional[str] = None) -> Dict
                 amount_native = value / (10 ** decimals)
                 amount_usd = amount_native * float(price_usd)
                 plan_days = infer_plan_days(amount_usd=amount_usd)
+                chain_name = sl.replace("-", " ").title()
+                symbol = next(
+                    (
+                        c.get("symbol")
+                        for c in CHAIN_CONFIGS
+                        if c.get("chain_name") == chain_name
+                    ),
+                    "",
+                )
                 res = {
                     "ok": bool(plan_days),
                     "type": "native",
                     "amount_wei": value,
                     "amount_usd": amount_usd,
                     "plan_days": plan_days,
-                    "chain_name": sl.replace("-", " ").title(),
+                    "chain_name": chain_name,
+                    "symbol": symbol,
                 }
                 if not plan_days:
                     res["reason"] = "Valor não corresponde a nenhum plano"
@@ -2482,7 +2500,13 @@ async def pagar_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     chat = update.effective_chat
     msg  = update.effective_message
-    wallets = [f"{cfg['chain_name']}: <code>{esc(cfg['wallet_address'])}</code>" for cfg in CHAIN_CONFIGS]
+    wallets = []
+    for cfg in CHAIN_CONFIGS:
+        label = cfg.get("chain_name", "")
+        symbol = cfg.get("symbol")
+        if symbol:
+            label = f"{label} ({symbol})"
+        wallets.append(f"{label}: <code>{esc(cfg['wallet_address'])}</code>")
 
     texto = (
         f"💸 <b>Pagamento via Cripto</b>\n"
@@ -2653,7 +2677,8 @@ async def tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             invite_link = await create_and_store_personal_invite(user.id)
             await dm(
                 user.id,
-                f"✅ Pagamento confirmado na rede {res.get('chain_name', CHAIN_NAME)}!\n",
+                f"✅ Pagamento confirmado na rede {res.get('chain_name', CHAIN_NAME)}"
+                f" ({res.get('symbol', CHAIN_SYMBOL)})!\n",
                 f"VIP válido até {m.expires_at:%d/%m/%Y} ({human_left(m.expires_at)}).\n",
                 f"Entre no VIP: {invite_link}",
                 parse_mode=None
@@ -2670,7 +2695,7 @@ async def tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 txt = (
                     "📥 Pagamento pendente:\n"
                     f"user_id:{user.id} @{user.username or '-'}\n"
-                    f"hash:{tx_hash}\nrede:{res.get('chain_name')}\ninfo:{human}"
+                    f"hash:{tx_hash}\nrede:{res.get('chain_name')} ({res.get('symbol', CHAIN_SYMBOL)})\ninfo:{human}"
                 )
                 await dm(aid, txt, parse_mode=None)
         except Exception:
@@ -2912,8 +2937,8 @@ async def pending_tx_recheck_job(context: ContextTypes.DEFAULT_TYPE):
                 invite_link = await create_and_store_personal_invite(p.user_id)
                 await dm(
                     p.user_id,
-                    f"✅ Pagamento confirmado na rede {CHAIN_NAME}!\n"
-                    f"VIP válido até {m.expires_at:%d/%m/%Y} ({human_left(m.expires_at)}).\n"
+                    f"✅ Pagamento confirmado na rede {res.get('chain_name', CHAIN_NAME)} ({res.get('symbol', CHAIN_SYMBOL)})!\n",
+                    f"VIP válido até {m.expires_at:%d/%m/%Y} ({human_left(m.expires_at)}).\n",
                     f"Entre no VIP: {invite_link}",
                     parse_mode=None,
                 )
@@ -3110,6 +3135,7 @@ async def crypto_webhook(request: Request):
     tx_hash= (data.get("tx_hash") or "").strip().lower()
     amount = data.get("amount")
     chain  = data.get("chain") or CHAIN_NAME
+    symbol = data.get("symbol") or CHAIN_SYMBOL
 
     if not uid or not tx_hash:
         return JSONResponse({"ok": False, "error": "telegram_user_id e tx_hash são obrigatórios"}, status_code=400)
@@ -3117,6 +3143,7 @@ async def crypto_webhook(request: Request):
     try:
         res = await verify_tx_any(tx_hash)
         chain = res.get("chain_name", chain)
+        symbol = res.get("symbol", symbol)
     except Exception as e:
         logging.exception("Erro verificando no webhook")
         return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
@@ -3176,7 +3203,7 @@ async def crypto_webhook(request: Request):
             invite_link = await create_and_store_personal_invite(int(uid))
             await application.bot.send_message(
     chat_id=int(uid),
-    text=(f"✅ Pagamento confirmado na rede {chain}!\n"
+    text=(f"✅ Pagamento confirmado na rede {chain} ({symbol})!\n"
           f"Seu VIP foi ativado por {PLAN_DAYS[plan]} dias.\n"
           f"Entre no VIP: {invite_link}")
 )
