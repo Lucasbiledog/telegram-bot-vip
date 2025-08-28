@@ -176,6 +176,7 @@ from datetime import timedelta
 
 import re
 TX_RE = re.compile(r'^(0x)?[0-9a-fA-F]+$')
+HASH64_RE = re.compile(r"0x[0-9a-fA-F]{64}")
 
 def normalize_tx_hash(s: str) -> Optional[str]:
     if not s:
@@ -190,7 +191,6 @@ def normalize_tx_hash(s: str) -> Optional[str]:
         # sem 0x: precisa ter 64 hex; adiciona 0x
         return ("0x" + s.lower()) if len(s) == 64 else None
     
-    HASH64_RE = re.compile(r"0x[0-9a-fA-F]{64}")
 
 def extract_tx_hashes(text: str) -> List[str]:
     """Return list of normalized transaction hashes found in text."""
@@ -1831,6 +1831,9 @@ BLOCKCHAIR_SLUGS: Dict[str, int] = {
     "avalanche": 18,
     "fantom": 18,
     "base": 18,
+    "optimism": 18,
+    "gnosis": 18,
+    "celo": 18,
 }
 
 async def verify_native_payment(cfg: Dict[str, Any], tx_hash: str) -> Dict[str, Any]:
@@ -2050,7 +2053,11 @@ async def verify_tx_blockchair(tx_hash: str, slug: Optional[str] = None) -> Dict
                 if not isinstance(resp, dict):
                     logging.warning("Resposta inválida da Blockchair para %s: %r", sl, resp)
                     continue
-                data = resp.get("data", {}).get(tx_hash, {})
+                data_obj = resp.get("data")
+                if not isinstance(data_obj, dict):
+                    logging.warning("Resposta inválida da Blockchair para %s: %r", sl, data_obj)
+                    continue
+                data = data_obj.get(tx_hash, {})
                 tx = data.get("transaction")
                 if not tx:
                     continue
