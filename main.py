@@ -2290,25 +2290,33 @@ async def clear_tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tx_hash = normalize_tx_hash(tx_raw)
     if not tx_hash:
         return await msg.reply_text("Hash inválida.")
+    
+    def _clear():
+        with SessionLocal() as s:
+            pay_q = s.query(Payment).filter(func.lower(Payment.tx_hash) == tx_hash)
+            vm_q = s.query(VipMembership).filter(func.lower(VipMembership.tx_hash) == tx_hash)
+            pays = pay_q.all()
+            vms = vm_q.all()
+            if not pays and not vms:
+                return False
+            try:
+                if pays:
+                    pay_q.delete(synchronize_session=False)
+                    if vms:
+                        vm_q.update({VipMembership.tx_hash: None}, synchronize_session=False)
+                    s.commit()
+                return True
+            except Exception as e:
+                s.rollback()
+                raise e
     tx_hash = tx_hash.lower()
-
-    with SessionLocal() as s:
-        pay_q = s.query(Payment).filter(Payment.tx_hash == tx_hash)
-        vm_q = s.query(VipMembership).filter(VipMembership.tx_hash == tx_hash)
-        pays = pay_q.all()
-        vms = vm_q.all()
-        if not pays and not vms:
-            return await msg.reply_text("Nenhum registro encontrado para essa hash.")
     try:
-        if pays:
-                pay_q.delete(synchronize_session=False)
-                if vms:
-                    vm_q.update({VipMembership.tx_hash: None}, synchronize_session=False)
-                s.commit()
-        return await msg.reply_text("Registro removido.")
+        removed = await asyncio.to_thread(_clear)
     except Exception as e:
-            s.rollback()
-            return await msg.reply_text(f"Erro ao remover: {e}")
+           return await msg.reply_text(f"Erro ao remover: {e}")
+    if not removed:
+        return await msg.reply_text("Nenhum registro encontrado para essa hash.")
+    return await msg.reply_text("Registro removido.")
 
 
 async def aprovar_tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2317,7 +2325,6 @@ async def aprovar_tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         raise ApplicationHandlerStop
     if not context.args:
         return await update.effective_message.reply_text("Uso: /aprovar_tx <user_id>")
-
     try:
         uid = int(context.args[0])
     except:
