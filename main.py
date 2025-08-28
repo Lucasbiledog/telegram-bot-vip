@@ -426,6 +426,12 @@ MIN_CONFIRMATIONS = int(os.getenv("MIN_CONFIRMATIONS", "5"))
 # Nativo
 MIN_NATIVE_AMOUNT = float(os.getenv("MIN_NATIVE_AMOUNT", "0"))  # em moeda nativa
 
+# ERC-20
+# Quantidade mínima de tokens exigida para considerar um pagamento válido.
+# Útil para evitar que valores residuais ou transferências equivocadas sejam
+# processadas automaticamente.
+MIN_TOKEN_AMOUNT = float(os.getenv("MIN_TOKEN_AMOUNT", "0"))
+
 # ERC-20 (opcional)
 TOKEN_SYMBOL    = os.getenv("TOKEN_SYMBOL", "TOKEN").strip()
 COINGECKO_NATIVE_ID = os.getenv("COINGECKO_NATIVE_ID", CHAIN_NAME.lower()).strip().lower()
@@ -2052,6 +2058,12 @@ async def verify_tx_bscscan(cfg: Dict[str, Any], tx_hash: str) -> Dict[str, Any]
             if not price_dec:
                 return {"ok": False, "reason": "Falha ao obter cotação do ativo"}
             price, decimals = price_dec
+            min_units = int(round(MIN_TOKEN_AMOUNT * (10 ** decimals)))
+            if amount_raw < min_units:
+                return {
+                    "ok": False,
+                    "reason": f"Quantidade de token abaixo do mínimo ({MIN_TOKEN_AMOUNT})",
+                }
             amount_native = amount_raw / (10 ** decimals)
             amount_usd = amount_native * price
             plan_days = infer_plan_days(amount_usd=amount_usd)
