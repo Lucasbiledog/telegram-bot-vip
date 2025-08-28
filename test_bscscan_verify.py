@@ -1,6 +1,3 @@
-+74
--0
-
 import os
 os.environ["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] = "1"
 import asyncio
@@ -26,7 +23,7 @@ class DummyResponse:
     def raise_for_status(self):
         pass
 
-class DummyClient:
+class DummyClientToken:
     def __init__(self, *args, **kwargs):
         self.calls = []
     async def __aenter__(self):
@@ -57,21 +54,73 @@ class DummyClient:
         if action == "eth_blockNumber":
             return DummyResponse({"result": "0x20"})
         if action == "eth_call":
-            return DummyResponse({"result": "0x12"})
+            return DummyResponse({"result": "0x0"})
         return DummyResponse({})
 
-def test_verify_erc20_payment_bscscan(monkeypatch):
-    client = DummyClient()
+class DummyClientNative:
+    def __init__(self, *args, **kwargs):
+        self.calls = []
+    async def __aenter__(self):
+        return self
+    async def __aexit__(self, exc_type, exc, tb):
+        pass
+    async def get(self, url, params):
+        self.calls.append((url, params))
+        action = params.get("action")
+        if action == "eth_getTransactionReceipt":
+            return DummyResponse({
+                "result": {
+                    "status": "0x1",
+                    "blockNumber": "0x10",
+                    "logs": [],
+                }
+            })
+        if action == "eth_blockNumber":
+            return DummyResponse({"result": "0x20"})
+        if action == "eth_getTransactionByHash":
+            return DummyResponse({
+                "result": {
+                    "to": WALLET,
+                    "from": "0x" + "1"*40,
+                    "value": hex(70),
+                }
+            })
+        return DummyResponse({})
+
+def test_verify_tx_bscscan_token(monkeypatch):
+    client = DummyClientToken()
     monkeypatch.setattr(httpx, "AsyncClient", lambda timeout=10: client)
+    async def fake_price(addr):
+        return (14.0, 0)
+    monkeypatch.setattr(main, "fetch_price_usd_for_contract", fake_price)
     cfg = {
         "wallet_address": WALLET,
-        "token_contract": CONTRACT,
         "bscscan_api_key": "KEY",
+        "chain_name": "Binance Smart Chain",
     }
     tx_hash = "0x" + "1"*64
-    res = asyncio.run(main.verify_erc20_payment_bscscan(cfg, tx_hash))
+    res = asyncio.run(main.verify_tx_bscscan(cfg, tx_hash))
     assert res["ok"] is True
-    assert res["amount_raw"] == 5
-    assert res["confirmations"] == 16
+    assert res["amount_usd"] == 70.0
+    assert res["plan_days"] == 90
     actions = [p[1]["action"] for p in client.calls]
-    assert set(["eth_getTransactionReceipt", "eth_blockNumber", "eth_call"]).issubset(actions)
+    assert set(["eth_getTransactionReceipt", "eth_blockNumber"]).issubset(actions)
+
+def test_verify_tx_bscscan_native(monkeypatch):
+    client = DummyClientNative()
+    monkeypatch.setattr(httpx, "AsyncClient", lambda timeout=10: client)
+    async def fake_native_price(cfg):
+        return 1e18
+    monkeypatch.setattr(main, "fetch_price_usd", fake_native_price)
+    cfg = {
+        "wallet_address": WALLET,
+        "bscscan_api_key": "KEY",
+        "chain_name": "Binance Smart Chain",
+    }
+    tx_hash = "0x" + "2"*64
+    res = asyncio.run(main.verify_tx_bscscan(cfg, tx_hash))
+    assert res["ok"] is True
+    assert res["amount_usd"] == 70.0
+    assert res["plan_days"] == 90
+    actions = [p[1]["action"] for p in client.calls]
+    assert set(["eth_getTransactionReceipt", "eth_blockNumber", "eth_getTransactionByHash"]).issubset(actions)
