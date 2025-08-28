@@ -14,6 +14,7 @@ def _load_default_chain() -> Dict[str, str]:
         "token_contract": (os.getenv("TOKEN_CONTRACT", "").strip().lower() or None),
         "decimals": int(os.getenv("TOKEN_DECIMALS", "18")),
         "bscscan_api_key": os.getenv("BSCSCAN_API_KEY", "").strip(),
+        "etherscan_api_key": os.getenv("ETHERSCAN_API_KEY", "").strip(),
     }
 
 
@@ -29,8 +30,10 @@ def _load_chain(prefix: str) -> Dict[str, str]:
         "bscscan_api_key": os.getenv(
             f"{upp}_BSCSCAN_API_KEY", os.getenv("BSCSCAN_API_KEY", "")
         ).strip(),
+        "etherscan_api_key": os.getenv(
+            f"{upp}_ETHERSCAN_API_KEY", os.getenv("ETHERSCAN_API_KEY", "")
+        ).strip(),
     }
-    
 
 
 _chain_names = os.getenv("CHAINS")

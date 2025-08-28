@@ -2116,6 +2116,107 @@ async def verify_tx_bscscan(cfg: Dict[str, Any], tx_hash: str) -> Dict[str, Any]
             res["reason"] = "Valor não corresponde a nenhum plano"
         return res
     
+
+async def verify_tx_etherscan(cfg: Dict[str, Any], tx_hash: str) -> Dict[str, Any]:
+    """Verifica transações (ETH ou ERC-20) usando apenas a API do Etherscan."""
+    api_key = cfg.get("etherscan_api_key")
+    if not api_key:
+        return {"ok": False, "reason": "ETHERSCAN_API_KEY não definido"}
+    wallet = (cfg.get("wallet_address") or "").lower()
+    base_url = "https://api.etherscan.io/api"
+    async with httpx.AsyncClient(timeout=10) as client:
+        params = {
+            "module": "proxy",
+            "action": "eth_getTransactionReceipt",
+            "txhash": tx_hash,
+            "apikey": api_key,
+        }
+        r = await client.get(base_url, params=params)
+        receipt = r.json().get("result")
+        if not receipt or receipt.get("status") != "0x1":
+            return {"ok": False, "reason": "Transação não confirmada/sucesso ainda"}
+        r_block = await client.get(
+            base_url, params={"module": "proxy", "action": "eth_blockNumber", "apikey": api_key}
+        )
+        current_block_hex = r_block.json().get("result")
+        confirmations = _hex_to_int(current_block_hex) - _hex_to_int(
+            receipt.get("blockNumber", "0x0")
+        )
+        if confirmations < MIN_CONFIRMATIONS:
+            return {
+                "ok": False,
+                "reason": f"Confirmações insuficientes ({confirmations}/{MIN_CONFIRMATIONS})",
+            }
+        logs = receipt.get("logs", [])
+        for lg in logs:
+            topics = [t.lower() for t in lg.get("topics", [])]
+            if not topics or topics[0] != TRANSFER_TOPIC or len(topics) < 3:
+                continue
+            to_addr = _topic_address(topics[2])
+            if wallet and to_addr != wallet:
+                continue
+            contract_addr = (lg.get("address") or "").lower()
+            amount_raw = _hex_to_int(lg.get("data"))
+            price_dec = await fetch_price_usd_for_contract(contract_addr)
+            if not price_dec:
+                return {"ok": False, "reason": "Falha ao obter cotação do ativo"}
+            price, decimals = price_dec
+            min_units = int(round(MIN_TOKEN_AMOUNT * (10 ** decimals)))
+            if amount_raw < min_units:
+                return {
+                    "ok": False,
+                    "reason": f"Quantidade de token abaixo do mínimo ({MIN_TOKEN_AMOUNT})",
+                }
+            amount_native = amount_raw / (10 ** decimals)
+            amount_usd = amount_native * price
+            plan_days = infer_plan_days(amount_usd=amount_usd)
+            res = {
+                "ok": True,
+                "type": "erc20",
+                "to": to_addr,
+                "amount_raw": amount_raw,
+                "contract": contract_addr,
+                "decimals": decimals,
+                "confirmations": confirmations,
+                "amount_usd": amount_usd,
+                "plan_days": plan_days,
+                "chain_name": cfg.get("chain_name"),
+            }
+            if plan_days is None:
+                res["reason"] = "Valor não corresponde a nenhum plano"
+            return res
+        r_tx = await client.get(
+            base_url,
+            params={"module": "proxy", "action": "eth_getTransactionByHash", "txhash": tx_hash, "apikey": api_key},
+        )
+        tx = r_tx.json().get("result")
+        if not tx:
+            return {"ok": False, "reason": "Transação não encontrada"}
+        to_addr = (tx.get("to") or "").lower()
+        if wallet and to_addr != wallet:
+            return {"ok": False, "reason": "Destinatário diferente da carteira configurada"}
+        value_wei = _hex_to_int(tx.get("value"))
+        price = await fetch_price_usd(cfg)
+        if price is None:
+            return {"ok": False, "reason": "Falha ao obter cotação do ativo"}
+        amount_native = value_wei / (10 ** 18)
+        amount_usd = amount_native * price
+        plan_days = infer_plan_days(amount_usd=amount_usd)
+        res = {
+            "ok": True,
+            "type": "native",
+            "from": (tx.get("from") or "").lower(),
+            "to": to_addr,
+            "amount_wei": value_wei,
+            "confirmations": confirmations,
+            "amount_usd": amount_usd,
+            "plan_days": plan_days,
+            "chain_name": cfg.get("chain_name"),
+        }
+        if plan_days is None:
+            res["reason"] = "Valor não corresponde a nenhum plano"
+        return res
+
 async def detect_chain_from_hash(tx_hash: str) -> Optional[str]:
     """Tenta identificar em qual cadeia a transação existe usando APIs públicas."""
     async with httpx.AsyncClient(timeout=10) as client:
@@ -2135,14 +2236,15 @@ async def detect_chain_from_hash(tx_hash: str) -> Optional[str]:
 
 async def verify_tx_any(tx_hash: str) -> Dict[str, Any]:
     for cfg in CHAIN_CONFIGS:
-        try:
-            res = await verify_tx_bscscan(cfg, tx_hash)
-        except Exception as e:
-            logging.warning("Erro verificando via BscScan: %s", e)
-            continue
-        if res.get("ok"):
-            return res
-    return {"ok": False, "reason": "Transação não encontrada na BscScan"}
+        for fn, label in ((verify_tx_bscscan, "BscScan"), (verify_tx_etherscan, "Etherscan")):
+            try:
+                res = await fn(cfg, tx_hash)
+            except Exception as e:
+                logging.warning("Erro verificando via %s: %s", label, e)
+                continue
+            if res.get("ok"):
+                return res
+    return {"ok": False, "reason": "Transação não encontrada nas APIs"}
 
 
 async def verify_tx_blockchair(tx_hash: str, slug: Optional[str] = None) -> Dict[str, Any]:
