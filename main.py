@@ -2143,14 +2143,13 @@ async def tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
     # Já existe?
-    with SessionLocal() as s:
-        existing = (
-            s.query(Payment)
-            .filter(func.lower(Payment.tx_hash) == tx_hash)
-            .first()
-        )
-        if existing and existing.user_id != user.id:
-            return await msg.reply_text("Esse hash já foi usado por outro usuário.")
+    def _fetch_existing():
+        with SessionLocal() as s:
+            return s.query(Payment).filter(Payment.tx_hash == tx_hash).first()
+    existing = await asyncio.to_thread(_fetch_existing)
+    if existing and existing.user_id != user.id:
+        return await msg.reply_text("Esse hash já foi usado por outro usuário.")
+
 
     if existing and existing.status == "approved":
         if existing.user_id == user.id:
@@ -2198,23 +2197,25 @@ async def tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     status = "approved" if (AUTO_APPROVE_CRYPTO and paid_ok) else "pending"
 
-    with SessionLocal() as s:
-        try:
-            p = Payment(
-                user_id=user.id,
-                username=user.username,
-                tx_hash=tx_hash,
-                chain=res.get("chain_name", CHAIN_NAME),
-                status=status,
-                amount=str(res.get("amount_usd") or ""),
-                decided_at=now_utc() if status == "approved" else None,
-                notes=res.get("reason") if status == "pending" else None,
-            )
-            s.add(p)
-            s.commit()
-        except Exception:
-            s.rollback()
-            raise
+    def _store_payment():
+        with SessionLocal() as s:
+            try:
+                p = Payment(
+                    user_id=user.id,
+                    username=user.username,
+                    tx_hash=tx_hash,
+                    chain=res.get("chain_name", CHAIN_NAME),
+                    status=status,
+                    amount=str(res.get("amount_usd") or ""),
+                    decided_at=now_utc() if status == "approved" else None,
+                    notes=res.get("reason") if status == "pending" else None,
+                )
+                s.add(p)
+                s.commit()
+            except Exception:
+                s.rollback()
+                raise
+    await asyncio.to_thread(_store_payment)
     if status == "pending" and (res.get("reason") or "").startswith("Transação não encontrada"):
         schedule_pending_tx_recheck()
         
@@ -2289,12 +2290,14 @@ async def clear_tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tx_hash = normalize_tx_hash(tx_raw)
     if not tx_hash:
         return await msg.reply_text("Hash inválida.")
+    tx_hash = tx_hash.lower()
 
-    pay_q = s.query(Payment).filter(func.lower(Payment.tx_hash) == tx_hash)
-    vm_q = s.query(VipMembership).filter(func.lower(VipMembership.tx_hash) == tx_hash)
-    pays = pay_q.all()
-    vms = vm_q.all()
-    if not pays and not vms:
+    with SessionLocal() as s:
+        pay_q = s.query(Payment).filter(Payment.tx_hash == tx_hash)
+        vm_q = s.query(VipMembership).filter(VipMembership.tx_hash == tx_hash)
+        pays = pay_q.all()
+        vms = vm_q.all()
+        if not pays and not vms:
             return await msg.reply_text("Nenhum registro encontrado para essa hash.")
     try:
         if pays:

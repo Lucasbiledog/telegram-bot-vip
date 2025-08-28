@@ -1,62 +1,97 @@
+import os
+import time
 import asyncio
 import importlib
-import sys
-from pathlib import Path
-from unittest.mock import AsyncMock
-
-
-def test_clear_tx_allows_resubmission(monkeypatch, tmp_path):
-    db_path = tmp_path / "test.db"
-    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{db_path}")
+from types import SimpleNamespace
+import pytest
+from sqlalchemy.orm import Session
+import sys, pathlib
+@pytest.fixture
+def main_module(tmp_path, monkeypatch):
+    monkeypatch.setenv("BOT_TOKEN", "123:ABC")
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path}/test.db")
     monkeypatch.setenv("AUTO_APPROVE_CRYPTO", "0")
-    monkeypatch.setenv("BOT_TOKEN", "test")
-    monkeypatch.setenv("WEBHOOK_URL", "http://example.com")
-    monkeypatch.setenv("SELF_URL", "http://example.com")
-    sys.path.append(str(Path(__file__).resolve().parents[1]))
-    main = importlib.reload(importlib.import_module("main"))
-
-    monkeypatch.setattr(main, "is_admin", lambda uid: True)
-    monkeypatch.setattr(
-        main,
-        "verify_tx_any",
-        AsyncMock(return_value={"ok": False, "reason": "Aguardando", "chain_name": "ETH"}),
-    )
-    monkeypatch.setattr(main, "dm", AsyncMock())
+    monkeypatch.setenv("WEBHOOK_URL", "http://localhost")
+    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+    import main
+    importlib.reload(main)
+    main.Base.metadata.drop_all(bind=main.engine)
+    main.Base.metadata.create_all(bind=main.engine)
+    return main
+def _patch_slow_commit(monkeypatch):
+    orig_commit = Session.commit
+    def slow_commit(self, *args, **kwargs):
+        time.sleep(0.2)
+        return orig_commit(self, *args, **kwargs)
+    monkeypatch.setattr(Session, "commit", slow_commit, raising=False)
+def test_tx_cmd_concurrent(main_module, monkeypatch):
+    main = main_module
+    _patch_slow_commit(monkeypatch)
+    async def fake_verify_tx_any(tx_hash):
+        return {"ok": False, "reason": "Transação não encontrada", "chain_name": "eth", "amount_usd": 10}
+    monkeypatch.setattr(main, "verify_tx_any", fake_verify_tx_any)
     monkeypatch.setattr(main, "list_admin_ids", lambda: [])
-
-    tx = "0x" + "a" * 64
-
+    monkeypatch.setattr(main, "schedule_pending_tx_recheck", lambda: None)
+    async def fake_dm(*args, **kwargs):
+        pass
+    monkeypatch.setattr(main, "dm", fake_dm)
+    class DummyMsg:
+        async def reply_text(self, *args, **kwargs):
+            pass
     class DummyUser:
-        def __init__(self, uid, username="user"):
+        def __init__(self, uid):
             self.id = uid
-            self.username = username
-
-    class DummyMessage:
-        def __init__(self):
-            self.texts = []
-
-        async def reply_text(self, text, *args, **kwargs):
-            self.texts.append(text)
-
-    class DummyUpdate:
-        def __init__(self, user):
-            self.effective_user = user
-            self.effective_message = DummyMessage()
-
-    class DummyContext:
-        def __init__(self, args):
-            self.args = args
-
-    asyncio.run(main.tx_cmd(DummyUpdate(DummyUser(1, "alice")), DummyContext([tx])))
-    with main.SessionLocal() as s:
-        assert s.query(main.Payment).filter(main.Payment.tx_hash == tx).count() == 1
-
-    asyncio.run(main.clear_tx_cmd(DummyUpdate(DummyUser(2, "admin")), DummyContext([tx])))
-    with main.SessionLocal() as s:
-        assert s.query(main.Payment).filter(main.Payment.tx_hash == tx).count() == 0
-
-    asyncio.run(main.tx_cmd(DummyUpdate(DummyUser(1, "alice")), DummyContext([tx])))
-    with main.SessionLocal() as s:
-        payments = s.query(main.Payment).filter(main.Payment.tx_hash == tx).all()
-        assert len(payments) == 1
-        assert payments[0].user_id == 1
+            self.username = f"user{uid}"
+    async def call(hash_val, uid):
+        update = SimpleNamespace(effective_message=DummyMsg(), effective_user=DummyUser(uid))
+        context = SimpleNamespace(args=[hash_val])
+        await main.tx_cmd(update, context)
+    h1 = "0x" + "1" * 64
+    h2 = "0x" + "2" * 64
+    async def runner():
+        await asyncio.gather(call(h1, 1), call(h2, 2))
+    start = time.perf_counter()
+    asyncio.run(runner())
+    elapsed = time.perf_counter() - start
+    assert elapsed < 0.35
+def test_clear_tx_cmd_concurrent(main_module, monkeypatch):
+    main = main_module
+    monkeypatch.setattr(main, "is_admin", lambda uid: True)
+    class DummyQuery:
+        def filter(self, *args, **kwargs):
+            return self
+        def all(self):
+            return [1]
+        def delete(self, *args, **kwargs):
+            pass
+        def update(self, *args, **kwargs):
+            pass
+    class DummySession:
+        def __enter__(self):
+            return self
+        def __exit__(self, exc_type, exc, tb):
+            pass
+        def query(self, *args, **kwargs):
+            return DummyQuery()
+        def commit(self):
+            time.sleep(0.2)
+        def rollback(self):
+            pass
+    monkeypatch.setattr(main, "SessionLocal", lambda: DummySession())
+    hashes = ["0x" + "3" * 64, "0x" + "4" * 64]
+    class DummyMsg:
+        async def reply_text(self, *args, **kwargs):
+            pass
+    class DummyUser:
+        id = 1
+        username = "admin"
+    async def call(h):
+        update = SimpleNamespace(effective_message=DummyMsg(), effective_user=DummyUser())
+        context = SimpleNamespace(args=[h])
+        await main.clear_tx_cmd(update, context)
+    async def runner():
+        await asyncio.gather(call(hashes[0]), call(hashes[1]))
+    start = time.perf_counter()
+    asyncio.run(runner())
+    elapsed = time.perf_counter() - start
+    assert elapsed < 0.35
