@@ -16,3 +16,7 @@ As seguintes redes EVM são utilizadas para verificar transações via API públ
 - Optimism
 - Gnosis
 - Celo
+
+## Integração com Etherscan
+
+Transações na rede Ethereum também podem ser verificadas por meio da API do [Etherscan](https://etherscan.io/). Defina `ETHERSCAN_API_KEY` no ambiente para habilitar a verificação de pagamentos via Etherscan.
