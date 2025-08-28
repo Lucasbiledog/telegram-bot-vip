@@ -372,6 +372,10 @@ def parse_hhmm(s: str) -> Tuple[int, int]:
 
 async def dm(user_id: int, text: str, parse_mode: Optional[str] = "HTML") -> bool:
     try:
+        chat = await application.bot.get_chat(user_id)
+        if getattr(chat, "is_bot", False):
+            logging.warning(f"Tentativa de DM para bot {user_id}. Abortando.")
+            return False
         await application.bot.send_message(chat_id=user_id, text=text, parse_mode=parse_mode)
         return True
     except Exception as e:
@@ -1952,7 +1956,11 @@ async def verify_tx_blockchair(tx_hash: str) -> Dict[str, Any]:
                 r = await client.get(url)
                 if r.status_code != 200:
                     continue
-                data = r.json().get("data", {}).get(tx_hash, {})
+                resp = r.json()
+                if not isinstance(resp, dict):
+                    logging.warning("Resposta inválida da Blockchair para %s: %r", slug, resp)
+                    continue
+                data = resp.get("data", {}).get(tx_hash, {})
                 tx = data.get("transaction")
                 if not tx:
                     continue
@@ -1960,7 +1968,7 @@ async def verify_tx_blockchair(tx_hash: str) -> Dict[str, Any]:
                 if wallets and to_addr not in wallets:
                     continue
                 value = int(tx.get("value", 0))
-                price_usd = r.json().get("context", {}).get("state", {}).get("market_price_usd") or 0
+                price_usd = resp.get("context", {}).get("state", {}).get("market_price_usd") or 0
                 amount_native = value / (10 ** decimals)
                 amount_usd = amount_native * float(price_usd)
                 plan_days = infer_plan_days(amount_usd=amount_usd)
@@ -2017,36 +2025,28 @@ async def simular_tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         invite_link = await create_and_store_personal_invite(user.id)
-        await dm(
-    user.id,
-    f"✅ Pagamento confirmado na rede {p.chain}!\n"
-    f"VIP válido até {m.expires_at:%d/%m/%Y} ({human_left(m.expires_at)}).\n"
-    f"Entre no VIP: {invite_link}",
-    parse_mode=None
-)
-
-        await update.effective_message.reply_text("✅ Pagamento simulado com sucesso. Veja seu privado.")
+        sent = await dm(
+            user.id,
+            f"""✅ Pagamento confirmado na rede {p.chain}!
+VIP válido até {m.expires_at:%d/%m/%Y} ({human_left(m.expires_at)}).
+Entre no VIP: {invite_link}""",
+            parse_mode=None,
+        )
+        if sent:
+            await update.effective_message.reply_text("✅ Pagamento simulado com sucesso. Veja seu privado.")
+        else:
+            await update.effective_message.reply_text(
+                "Simulado OK, mas não consegui te enviar o convite no privado."
+            )
     except Exception as e:
         await update.effective_message.reply_text(f"Simulado OK, mas falhou enviar convite: {e}")
         invite = await assign_and_send_invite(user.id, user.username, tx_hash)
         await dm(
-    user.id,
-    f"✅ Pagamento confirmado na rede {p.chain}!\n"
-    f"VIP válido até {m.expires_at:%d/%m/%Y} ({human_left(m.expires_at)}).\n"
-    f"Convite (válido 2h, uso único): {invite}",
-    parse_mode=None
-)
-
-
-
-# helper: apagar mensagem depois de alguns segundos
-async def delete_later(chat_id: int, message_id: int, seconds: int = 5):
-    await asyncio.sleep(seconds)
-    try:
-        await application.bot.delete_message(chat_id=chat_id, message_id=message_id)
-    except Exception:
-        pass
-
+    user.id,f"""✅ Pagamento confirmado na rede {p.chain}!
+VIP válido até {m.expires_at:%d/%m/%Y} ({human_left(m.expires_at)}).
+Convite (válido 2h, uso único): {invite}""",
+            parse_mode=None,
+        )
 async def pagar_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not CHAIN_CONFIGS:
         return await update.effective_message.reply_text(
