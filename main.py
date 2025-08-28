@@ -2144,7 +2144,11 @@ async def tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Já existe?
     with SessionLocal() as s:
-        existing = s.query(Payment).filter(Payment.tx_hash == tx_hash).first()
+        existing = (
+            s.query(Payment)
+            .filter(func.lower(Payment.tx_hash) == tx_hash)
+            .first()
+        )
         if existing and existing.user_id != user.id:
             return await msg.reply_text("Esse hash já foi usado por outro usuário.")
 
