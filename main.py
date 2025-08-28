@@ -1830,6 +1830,7 @@ async def rpc_call(cfg: Dict[str, Any], method: str, params: list) -> Any:
     
     # Mapeamento de cadeias suportadas pela API pública da Blockchair
 BLOCKCHAIR_SLUGS: Dict[str, int] = {
+    "bitcoin": 8,
     "ethereum": 18,
     "binance-smart-chain": 18,
     "polygon": 18,
@@ -2146,20 +2147,17 @@ async def verify_tx_any(tx_hash: str) -> Dict[str, Any]:
 
 async def verify_tx_blockchair(tx_hash: str, slug: Optional[str] = None) -> Dict[str, Any]:
     """Tentativa de verificação genérica usando a API pública do Blockchair."""
-    slugs = (
-        {slug: BLOCKCHAIR_SLUGS.get(slug, 18)} if slug else BLOCKCHAIR_SLUGS
-    )
+    slugs = {slug: BLOCKCHAIR_SLUGS.get(slug, 18)} if slug else BLOCKCHAIR_SLUGS
     wallets = {
         cfg.get("wallet_address", "").lower()
         for cfg in CHAIN_CONFIGS
         if cfg.get("wallet_address")
-        
     }
-    wallets = {cfg.get("wallet_address", "").lower() for cfg in CHAIN_CONFIGS if cfg.get("wallet_address")}
+    tx_clean = tx_hash[2:] if tx_hash.startswith("0x") else tx_hash
     async with httpx.AsyncClient(timeout=10) as client:
         for sl, decimals in slugs.items():
             try:
-                url = f"https://api.blockchair.com/{sl}/dashboards/transaction/{tx_hash}"
+                url = f"https://api.blockchair.com/{sl}/dashboards/transaction/{tx_clean}"
                 r = await client.get(url)
                 if r.status_code != 200:
                     continue
@@ -2171,12 +2169,12 @@ async def verify_tx_blockchair(tx_hash: str, slug: Optional[str] = None) -> Dict
                 if not isinstance(data_obj, dict):
                     logging.warning("Resposta inválida da Blockchair para %s: %r", sl, data_obj)
                     continue
-                data = data_obj.get(tx_hash, {})
+                data = data_obj.get(tx_clean, {})
                 tx = data.get("transaction")
                 if not tx:
                     continue
                 to_addr = (tx.get("recipient") or "").lower()
-                if wallets and to_addr not in wallets:
+                if to_addr.startswith("0x") and wallets and to_addr not in wallets:
                     continue
                 value = int(tx.get("value", 0))
                 price_usd = resp.get("context", {}).get("state", {}).get("market_price_usd") or 0

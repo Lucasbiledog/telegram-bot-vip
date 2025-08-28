@@ -80,3 +80,26 @@ def test_verify_tx_blockchair_list_data(monkeypatch, caplog):
     assert res["ok"] is False
     assert len(client.urls) == len(main.BLOCKCHAIR_SLUGS)
     assert "Blockchair" in caplog.text
+
+
+class HashClient:
+    def __init__(self, *args, **kwargs):
+        self.urls = []
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        pass
+
+    async def get(self, url):
+        self.urls.append(url)
+        return DummyResponse()
+
+
+def test_verify_tx_blockchair_strips_prefix(monkeypatch):
+    client = HashClient()
+    monkeypatch.setattr(httpx, "AsyncClient", lambda timeout=10: client)
+    tx_hash = "0x" + "2" * 64
+    asyncio.run(main.verify_tx_blockchair(tx_hash, slug="bitcoin"))
+    assert client.urls[0].endswith("/" + "2" * 64)
