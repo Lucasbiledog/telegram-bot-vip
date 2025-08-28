@@ -1928,6 +1928,87 @@ async def verify_erc20_payment(cfg: Dict[str, Any], tx_hash: str) -> Dict[str, A
         "decimals": found["decimals"],
         "confirmations": confirmations,
     }
+async def verify_erc20_payment_bscscan(cfg: Dict[str, Any], tx_hash: str) -> Dict[str, Any]:
+    """Verifica transferência ERC-20 usando a API do BscScan."""
+    api_key = cfg.get("bscscan_api_key")
+    if not api_key:
+        return {"ok": False, "reason": "BSCSCAN_API_KEY não definido"}
+    base_url = "https://api.bscscan.com/api"
+    wallet = cfg.get("wallet_address")
+    contract_cfg = (cfg.get("token_contract") or "").lower()
+    async with httpx.AsyncClient(timeout=10) as client:
+        params = {
+            "module": "proxy",
+            "action": "eth_getTransactionReceipt",
+            "txhash": tx_hash,
+            "apikey": api_key,
+        }
+        r = await client.get(base_url, params=params)
+        receipt = r.json().get("result")
+        if not receipt or receipt.get("status") != "0x1":
+            return {"ok": False, "reason": "Transação não confirmada/sucesso ainda"}
+        logs = receipt.get("logs", [])
+        found = None
+        reason = "Nenhum Transfer para a carteira" if wallet else "Nenhum evento Transfer encontrado"
+        for lg in logs:
+            topics = [t.lower() for t in lg.get("topics", [])]
+            if not topics or topics[0] != TRANSFER_TOPIC:
+                continue
+            to_addr = _topic_address(topics[2]) if len(topics) >= 3 else ""
+            if wallet and to_addr != wallet:
+                continue
+            contract_addr = (lg.get("address") or "").lower()
+            if contract_cfg and contract_addr != contract_cfg:
+                continue
+            amount = _hex_to_int(lg.get("data"))
+            decimals = cfg.get("decimals")
+            if decimals is None:
+                p_dec = {
+                    "module": "proxy",
+                    "action": "eth_call",
+                    "to": contract_addr,
+                    "data": ERC20_DECIMALS_SELECTOR,
+                    "tag": "latest",
+                    "apikey": api_key,
+                }
+                r_dec = await client.get(base_url, params=p_dec)
+                decimals = _hex_to_int(r_dec.json().get("result"))
+            min_units = int(round(MIN_TOKEN_AMOUNT * (10 ** decimals)))
+            if amount < min_units:
+                reason = f"Quantidade de token abaixo do mínimo ({MIN_TOKEN_AMOUNT})"
+                continue
+            found = {
+                "amount_raw": amount,
+                "to": to_addr,
+                "contract": contract_addr,
+                "decimals": decimals,
+            }
+            break
+        if not found:
+            return {"ok": False, "reason": reason}
+        r_block = await client.get(
+            base_url,
+            params={"module": "proxy", "action": "eth_blockNumber", "apikey": api_key},
+        )
+        current_block_hex = r_block.json().get("result")
+        confirmations = _hex_to_int(current_block_hex) - _hex_to_int(
+            receipt.get("blockNumber", "0x0")
+        )
+        if confirmations < MIN_CONFIRMATIONS:
+            return {
+                "ok": False,
+                "reason": f"Confirmações insuficientes ({confirmations}/{MIN_CONFIRMATIONS})",
+            }
+        return {
+            "ok": True,
+            "type": "erc20",
+            "to": found["to"],
+            "amount_raw": found["amount_raw"],
+            "contract": found["contract"],
+            "decimals": found["decimals"],
+            "confirmations": confirmations,
+        }
+    
 async def detect_chain_from_hash(tx_hash: str) -> Optional[str]:
     """Tenta identificar em qual cadeia a transação existe usando APIs públicas."""
     async with httpx.AsyncClient(timeout=10) as client:
@@ -1961,6 +2042,12 @@ async def verify_tx_any(tx_hash: str) -> Dict[str, Any]:
             try:
                 if cfg.get("token_contract"):
                     res = await verify_erc20_payment(cfg, tx_hash)
+                    if (
+                        (not res.get("ok"))
+                        and cfg.get("bscscan_api_key")
+                        and "binance" in cfg.get("chain_name", "").lower()
+                    ):
+                        res = await verify_erc20_payment_bscscan(cfg, tx_hash)
                 else:
                     res = await verify_native_payment(cfg, tx_hash)
             except Exception as e:
@@ -1997,6 +2084,12 @@ async def verify_tx_any(tx_hash: str) -> Dict[str, Any]:
         try:
             if cfg.get("token_contract"):
                 res = await verify_erc20_payment(cfg, tx_hash)
+                if (
+                    (not res.get("ok"))
+                    and cfg.get("bscscan_api_key")
+                    and "binance" in cfg.get("chain_name", "").lower()
+                ):
+                    res = await verify_erc20_payment_bscscan(cfg, tx_hash)
             else:
                 res = await verify_native_payment(cfg, tx_hash)
         except Exception as e:
