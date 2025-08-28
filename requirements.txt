@@ -9,7 +9,9 @@ google-auth-oauthlib
 apscheduler
 python-telegram-bot==22.3
 pytz
-psycopg2-binary
 web3==6.20.1
 eth-account>=0.10.0
+pytesseract
+pillow
+pdfminer.six
 psycopg2-binary

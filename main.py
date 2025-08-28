@@ -4,6 +4,8 @@ import asyncio
 import datetime as dt
 from enum import Enum
 from typing import Optional, List, Dict, Any, Tuple
+from types import SimpleNamespace
+from io import BytesIO
 
 import html
 import json
@@ -187,6 +189,19 @@ def normalize_tx_hash(s: str) -> Optional[str]:
     else:
         # sem 0x: precisa ter 64 hex; adiciona 0x
         return ("0x" + s.lower()) if len(s) == 64 else None
+    
+    HASH64_RE = re.compile(r"0x[0-9a-fA-F]{64}")
+
+def extract_tx_hashes(text: str) -> List[str]:
+    """Return list of normalized transaction hashes found in text."""
+    if not text:
+        return []
+    hashes = []
+    for match in HASH64_RE.findall(text):
+        h = normalize_tx_hash(match)
+        if h:
+            hashes.append(h)
+    return hashes
 
 
 # ----- Preço VIP (em nativo ou token) usando ConfigKV
@@ -1806,13 +1821,25 @@ async def rpc_call(cfg: Dict[str, Any], method: str, params: list) -> Any:
         if "error" in data:
             raise RuntimeError(f"RPC error: {data['error']}")
         return data.get("result")
+    
+    # Mapeamento de cadeias suportadas pela API pública da Blockchair
+BLOCKCHAIR_SLUGS: Dict[str, int] = {
+    "ethereum": 18,
+    "binance-smart-chain": 18,
+    "polygon": 18,
+    "arbitrum": 18,
+    "avalanche": 18,
+    "fantom": 18,
+    "base": 18,
+}
 
 async def verify_native_payment(cfg: Dict[str, Any], tx_hash: str) -> Dict[str, Any]:
     tx = await rpc_call(cfg, "eth_getTransactionByHash", [tx_hash])
     if not tx:
         return {"ok": False, "reason": "Transação não encontrada"}
     to_addr = (tx.get("to") or "").lower()
-    if to_addr != cfg.get("wallet_address"):
+    wallet = cfg.get("wallet_address")
+    if wallet and to_addr != wallet:
         return {"ok": False, "reason": "Destinatário diferente da carteira configurada"}
     value_wei = _hex_to_int(tx.get("value"))
     min_wei = _to_wei(MIN_NATIVE_AMOUNT, 18)
@@ -1850,14 +1877,14 @@ async def verify_erc20_payment(cfg: Dict[str, Any], tx_hash: str) -> Dict[str, A
     logs = receipt.get("logs", [])
     wallet = cfg.get("wallet_address")
     found: Optional[Dict[str, Any]] = None
-    reason = "Nenhum Transfer para a carteira"
+    reason = "Nenhum Transfer para a carteira" if wallet else "Nenhum evento Transfer encontrado"
     for lg in logs:
     
         topics = [t.lower() for t in lg.get("topics", [])]
         if not topics or topics[0] != TRANSFER_TOPIC:
             continue
         to_addr = _topic_address(topics[2]) if len(topics) >= 3 else ""
-        if to_addr != wallet:
+        if wallet and to_addr != wallet:
             continue
         contract_addr = (lg.get("address") or "").lower()
         amount = _hex_to_int(lg.get("data"))
@@ -1898,8 +1925,71 @@ async def verify_erc20_payment(cfg: Dict[str, Any], tx_hash: str) -> Dict[str, A
         "decimals": found["decimals"],
         "confirmations": confirmations,
     }
+async def detect_chain_from_hash(tx_hash: str) -> Optional[str]:
+    """Tenta identificar em qual cadeia a transação existe usando APIs públicas."""
+    async with httpx.AsyncClient(timeout=10) as client:
+        for slug in BLOCKCHAIR_SLUGS.keys():
+            try:
+                url = f"https://api.blockchair.com/{slug}/dashboards/transaction/{tx_hash}"
+                r = await client.get(url)
+                if r.status_code != 200:
+                    continue
+                data = r.json().get("data", {})
+                if tx_hash in data and data[tx_hash].get("transaction"):
+                    return slug
+            except Exception as e:
+                logging.warning("Erro detectando cadeia %s: %s", slug, e)
+                continue
+    return None
 
 async def verify_tx_any(tx_hash: str) -> Dict[str, Any]:
+    detected_slug = await detect_chain_from_hash(tx_hash)
+    if detected_slug:
+        cfg = next(
+            (
+                c
+                for c in CHAIN_CONFIGS
+                if c.get("chain_name", "").replace("-", " ").lower()
+                == detected_slug.replace("-", " ").lower()
+            ),
+            None,
+        )
+        if cfg:
+            try:
+                if cfg.get("token_contract"):
+                    res = await verify_erc20_payment(cfg, tx_hash)
+                else:
+                    res = await verify_native_payment(cfg, tx_hash)
+            except Exception as e:
+                logging.warning(
+                    "Erro verificando na cadeia detectada %s: %s", cfg.get("chain_name"), e
+                )
+                res = None
+            if res and res.get("ok"):
+                if res.get("type") == "erc20":
+                    price_dec = await fetch_price_usd_for_contract(res.get("contract"))
+                    if not price_dec:
+                        res["ok"] = False
+                        res["reason"] = "Falha ao obter cotação do ativo"
+                        return res
+                    price, decimals = price_dec
+                    res["decimals"] = decimals
+                    amount_native = res.get("amount_raw", 0) / (10 ** decimals)
+                else:
+                    price = await fetch_price_usd(cfg)
+                    if price is None:
+                        res["ok"] = False
+                        res["reason"] = "Falha ao obter cotação do ativo"
+                        return res
+                    amount_native = res.get("amount_wei", 0) / (10 ** 18)
+                res["amount_usd"] = amount_native * price
+                plan_days = infer_plan_days(amount_usd=res["amount_usd"])
+                res["plan_days"] = plan_days
+                if plan_days is None:
+                    res["reason"] = res.get("reason") or "Valor não corresponde a nenhum plano"
+                res["chain_name"] = cfg.get("chain_name")
+                return res
+        return await verify_tx_blockchair(tx_hash, detected_slug)
     for cfg in CHAIN_CONFIGS:
         try:
             if cfg.get("token_contract"):
@@ -1937,28 +2027,28 @@ async def verify_tx_any(tx_hash: str) -> Dict[str, Any]:
     return await verify_tx_blockchair(tx_hash)
 
 
-async def verify_tx_blockchair(tx_hash: str) -> Dict[str, Any]:
+async def verify_tx_blockchair(tx_hash: str, slug: Optional[str] = None) -> Dict[str, Any]:
     """Tentativa de verificação genérica usando a API pública do Blockchair."""
-    slugs = {
-        "ethereum": 18,
-        "binance-smart-chain": 18,
-        "polygon": 18,
-        "arbitrum": 18,
-        "avalanche": 18,
-        "fantom": 18,
-        "base": 18,
+    slugs = (
+        {slug: BLOCKCHAIR_SLUGS.get(slug, 18)} if slug else BLOCKCHAIR_SLUGS
+    )
+    wallets = {
+        cfg.get("wallet_address", "").lower()
+        for cfg in CHAIN_CONFIGS
+        if cfg.get("wallet_address")
+        
     }
     wallets = {cfg.get("wallet_address", "").lower() for cfg in CHAIN_CONFIGS if cfg.get("wallet_address")}
     async with httpx.AsyncClient(timeout=10) as client:
-        for slug, decimals in slugs.items():
+        for sl, decimals in slugs.items():
             try:
-                url = f"https://api.blockchair.com/{slug}/dashboards/transaction/{tx_hash}"
+                url = f"https://api.blockchair.com/{sl}/dashboards/transaction/{tx_hash}"
                 r = await client.get(url)
                 if r.status_code != 200:
                     continue
                 resp = r.json()
                 if not isinstance(resp, dict):
-                    logging.warning("Resposta inválida da Blockchair para %s: %r", slug, resp)
+                    logging.warning("Resposta inválida da Blockchair para %s: %r", sl, resp)
                     continue
                 data = resp.get("data", {}).get(tx_hash, {})
                 tx = data.get("transaction")
@@ -1978,13 +2068,13 @@ async def verify_tx_blockchair(tx_hash: str) -> Dict[str, Any]:
                     "amount_wei": value,
                     "amount_usd": amount_usd,
                     "plan_days": plan_days,
-                    "chain_name": slug.replace("-", " ").title(),
+                    "chain_name": sl.replace("-", " ").title(),
                 }
                 if not plan_days:
                     res["reason"] = "Valor não corresponde a nenhum plano"
                 return res
             except Exception as e:
-                logging.warning("Erro verificando Blockchair %s: %s", slug, e)
+                logging.warning("Erro verificando Blockchair %s: %s", sl, e)
                 continue
     return {"ok": False, "reason": "Transação não encontrada em nenhuma cadeia."}
     
@@ -2402,6 +2492,52 @@ async def rejeitar_tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             s.rollback()
             await update.effective_message.reply_text(f"❌ Erro ao rejeitar: {e}")
+# ----- Auto TX handler -----
+
+async def _hashes_from_photo(photo) -> List[str]:
+    try:
+        file = await photo.get_file()
+        buf = BytesIO()
+        await file.download_to_memory(buf)
+        buf.seek(0)
+        try:
+            import pytesseract  # type: ignore
+            from PIL import Image  # type: ignore
+            text = pytesseract.image_to_string(Image.open(buf))
+        except Exception:
+            text = ""
+        return extract_tx_hashes(text)
+    except Exception:
+        return []
+
+
+async def _hashes_from_pdf(document) -> List[str]:
+    try:
+        file = await document.get_file()
+        buf = BytesIO()
+        await file.download_to_memory(buf)
+        buf.seek(0)
+        try:
+            from pdfminer.high_level import extract_text  # type: ignore
+            text = extract_text(buf)
+        except Exception:
+            text = ""
+        return extract_tx_hashes(text)
+    except Exception:
+        return []
+
+
+async def auto_tx_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = update.effective_message
+    text = (msg.text or "") + (" " + msg.caption if msg.caption else "")
+    hashes = extract_tx_hashes(text)
+    if not hashes:
+        if getattr(msg, "photo", None):
+            hashes = await _hashes_from_photo(msg.photo[-1])
+        elif getattr(msg, "document", None) and msg.document.mime_type == "application/pdf":
+            hashes = await _hashes_from_pdf(msg.document)
+    if hashes:
+        await tx_cmd(update, SimpleNamespace(args=[hashes[0]]))
 
 # ----- Verificação periódica de TX não encontradas
 JOB_PENDING_TX = "pending_tx_recheck"
@@ -2940,6 +3076,14 @@ async def on_startup():
 
     application.add_handler(CommandHandler("set_pack_horario_vip", set_pack_horario_vip_cmd), group=1)
     application.add_handler(CommandHandler("set_pack_horario_free", set_pack_horario_free_cmd), group=1)
+    
+    hash_filter = (
+        (filters.TEXT | filters.PHOTO | filters.Document.PDF)
+        & ~filters.COMMAND
+        & ~filters.Chat(STORAGE_GROUP_ID)
+        & ~filters.Chat(STORAGE_GROUP_FREE_ID)
+    )
+    application.add_handler(MessageHandler(hash_filter, auto_tx_handler), group=1)
 
     # Jobs
     await _reschedule_daily_packs()

@@ -1,4 +1,5 @@
 import os
+os.environ["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] = "1"
 import time
 import asyncio
 import importlib
