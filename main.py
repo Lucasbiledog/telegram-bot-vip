@@ -1862,7 +1862,6 @@ async def verify_native_payment(cfg: Dict[str, Any], tx_hash: str) -> Dict[str, 
         "to": to_addr,
         "amount_wei": value_wei,
         "confirmations": confirmations,
-         "contract": token_contract,
     }
 
 def _topic_address(topic_hex: str) -> str:
@@ -2008,6 +2007,101 @@ async def verify_erc20_payment_bscscan(cfg: Dict[str, Any], tx_hash: str) -> Dic
             "decimals": found["decimals"],
             "confirmations": confirmations,
         }
+
+async def verify_tx_bscscan(cfg: Dict[str, Any], tx_hash: str) -> Dict[str, Any]:
+    """Verifica transações (BNB ou BEP-20) usando apenas a API do BscScan."""
+    api_key = cfg.get("bscscan_api_key")
+    if not api_key:
+        return {"ok": False, "reason": "BSCSCAN_API_KEY não definido"}
+    wallet = (cfg.get("wallet_address") or "").lower()
+    base_url = "https://api.bscscan.com/api"
+    async with httpx.AsyncClient(timeout=10) as client:
+        params = {
+            "module": "proxy",
+            "action": "eth_getTransactionReceipt",
+            "txhash": tx_hash,
+            "apikey": api_key,
+        }
+        r = await client.get(base_url, params=params)
+        receipt = r.json().get("result")
+        if not receipt or receipt.get("status") != "0x1":
+            return {"ok": False, "reason": "Transação não confirmada/sucesso ainda"}
+        r_block = await client.get(
+            base_url, params={"module": "proxy", "action": "eth_blockNumber", "apikey": api_key}
+        )
+        current_block_hex = r_block.json().get("result")
+        confirmations = _hex_to_int(current_block_hex) - _hex_to_int(
+            receipt.get("blockNumber", "0x0")
+        )
+        if confirmations < MIN_CONFIRMATIONS:
+            return {
+                "ok": False,
+                "reason": f"Confirmações insuficientes ({confirmations}/{MIN_CONFIRMATIONS})",
+            }
+        logs = receipt.get("logs", [])
+        for lg in logs:
+            topics = [t.lower() for t in lg.get("topics", [])]
+            if not topics or topics[0] != TRANSFER_TOPIC or len(topics) < 3:
+                continue
+            to_addr = _topic_address(topics[2])
+            if wallet and to_addr != wallet:
+                continue
+            contract_addr = (lg.get("address") or "").lower()
+            amount_raw = _hex_to_int(lg.get("data"))
+            price_dec = await fetch_price_usd_for_contract(contract_addr)
+            if not price_dec:
+                return {"ok": False, "reason": "Falha ao obter cotação do ativo"}
+            price, decimals = price_dec
+            amount_native = amount_raw / (10 ** decimals)
+            amount_usd = amount_native * price
+            plan_days = infer_plan_days(amount_usd=amount_usd)
+            res = {
+                "ok": True,
+                "type": "erc20",
+                "to": to_addr,
+                "amount_raw": amount_raw,
+                "contract": contract_addr,
+                "decimals": decimals,
+                "confirmations": confirmations,
+                "amount_usd": amount_usd,
+                "plan_days": plan_days,
+                "chain_name": cfg.get("chain_name"),
+            }
+            if plan_days is None:
+                res["reason"] = "Valor não corresponde a nenhum plano"
+            return res
+        # Se nenhum evento Transfer para a carteira, trata como transferência nativa
+        r_tx = await client.get(
+            base_url,
+            params={"module": "proxy", "action": "eth_getTransactionByHash", "txhash": tx_hash, "apikey": api_key},
+        )
+        tx = r_tx.json().get("result")
+        if not tx:
+            return {"ok": False, "reason": "Transação não encontrada"}
+        to_addr = (tx.get("to") or "").lower()
+        if wallet and to_addr != wallet:
+            return {"ok": False, "reason": "Destinatário diferente da carteira configurada"}
+        value_wei = _hex_to_int(tx.get("value"))
+        price = await fetch_price_usd(cfg)
+        if price is None:
+            return {"ok": False, "reason": "Falha ao obter cotação do ativo"}
+        amount_native = value_wei / (10 ** 18)
+        amount_usd = amount_native * price
+        plan_days = infer_plan_days(amount_usd=amount_usd)
+        res = {
+            "ok": True,
+            "type": "native",
+            "from": (tx.get("from") or "").lower(),
+            "to": to_addr,
+            "amount_wei": value_wei,
+            "confirmations": confirmations,
+            "amount_usd": amount_usd,
+            "plan_days": plan_days,
+            "chain_name": cfg.get("chain_name"),
+        }
+        if plan_days is None:
+            res["reason"] = "Valor não corresponde a nenhum plano"
+        return res
     
 async def detect_chain_from_hash(tx_hash: str) -> Optional[str]:
     """Tenta identificar em qual cadeia a transação existe usando APIs públicas."""
@@ -2027,100 +2121,15 @@ async def detect_chain_from_hash(tx_hash: str) -> Optional[str]:
     return None
 
 async def verify_tx_any(tx_hash: str) -> Dict[str, Any]:
-    detected_slug = await detect_chain_from_hash(tx_hash)
-    if detected_slug:
-        cfg = next(
-            (
-                c
-                for c in CHAIN_CONFIGS
-                if c.get("chain_name", "").replace("-", " ").lower()
-                == detected_slug.replace("-", " ").lower()
-            ),
-            None,
-        )
-        if cfg:
-            try:
-                if cfg.get("token_contract"):
-                    res = await verify_erc20_payment(cfg, tx_hash)
-                    if (
-                        (not res.get("ok"))
-                        and cfg.get("bscscan_api_key")
-                        and "binance" in cfg.get("chain_name", "").lower()
-                    ):
-                        res = await verify_erc20_payment_bscscan(cfg, tx_hash)
-                else:
-                    res = await verify_native_payment(cfg, tx_hash)
-            except Exception as e:
-                logging.warning(
-                    "Erro verificando na cadeia detectada %s: %s", cfg.get("chain_name"), e
-                )
-                res = None
-            if res and res.get("ok"):
-                if res.get("type") == "erc20":
-                    price_dec = await fetch_price_usd_for_contract(res.get("contract"))
-                    if not price_dec:
-                        res["ok"] = False
-                        res["reason"] = "Falha ao obter cotação do ativo"
-                        return res
-                    price, decimals = price_dec
-                    res["decimals"] = decimals
-                    amount_native = res.get("amount_raw", 0) / (10 ** decimals)
-                else:
-                    price = await fetch_price_usd(cfg)
-                    if price is None:
-                        res["ok"] = False
-                        res["reason"] = "Falha ao obter cotação do ativo"
-                        return res
-                    amount_native = res.get("amount_wei", 0) / (10 ** 18)
-                res["amount_usd"] = amount_native * price
-                plan_days = infer_plan_days(amount_usd=res["amount_usd"])
-                res["plan_days"] = plan_days
-                if plan_days is None:
-                    res["reason"] = res.get("reason") or "Valor não corresponde a nenhum plano"
-                res["chain_name"] = cfg.get("chain_name")
-                return res
-        return await verify_tx_blockchair(tx_hash, detected_slug)
     for cfg in CHAIN_CONFIGS:
         try:
-            if cfg.get("token_contract"):
-                res = await verify_erc20_payment(cfg, tx_hash)
-                if (
-                    (not res.get("ok"))
-                    and cfg.get("bscscan_api_key")
-                    and "binance" in cfg.get("chain_name", "").lower()
-                ):
-                    res = await verify_erc20_payment_bscscan(cfg, tx_hash)
-            else:
-                res = await verify_native_payment(cfg, tx_hash)
+            res = await verify_tx_bscscan(cfg, tx_hash)
         except Exception as e:
-            logging.warning("Erro verificando na cadeia %s: %s", cfg.get("chain_name"), e)
+            logging.warning("Erro verificando via BscScan: %s", e)
             continue
-        if not res.get("ok"):
-            continue
-        if res.get("type") == "erc20":
-            price_dec = await fetch_price_usd_for_contract(res.get("contract"))
-            if not price_dec:
-                res["ok"] = False
-                res["reason"] = "Falha ao obter cotação do ativo"
-                return res
-            price, decimals = price_dec
-            res["decimals"] = decimals
-            amount_native = res.get("amount_raw", 0) / (10 ** decimals)
-        else:
-            price = await fetch_price_usd(cfg)
-            if price is None:
-                res["ok"] = False
-                res["reason"] = "Falha ao obter cotação do ativo"
-                return res
-            amount_native = res.get("amount_wei", 0) / (10 ** 18)
-        res["amount_usd"] = amount_native * price
-        plan_days = infer_plan_days(amount_usd=res["amount_usd"])
-        res["plan_days"] = plan_days
-        if plan_days is None:
-            res["reason"] = res.get("reason") or "Valor não corresponde a nenhum plano"
-        res["chain_name"] = cfg.get("chain_name")
-        return res
-    return await verify_tx_blockchair(tx_hash)
+        if res.get("ok"):
+            return res
+    return {"ok": False, "reason": "Transação não encontrada na BscScan"}
 
 
 async def verify_tx_blockchair(tx_hash: str, slug: Optional[str] = None) -> Dict[str, Any]:
