@@ -548,6 +548,40 @@ class VipMembership(Base):
 
 
 
+class UserAddress(Base):
+    __tablename__ = "user_addresses"
+    id = Column(Integer, primary_key=True)
+    user_id = Column(BigInteger, index=True)
+    address = Column(String, unique=True, index=True)
+    added_at = Column(DateTime, default=now_utc)
+
+
+def user_address_upsert(user_id: int, address: Optional[str]):
+    if not address:
+        return
+    addr = address.lower()
+    with SessionLocal() as s:
+        try:
+            row = s.query(UserAddress).filter(UserAddress.address == addr).first()
+            if not row:
+                s.add(UserAddress(user_id=user_id, address=addr))
+            else:
+                row.user_id = user_id
+            s.commit()
+        except Exception:
+            s.rollback()
+            raise
+
+
+def user_id_by_address(address: Optional[str]) -> Optional[int]:
+    if not address:
+        return None
+    addr = address.lower()
+    with SessionLocal() as s:
+        row = s.query(UserAddress).filter(UserAddress.address == addr).first()
+        return row.user_id if row else None
+
+
 class ScheduledMessage(Base):
     __tablename__ = "scheduled_messages"
     id = Column(Integer, primary_key=True)
@@ -1747,15 +1781,31 @@ def _to_wei(amount_native: float, decimals: int = 18) -> int:
 
 PRICE_TOLERANCE = float(os.getenv("PRICE_TOLERANCE", "0.01"))  # 1%
 
-PLAN_PRICE_USD = {
+DEFAULT_PLAN_PRICE_USD = {
     VipPlan.TRIMESTRAL: 70.0,
     VipPlan.SEMESTRAL: 110.0,
     VipPlan.ANUAL: 1.0,
     VipPlan.MENSAL: 0.5,
 }
 
+
+def get_plan_prices_usd() -> Dict[VipPlan, float]:
+    raw = cfg_get("vip_plan_prices_usd")
+    if raw:
+        try:
+            data = json.loads(raw)
+            return {
+                plan: float(data.get(plan.name, DEFAULT_PLAN_PRICE_USD[plan]))
+                for plan in VipPlan
+            }
+        except Exception:
+            logging.warning("vip_plan_prices_usd inválido: %s", raw)
+    return DEFAULT_PLAN_PRICE_USD.copy()
+
+
 def plan_from_amount(amount_usd: float) -> Optional[VipPlan]:
-    for plan, price in PLAN_PRICE_USD.items():
+    prices = get_plan_prices_usd()
+    for plan, price in prices.items():
         if abs(amount_usd - price) <= price * PRICE_TOLERANCE:
             return plan
     return None
@@ -1895,6 +1945,7 @@ async def verify_erc20_payment(cfg: Dict[str, Any], tx_hash: str) -> Dict[str, A
         if not topics or topics[0] != TRANSFER_TOPIC:
             continue
         to_addr = _topic_address(topics[2]) if len(topics) >= 3 else ""
+        from_addr = _topic_address(topics[1]) if len(topics) >= 2 else ""
         if wallet and to_addr != wallet:
             continue
         contract_addr = (lg.get("address") or "").lower()
@@ -1916,6 +1967,7 @@ async def verify_erc20_payment(cfg: Dict[str, Any], tx_hash: str) -> Dict[str, A
             continue
         found = {
             "amount_raw": amount,
+            "from": from_addr,
             "to": to_addr,
             "contract": contract_addr,
             "decimals": decimals,
@@ -1930,6 +1982,7 @@ async def verify_erc20_payment(cfg: Dict[str, Any], tx_hash: str) -> Dict[str, A
     return {
         "ok": True,
         "type": "erc20",
+        "from": found["from"],
         "to": found["to"],
         "amount_raw": found["amount_raw"],
         "contract": found["contract"],
@@ -1963,6 +2016,7 @@ async def verify_erc20_payment_bscscan(cfg: Dict[str, Any], tx_hash: str) -> Dic
             if not topics or topics[0] != TRANSFER_TOPIC:
                 continue
             to_addr = _topic_address(topics[2]) if len(topics) >= 3 else ""
+            from_addr = _topic_address(topics[1]) if len(topics) >= 2 else ""
             if wallet and to_addr != wallet:
                 continue
             contract_addr = (lg.get("address") or "").lower()
@@ -1987,6 +2041,7 @@ async def verify_erc20_payment_bscscan(cfg: Dict[str, Any], tx_hash: str) -> Dic
                 continue
             found = {
                 "amount_raw": amount,
+                "from": from_addr,
                 "to": to_addr,
                 "contract": contract_addr,
                 "decimals": decimals,
@@ -2010,6 +2065,7 @@ async def verify_erc20_payment_bscscan(cfg: Dict[str, Any], tx_hash: str) -> Dic
         return {
             "ok": True,
             "type": "erc20",
+            "from": found["from"],
             "to": found["to"],
             "amount_raw": found["amount_raw"],
             "contract": found["contract"],
@@ -2063,6 +2119,7 @@ async def verify_tx_blockscan(cfg: Dict[str, Any], tx_hash: str) -> Dict[str, An
             if not topics or topics[0] != TRANSFER_TOPIC or len(topics) < 3:
                 continue
             to_addr = _topic_address(topics[2])
+            from_addr = _topic_address(topics[1]) if len(topics) >= 2 else ""
             if wallet and to_addr != wallet:
                 continue
             contract_addr = (lg.get("address") or "").lower()
@@ -2083,6 +2140,7 @@ async def verify_tx_blockscan(cfg: Dict[str, Any], tx_hash: str) -> Dict[str, An
             res = {
                 "ok": True,
                 "type": "erc20",
+                "from": from_addr,
                 "to": to_addr,
                 "amount_raw": amount_raw,
                 "contract": contract_addr,
@@ -2171,6 +2229,7 @@ async def verify_tx_bscscan(cfg: Dict[str, Any], tx_hash: str) -> Dict[str, Any]
             if not topics or topics[0] != TRANSFER_TOPIC or len(topics) < 3:
                 continue
             to_addr = _topic_address(topics[2])
+            from_addr = _topic_address(topics[1]) if len(topics) >= 2 else ""
             if wallet and to_addr != wallet:
                 continue
             contract_addr = (lg.get("address") or "").lower()
@@ -2191,6 +2250,7 @@ async def verify_tx_bscscan(cfg: Dict[str, Any], tx_hash: str) -> Dict[str, Any]
             res = {
                 "ok": True,
                 "type": "erc20",
+                "from": from_addr,
                 "to": to_addr,
                 "amount_raw": amount_raw,
                 "contract": contract_addr,
@@ -2370,6 +2430,85 @@ async def verify_tx_any(tx_hash: str) -> Dict[str, Any]:
     return {"ok": False, "reason": "Transação não encontrada nas APIs"}
 
 
+async def process_incoming_payment(
+    context: ContextTypes.DEFAULT_TYPE,
+    cfg: Dict[str, Any],
+    tx_hash: str,
+    info: Dict[str, Any],
+) -> None:
+    sender = info.get("from")
+    uid = user_id_by_address(sender)
+    if not uid:
+        logging.info("Depósito de endereço desconhecido %s", sender)
+        return
+    price = await fetch_price_usd(cfg)
+    if price is None:
+        logging.warning("Falha ao obter cotação para pagamento automático")
+        return
+    amount_native = info.get("amount_wei", 0) / (10 ** 18)
+    amount_usd = amount_native * price
+    plan = plan_from_amount(amount_usd)
+    if not plan:
+        logging.warning("Valor %s não corresponde a nenhum plano", amount_usd)
+        return
+    m = vip_upsert_start_or_extend(uid, None, tx_hash, plan)
+
+    def _store():
+        with SessionLocal() as s:
+            p = Payment(
+                user_id=uid,
+                username=None,
+                tx_hash=tx_hash,
+                chain=cfg.get("chain_name"),
+                amount=str(amount_usd),
+                status="approved",
+                decided_at=now_utc(),
+            )
+            s.add(p)
+            s.commit()
+
+    await asyncio.to_thread(_store)
+    invite_link = await create_and_store_personal_invite(uid)
+    try:
+        await context.bot.send_message(
+            uid,
+            (
+                f"✅ Pagamento recebido! VIP válido até {m.expires_at:%d/%m/%Y}.\n"
+                f"Entre no grupo: {invite_link}"
+            ),
+        )
+    except Exception as e:
+        logging.warning("Falha ao enviar DM de convite: %s", e)
+
+
+async def monitor_wallet_job(context: ContextTypes.DEFAULT_TYPE) -> None:
+    data = context.job.data or {}
+    cfg = data.get("cfg") or {}
+    last_block = data.get("last_block")
+    latest_hex = await rpc_call(cfg, "eth_blockNumber", [])
+    latest = _hex_to_int(latest_hex)
+    start = last_block + 1 if last_block is not None else latest
+    wallet = cfg.get("wallet_address")
+    for bn in range(start, latest + 1):
+        block = await rpc_call(cfg, "eth_getBlockByNumber", [hex(bn), True])
+        if not block:
+            continue
+        for tx in block.get("transactions", []):
+            if (tx.get("to") or "").lower() != wallet:
+                continue
+            if _hex_to_int(tx.get("value")) <= 0:
+                continue
+            tx_hash = tx.get("hash")
+            try:
+                info = await verify_native_payment(cfg, tx_hash)
+            except Exception as e:
+                logging.warning("Erro verificando transação %s: %s", tx_hash, e)
+                continue
+            if info.get("ok"):
+                await process_incoming_payment(context, cfg, tx_hash, info)
+    context.job.data["last_block"] = latest
+
+
 async def verify_tx_blockchair(tx_hash: str, slug: Optional[str] = None) -> Dict[str, Any]:
     """Tentativa de verificação genérica usando a API pública do Blockchair."""
     slugs = {slug: BLOCKCHAIR_SLUGS.get(slug, 18)} if slug else BLOCKCHAIR_SLUGS
@@ -2517,8 +2656,9 @@ async def pagar_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"✅ Aprovando, te envio o convite do VIP no privado."
     )
 
+    prices = get_plan_prices_usd()
     plan_lines = [
-          f"- {plan.name.title()}: {PLAN_DAYS[plan]} dias por ${PLAN_PRICE_USD[plan]:.2f} USD"
+        f"- {plan.name.title()}: {PLAN_DAYS[plan]} dias por ${prices[plan]:.2f} USD"
         for plan in VipPlan
     ]
     texto += "\n\nPlanos:\n" + "\n".join(plan_lines)
@@ -2646,6 +2786,10 @@ async def tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             res["reason"] = res.get("reason") or "Valor não corresponde a nenhum plano"
 
     status = "approved" if (AUTO_APPROVE_CRYPTO and paid_ok) else "pending"
+
+    sender_addr = res.get("from")
+    if sender_addr:
+        await asyncio.to_thread(user_address_upsert, user.id, sender_addr)
 
     def _store_payment():
         with SessionLocal() as s:
@@ -3452,6 +3596,14 @@ async def on_startup():
     await _reschedule_daily_packs()
     _register_all_scheduled_messages(application.job_queue)
     schedule_pending_tx_recheck()
+    for cfg in CHAIN_CONFIGS:
+        application.job_queue.run_repeating(
+            monitor_wallet_job,
+            interval=dt.timedelta(seconds=30),
+            first=dt.timedelta(seconds=10),
+            data={"cfg": cfg},
+            name=f"monitor_{cfg.get('chain_name', '')}",
+        )
 
     application.job_queue.run_daily(vip_expiration_warn_job, time=dt.time(hour=9, minute=0, tzinfo=pytz.timezone("America/Sao_Paulo")), name="vip_warn")
     application.job_queue.run_repeating(
