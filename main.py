@@ -23,6 +23,8 @@ from eth_account.messages import encode_defunct
 import uvicorn
 import httpx
 
+from bot.handlers import extract_tx_hashes, auto_tx_handler, tx_cmd, clear_tx_cmd
+from api.routes import router as api_router
 from telegram import Update, InputMediaPhoto
 from telegram.error import BadRequest
 from telegram.ext import (
@@ -223,18 +225,6 @@ def normalize_tx_hash(s: str) -> Optional[str]:
         # sem 0x: precisa ter 64 hex; adiciona 0x
         return ("0x" + s.lower()) if len(s) == 64 else None
     
-
-def extract_tx_hashes(text: str) -> List[str]:
-    """Return list of normalized transaction hashes found in text."""
-    if not text:
-        return []
-    hashes = []
-    for match in HASH64_RE.findall(text):
-        h = normalize_tx_hash(match)
-        if h:
-            hashes.append(h)
-    return hashes
-
 
 # ----- Preço VIP (em nativo ou token) usando ConfigKV
 def get_vip_price_native() -> Optional[float]:
@@ -521,6 +511,7 @@ if not RPC_URL:
 # FASTAPI + PTB
 # =========================
 app = FastAPI()
+app.include_router(api_router)
 application = ApplicationBuilder().token(BOT_TOKEN).build()
 bot = None
 BOT_USERNAME = None
@@ -2920,132 +2911,6 @@ def _fmt_usd(x) -> str:
     except Exception:
         return f"${x}"
 
-async def tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = update.effective_message
-    user = update.effective_user
-
-    # validação de uso
-    if not context.args:
-        return await msg.reply_text("Uso: /tx <hash>\nEx.: /tx 0xabc123...")
-
-    tx_hash = context.args[0].strip()
-    if not tx_hash.startswith("0x"):
-        tx_hash = "0x" + tx_hash
-    if len(tx_hash) != 66:  # 0x + 64 hex
-        return await msg.reply_text("Hash inválida. Deve ter 64 hex (começando com 0x).")
-
-    # feedback
-    await msg.reply_text("🔎 Verificando a transação em múltiplas redes...")
-
-    # Já existe?
-    def _fetch_existing():
-        with SessionLocal() as s:
-            return s.query(Payment).filter(Payment.tx_hash == tx_hash).first()
-    existing = await asyncio.to_thread(_fetch_existing)
-    if existing and existing.user_id != user.id:
-        return await msg.reply_text("Esse hash já foi usado por outro usuário.")
-
-    if existing and existing.status == "approved":
-        if existing.user_id == user.id:
-            m = vip_get(user.id)
-            try:
-                invite_link = (m.invite_link if m else None) or await create_and_store_personal_invite(user.id)
-                await dm(
-                    user.id,
-                    f"✅ Seu pagamento já estava aprovado!\n"
-                    f"VIP até {m.expires_at:%d/%m/%Y} ({human_left(m.expires_at)}).\n"
-                    f"Entre no VIP: {invite_link}",
-                    parse_mode=None,
-                )
-                return await msg.reply_text("Esse hash já estava aprovado. Reenviei o convite no seu privado. ✅")
-            except Exception as e:
-                return await msg.reply_text(f"Hash aprovado, mas falhou ao reenviar o convite: {e}")
-        else:
-            return await msg.reply_text("Esse hash já foi usado por outro usuário.")
-    elif existing and existing.status == "pending":
-        return await msg.reply_text("Esse hash já foi registrado e está pendente. Aguarde a validação.")
-    elif existing and existing.status == "rejected":
-        return await msg.reply_text("Esse hash já foi rejeitado. Fale com um administrador.")
-
-    # Verificação on-chain
-    try:
-        res = await verify_tx_any(tx_hash)
-    except Exception as e:
-        logging.exception("Erro verificando transação")
-        return await msg.reply_text(f"❌ Erro ao verificar on-chain: {e}")
-
-    if not res or not res.get("ok"):
-        reason = res.get("reason") if res else "Transação não encontrada em nenhuma cadeia."
-        return await msg.reply_text(f"❌ {reason}")
-
-    # Checagem de plano
-    amount_usd = res.get("amount_usd") or res.get("usd")
-    paid_ok = True
-    plan_days = res.get("plan_days") or infer_plan_days(amount_usd=amount_usd)
-    if not plan_days:
-        logging.warning("Valor da transação não corresponde a nenhum plano: %s", amount_usd)
-        paid_ok = False
-        res["reason"] = res.get("reason") or "Valor não corresponde a nenhum plano"
-
-    status = "approved" if (AUTO_APPROVE_CRYPTO and paid_ok) else "pending"
-
-    sender_addr = res.get("from")
-    if sender_addr:
-        await asyncio.to_thread(user_address_upsert, user.id, sender_addr)
-
-    def _store_payment():
-        with SessionLocal() as s:
-            try:
-                p = Payment(
-                    user_id=user.id,
-                    username=user.username,
-                    tx_hash=tx_hash,
-                    chain=res.get("chain_name", CHAIN_NAME),
-                    status=status,
-                    amount=str(amount_usd or ""),
-                    decided_at=now_utc() if status == "approved" else None,
-                    notes=res.get("reason") if status == "pending" else None,
-                )
-                s.add(p)
-                s.commit()
-            except Exception:
-                s.rollback()
-                raise
-    await asyncio.to_thread(_store_payment)
-    if status == "pending" and (res.get("reason") or "").startswith("Transação não encontrada"):
-        schedule_pending_tx_recheck()
-
-    if status == "approved":
-        try:
-            plan = plan_from_amount(float(amount_usd or 0)) or VipPlan.TRIMESTRAL
-            m = vip_upsert_start_or_extend(user.id, user.username, tx_hash, plan)
-            invite_link = await create_and_store_personal_invite(user.id)
-            await dm(
-                user.id,
-                f"✅ Pagamento confirmado na rede {res.get('chain_name', CHAIN_NAME)}"
-                f" ({res.get('symbol', CHAIN_SYMBOL)})!\n"
-                f"VIP válido até {m.expires_at:%d/%m/%Y} ({human_left(m.expires_at)}).\n"
-                f"Entre no VIP: {invite_link}",
-                parse_mode=None
-            )
-            return await msg.reply_text("✅ Verifiquei sua transação e já liberei seu acesso. Confira seu privado.")
-        except Exception as e:
-            logging.exception("Erro enviando invite auto-approve")
-            return await msg.reply_text(f"Pagamento OK, mas falhou ao enviar o convite: {e}")
-    else:
-        human = res.get("reason", "Aguardando confirmações.")
-        await msg.reply_text(f"⏳ Hash recebida. Status: {human}")
-        try:
-            for aid in list_admin_ids():
-                txt = (
-                    "📥 Pagamento pendente:\n"
-                    f"user_id:{user.id} @{user.username or '-'}\n"
-                    f"hash:{tx_hash}\nrede:{res.get('chain_name')} ({res.get('symbol', CHAIN_SYMBOL)})\ninfo:{human}"
-                )
-                await dm(aid, txt, parse_mode=None)
-        except Exception:
-            pass
-
 async def cancel_tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.effective_message
     user = update.effective_user
@@ -3073,48 +2938,6 @@ async def cancel_tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             s.rollback()
             return await msg.reply_text(f"Erro ao remover: {e}")
         
-async def clear_tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = update.effective_message
-    user = update.effective_user
-    if not (user and is_admin(user.id)):
-        await msg.reply_text("Apenas admins.")
-        raise ApplicationHandlerStop
-    if not context.args:
-        return await msg.reply_text("Uso: /clear_tx <hash_da_transacao>")
-
-    tx_raw = context.args[0]
-    tx_hash = normalize_tx_hash(tx_raw)
-    if not tx_hash:
-        return await msg.reply_text("Hash inválida.")
-    
-    def _clear():
-        with SessionLocal() as s:
-            pay_q = s.query(Payment).filter(func.lower(Payment.tx_hash) == tx_hash)
-            vm_q = s.query(VipMembership).filter(func.lower(VipMembership.tx_hash) == tx_hash)
-            pays = pay_q.all()
-            vms = vm_q.all()
-            if not pays and not vms:
-                return False
-            try:
-                if pays:
-                    pay_q.delete(synchronize_session=False)
-                    if vms:
-                        vm_q.update({VipMembership.tx_hash: None}, synchronize_session=False)
-                    s.commit()
-                return True
-            except Exception as e:
-                s.rollback()
-                raise e
-    tx_hash = tx_hash.lower()
-    try:
-        removed = await asyncio.to_thread(_clear)
-    except Exception as e:
-           return await msg.reply_text(f"Erro ao remover: {e}")
-    if not removed:
-        return await msg.reply_text("Nenhum registro encontrado para essa hash.")
-    return await msg.reply_text("Registro removido.")
-
-
 async def aprovar_tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not (update.effective_user and is_admin(update.effective_user.id)):
         await update.effective_message.reply_text("Apenas admins.")
@@ -3198,53 +3021,6 @@ async def rejeitar_tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             s.rollback()
             await update.effective_message.reply_text(f"❌ Erro ao rejeitar: {e}")
-# ----- Auto TX handler -----
-
-async def _hashes_from_photo(photo) -> List[str]:
-    try:
-        file = await photo.get_file()
-        buf = BytesIO()
-        await file.download_to_memory(buf)
-        buf.seek(0)
-        try:
-            import pytesseract  # type: ignore
-            from PIL import Image  # type: ignore
-            text = pytesseract.image_to_string(Image.open(buf))
-        except Exception:
-            text = ""
-        return extract_tx_hashes(text)
-    except Exception:
-        return []
-
-
-async def _hashes_from_pdf(document) -> List[str]:
-    try:
-        file = await document.get_file()
-        buf = BytesIO()
-        await file.download_to_memory(buf)
-        buf.seek(0)
-        try:
-            from pdfminer.high_level import extract_text  # type: ignore
-            text = extract_text(buf)
-        except Exception:
-            text = ""
-        return extract_tx_hashes(text)
-    except Exception:
-        return []
-
-
-async def auto_tx_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = update.effective_message
-    text = (msg.text or "") + (" " + msg.caption if msg.caption else "")
-    hashes = extract_tx_hashes(text)
-    if not hashes:
-        if getattr(msg, "photo", None):
-            hashes = await _hashes_from_photo(msg.photo[-1])
-        elif getattr(msg, "document", None) and msg.document.mime_type == "application/pdf":
-            hashes = await _hashes_from_pdf(msg.document)
-    if hashes:
-        await tx_cmd(update, SimpleNamespace(args=[hashes[0]]))
-
 # ----- Verificação periódica de TX não encontradas
 JOB_PENDING_TX = "pending_tx_recheck"
 
@@ -3471,153 +3247,6 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
     logging.exception("Erro não tratado", exc_info=context.error)
 
 # =========================
-# Webhooks + Keepalive
-# =========================
-
-@app.post("/auth_challenge")
-async def auth_challenge(request: Request):
-    data = await request.json()
-    uid = data.get("telegram_user_id")
-    if not uid:
-        return JSONResponse({"ok": False, "error": "telegram_user_id é obrigatório"}, status_code=400)
-    challenge = secrets.token_hex(16)
-    LOGIN_CHALLENGES[int(uid)] = (challenge, now_utc())
-    return {"challenge": challenge}
-
-
-@app.post("/auth_verify")
-async def auth_verify(request: Request):
-    data = await request.json()
-    uid = data.get("telegram_user_id")
-    address = (data.get("address") or "").strip()
-    signature = (data.get("signature") or "").strip()
-    if not uid or not address or not signature:
-        return JSONResponse({"ok": False, "error": "telegram_user_id, address e signature são obrigatórios"}, status_code=400)
-
-    info = LOGIN_CHALLENGES.get(int(uid))
-    if not info:
-        return JSONResponse({"ok": False, "error": "desafio não encontrado"}, status_code=400)
-    challenge, ts = info
-    if now_utc() - ts > CHALLENGE_TTL:
-        del LOGIN_CHALLENGES[int(uid)]
-        return JSONResponse({"ok": False, "error": "desafio expirado"}, status_code=400)
-
-    msg = encode_defunct(text=challenge)
-    try:
-        recovered = Web3().eth.account.recover_message(msg, signature=signature)
-    except Exception as e:
-        return JSONResponse({"ok": False, "error": f"assinatura inválida: {e}"}, status_code=400)
-    if recovered.lower() != address.lower():
-        return JSONResponse({"ok": False, "error": "assinatura não confere com endereço"}, status_code=400)
-
-    await asyncio.to_thread(user_address_upsert, int(uid), address)
-    del LOGIN_CHALLENGES[int(uid)]
-    return {"ok": True, "address": address}
-
-
-@app.post("/crypto_webhook")
-async def crypto_webhook(request: Request):
-    data   = await request.json()
-    uid    = data.get("telegram_user_id")
-    tx_hash= (data.get("tx_hash") or "").strip().lower()
-    amount = data.get("amount")
-    chain  = data.get("chain") or CHAIN_NAME
-    symbol = data.get("symbol") or CHAIN_SYMBOL
-
-    if not uid or not tx_hash:
-        return JSONResponse({"ok": False, "error": "telegram_user_id e tx_hash são obrigatórios"}, status_code=400)
-
-    try:
-        res = await verify_tx_any(tx_hash)
-        chain = res.get("chain_name", chain)
-        symbol = res.get("symbol", symbol)
-    except Exception as e:
-        logging.exception("Erro verificando no webhook")
-        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
-
-    approved = bool(res.get("ok"))
-    plan_days = None
-    if approved:
-        plan_days = res.get("plan_days") or infer_plan_days(amount_usd=res.get("amount_usd"))
-        if not plan_days:
-            logging.warning(
-                "Webhook: valor da transação não corresponde a nenhum plano: %s",
-                res.get("amount_usd"),
-            )
-            approved = False
-            res["reason"] = res.get("reason") or "Valor não corresponde a nenhum plano"
-            amt_val = float(res.get('amount_usd') or amount or 0)
-    plan = plan_from_amount(amt_val) or VipPlan.TRIMESTRAL
-    
-    with SessionLocal() as s:
-        try:
-            pay = s.query(Payment).filter(Payment.tx_hash == tx_hash).first()
-            if not pay:
-                pay = Payment(
-                    user_id=int(uid),
-                    tx_hash=tx_hash,
-                    amount=str(res.get('amount_usd') or amount or ""),
-                    chain=chain,
-                    status="approved" if approved else "pending",
-                    decided_at=now_utc() if approved else None,
-                    notes=res.get("reason") if not approved else None,
-                )
-                s.add(pay)
-            else:
-                pay.status = "approved" if approved else "pending"
-                pay.decided_at = now_utc() if approved else None
-                if not approved:
-                    pay.notes = res.get("reason")
-            s.commit()
-        except Exception:
-            s.rollback()
-            raise
-
-    if not approved and (res.get("reason") or "").startswith("Transação não encontrada"):
-        schedule_pending_tx_recheck()
-
-    # Se aprovado, renova VIP conforme plano e manda convite
-    if approved:
-        try:
-            # melhor esforço para obter username atual
-            try:
-                u = await application.bot.get_chat(int(uid))
-                username = u.username
-            except Exception:
-                username = None
-
-            vip_upsert_start_or_extend(int(uid), username, tx_hash, plan)
-            invite_link = await create_and_store_personal_invite(int(uid))
-            await application.bot.send_message(
-    chat_id=int(uid),
-    text=(f"✅ Pagamento confirmado na rede {chain} ({symbol})!\n"
-          f"Seu VIP foi ativado por {PLAN_DAYS[plan]} dias.\n"
-          f"Entre no VIP: {invite_link}")
-)
-
-        except Exception:
-            logging.exception("Erro enviando invite")
-
-    return JSONResponse({"ok": True, "verified": approved, "reason": res.get("reason")})
-
-
-
-@app.post("/webhook")
-async def telegram_webhook(request: Request):
-    try:
-        data = await request.json()
-        update = Update.de_json(data, application.bot)
-        await application.process_update(update)
-    except Exception:
-        logging.exception("Erro processando update Telegram")
-        raise HTTPException(status_code=400, detail="Invalid update")
-    return PlainTextResponse("", status_code=200)
-
-@app.get("/")
-async def root(): return {"status": "online", "message": "Bot ready (crypto + schedules + VIP/FREE)"}
-
-@app.get("/keepalive")
-async def keepalive(): return {"ok": True, "ts": now_utc().isoformat()}
 
 
 async def vip_expiration_warn_job(context: ContextTypes.DEFAULT_TYPE):

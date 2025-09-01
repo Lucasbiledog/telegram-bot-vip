@@ -143,8 +143,8 @@ def _sum_transferred_to_me(w3: Web3, receipt: TxReceipt) -> List[Dict[str, Any]]
                     results.append({"token": Web3.to_checksum_address(token), "amount": amount, "decimals": dec, "symbol": sym})
     return results
 
-def fetch_tx_on_chain(chain: str, rpc_url: str, tx_hash: str) -> Optional[Dict[str, Any]]:
-    w3 = get_web3(chain, rpc_url)
+def fetch_tx_on_chain(chain: str, tx_hash: str) -> Optional[Dict[str, Any]]:
+    w3 = get_web3(chain)
     if not w3:
         return None
     try:
@@ -216,8 +216,8 @@ def find_tx_any_chain(tx_hash: str) -> Optional[Dict[str, Any]]:
             tx_hash = "0x" + tx_hash
         else:
             return None
-    for chain, rpc in SUPPORTED.items():
-        info = fetch_tx_on_chain(chain, rpc, tx_hash)
+    for chain in SUPPORTED:
+        info = fetch_tx_on_chain(chain, tx_hash)
         if info and info.get("found"):
             return info
     return None
