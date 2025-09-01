@@ -34,6 +34,33 @@ from telegram.ext import (
     ApplicationHandlerStop,
     ChatJoinRequestHandler,
 )
+
+# Redes suportadas para checagem de transações
+CHAINS_TO_CHECK = [
+    {
+        "name": "Polygon",
+        "rpc": "https://polygon-rpc.com",
+        "explorer": "https://polygonscan.com/tx/",
+        "symbol": "MATIC",
+        "decimals": 18,
+    },
+    {
+        "name": "BSC",
+        "rpc": "https://bsc-dataseed.binance.org/",
+        "explorer": "https://bscscan.com/tx/",
+        "symbol": "BNB",
+        "decimals": 18,
+    },
+    {
+        "name": "Ethereum",
+        "rpc": "https://mainnet.infura.io/v3/${INFURA_PROJECT_ID}",  # coloque seu ID aqui
+        "explorer": "https://etherscan.io/tx/",
+        "symbol": "ETH",
+        "decimals": 18,
+    },
+    # pode adicionar outras redes que quiser
+]
+
 # === Imports ===
 from sqlalchemy import (
     create_engine,
@@ -64,12 +91,15 @@ from web3.exceptions import TransactionNotFound
 import logging
 
 async def find_tx_any_chain(txhash: str):
-    # tenta nas redes configuradas, uma a uma
-    for chain in CHAINS_TO_CHECK:  # ex.: ["BSC","Polygon","Ethereum",...]
-        info = await find_tx_on_chain(chain, txhash)  # também async
-        if info:
-            return info
+    for chain in CHAINS_TO_CHECK:
+        try:
+            info = await find_tx_on_chain(chain, txhash)
+            if info:
+                return info
+        except Exception:
+            continue
     return None
+
 
 
     logging.info(f"[tx-scan] procurando {txhash} em: {', '.join(CHAINS.keys())}")
