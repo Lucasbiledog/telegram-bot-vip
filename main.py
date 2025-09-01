@@ -2922,101 +2922,20 @@ def _fmt_usd(x) -> str:
 
 async def tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.effective_message
+    user = update.effective_user
 
     # validação de uso
     if not context.args:
         return await msg.reply_text("Uso: /tx <hash>\nEx.: /tx 0xabc123...")
 
-    txhash = context.args[0].strip()
-    if not txhash.startswith("0x"):
-        txhash = "0x" + txhash
-    if len(txhash) != 66:  # 0x + 64 hex
+    tx_hash = context.args[0].strip()
+    if not tx_hash.startswith("0x"):
+        tx_hash = "0x" + tx_hash
+    if len(tx_hash) != 66:  # 0x + 64 hex
         return await msg.reply_text("Hash inválida. Deve ter 64 hex (começando com 0x).")
 
     # feedback
     await msg.reply_text("🔎 Verificando a transação em múltiplas redes...")
-
-    try:
-        info = evm_pay.find_tx_any_chain(txhash)
-
-        if not info:
-            return await msg.reply_text("❌ Não encontrei essa hash em nenhuma rede configurada.")
-
-        # Esperado de `info`:
-        # {
-        #   "chain": "Polygon" | "BSC" | "Ethereum" | ...,
-        #   "tx": "0x...",
-        #   "from": "0x...",
-        #   "to": "0x...",
-        #   "symbol": "MATIC" | "BNB" | "ETH" | ...,
-        #   "value_native": Decimal | float | str,
-        #   "usd_total": Decimal | float | str,
-        #   "confirmations": int | None,
-        #   "status": "success" | "pending" | "failed",
-        #   "explorer": "https://.../tx/0x..."
-        # }
-
-        chain   = info.get("chain", "?")
-        symbol  = info.get("symbol", "?")
-        v_nat   = info.get("value_native", 0)
-        usd     = info.get("usd_total") or info.get("value_usd") or 0
-        confs   = info.get("confirmations")
-        status  = info.get("status", "desconhecido")
-        expl    = info.get("explorer")
-
-        # mensagem detalhada
-        txt = (
-            "✅ Transação encontrada!\n\n"
-            f"• Rede: {chain}\n"
-            f"• Hash: <code>{txhash}</code>\n"
-            f"• De: <code>{info.get('from','')}</code>\n"
-            f"• Para: <code>{info.get('to','')}</code>\n"
-            f"• Valor: {v_nat} {symbol} (~ {_fmt_usd(usd)})\n"
-            f"• Confirmações: {confs if confs is not None else 'n/d'}\n"
-            f"• Status: {status}\n"
-        )
-        if expl:
-            txt += f"\n🔗 Explorer: {expl}"
-
-        await msg.reply_html(txt)
-
-        # (opcional) classificar VIP automático pelo USD
-        try:
-            tier = pick_vip_tier(Decimal(str(usd)))  # sua função que decide o nível
-        except Exception:
-            tier = pick_vip_tier(usd)  # fallback se já for Decimal
-
-        if tier:
-            await msg.reply_text(f"🎁 Valor {_fmt_usd(usd)} → nível {tier}")
-            # Se quiser ativar automaticamente:
-            # await grant_vip(update.effective_user.id, tier, txhash, chain)
-
-    except Exception as e:
-        logging.exception("Falha no /tx")
-        await msg.reply_text(f"❌ Erro ao verificar on-chain: {e}")
-# --------------------------------------------------------------------
-
-
-    # …daqui você já decide qual VIP aplicar com base em usd_total
-    days = {
-        "basic": int(os.getenv("VIP_DAYS_BASIC", "30")),
-        "pro":   int(os.getenv("VIP_DAYS_PRO", "60")),
-        "ultra": int(os.getenv("VIP_DAYS_ULTRA", "120")),
-    }.get(tier, 30)
-
-    # >>>>>>>>>> chame sua função real de conceder/renovar VIP >>>>>>>>>>
-    # ok = grant_or_extend_vip(user_id=update.effective_user.id, days=days, tier=tier, usd=usd, chain=chain, tx=info["hash"])
-    ok = True  # placeholder — use sua função existente
-
-    if ok:
-        return await msg.reply_text(
-            f"✅ Confirmei sua transação na **{chain}** (≈ ${usd:.2f}, {confs} confs).\n"
-            f"Você recebeu o VIP **{tier.upper()}** por **{days} dias**. Bem-vindo! 🎉",
-            parse_mode="Markdown"
-        )
-    else:
-        return await msg.reply_text("❌ Não consegui registrar seu VIP. Tente novamente ou fale com um admin.")
-
 
     # Já existe?
     def _fetch_existing():
@@ -3025,7 +2944,6 @@ async def tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     existing = await asyncio.to_thread(_fetch_existing)
     if existing and existing.user_id != user.id:
         return await msg.reply_text("Esse hash já foi usado por outro usuário.")
-
 
     if existing and existing.status == "approved":
         if existing.user_id == user.id:
@@ -3055,21 +2973,19 @@ async def tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logging.exception("Erro verificando transação")
         return await msg.reply_text(f"❌ Erro ao verificar on-chain: {e}")
-    if res is None:
-        return await msg.reply_text("❌ Transação não encontrada em nenhuma cadeia.")
+
+    if not res or not res.get("ok"):
+        reason = res.get("reason") if res else "Transação não encontrada em nenhuma cadeia."
+        return await msg.reply_text(f"❌ {reason}")
 
     # Checagem de plano
-    paid_ok = res.get("ok", False)
-    plan_days = None
-    if paid_ok:
-        plan_days = res.get("plan_days") or infer_plan_days(amount_usd=res.get("amount_usd"))
-        if not plan_days:
-            logging.warning(
-                "Valor da transação não corresponde a nenhum plano: %s",
-                res.get("amount_usd"),
-            )
-            paid_ok = False
-            res["reason"] = res.get("reason") or "Valor não corresponde a nenhum plano"
+    amount_usd = res.get("amount_usd") or res.get("usd")
+    paid_ok = True
+    plan_days = res.get("plan_days") or infer_plan_days(amount_usd=amount_usd)
+    if not plan_days:
+        logging.warning("Valor da transação não corresponde a nenhum plano: %s", amount_usd)
+        paid_ok = False
+        res["reason"] = res.get("reason") or "Valor não corresponde a nenhum plano"
 
     status = "approved" if (AUTO_APPROVE_CRYPTO and paid_ok) else "pending"
 
@@ -3086,7 +3002,7 @@ async def tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     tx_hash=tx_hash,
                     chain=res.get("chain_name", CHAIN_NAME),
                     status=status,
-                    amount=str(res.get("amount_usd") or ""),
+                    amount=str(amount_usd or ""),
                     decided_at=now_utc() if status == "approved" else None,
                     notes=res.get("reason") if status == "pending" else None,
                 )
@@ -3098,18 +3014,17 @@ async def tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await asyncio.to_thread(_store_payment)
     if status == "pending" and (res.get("reason") or "").startswith("Transação não encontrada"):
         schedule_pending_tx_recheck()
-        
 
     if status == "approved":
         try:
-            plan = plan_from_amount(float(res.get("amount_usd") or 0)) or VipPlan.TRIMESTRAL
+            plan = plan_from_amount(float(amount_usd or 0)) or VipPlan.TRIMESTRAL
             m = vip_upsert_start_or_extend(user.id, user.username, tx_hash, plan)
             invite_link = await create_and_store_personal_invite(user.id)
             await dm(
                 user.id,
                 f"✅ Pagamento confirmado na rede {res.get('chain_name', CHAIN_NAME)}"
-                f" ({res.get('symbol', CHAIN_SYMBOL)})!\n",
-                f"VIP válido até {m.expires_at:%d/%m/%Y} ({human_left(m.expires_at)}).\n",
+                f" ({res.get('symbol', CHAIN_SYMBOL)})!\n"
+                f"VIP válido até {m.expires_at:%d/%m/%Y} ({human_left(m.expires_at)}).\n"
                 f"Entre no VIP: {invite_link}",
                 parse_mode=None
             )
@@ -3119,7 +3034,7 @@ async def tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return await msg.reply_text(f"Pagamento OK, mas falhou ao enviar o convite: {e}")
     else:
         human = res.get("reason", "Aguardando confirmações.")
-        await msg.reply_text(f"⏳ Hash recebido. Status: {human}")
+        await msg.reply_text(f"⏳ Hash recebida. Status: {human}")
         try:
             for aid in list_admin_ids():
                 txt = (
