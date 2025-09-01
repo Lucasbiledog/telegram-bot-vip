@@ -2944,31 +2944,28 @@ async def tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         return await msg.reply_text("Uso: /tx <hash>")
 
-    txh = context.args[0].strip()
-    await msg.reply_text("🔎 Verificando a transação em múltiplas redes...")
+    txhash = context.args[0].strip()
+    result = await find_tx_any_chain(txhash)   # <-- precisa do await aqui
 
-    try:
-        info = find_tx_any_chain(txh)
-    except Exception as e:
-        return await msg.reply_text(f"❌ Erro ao verificar: {e}")
-
-    if not info:
+    if not result:
         return await msg.reply_text("❌ Não encontrei essa hash em nenhuma rede configurada.")
 
-    usd = info["usd_total"]
-    chain = info["chain"]
-    confs = info.get("confirmations", 0)
+    # se encontrou, converte valor para USD
+    usd_val = await value_usd_from_tx(result)  # também é async
 
-    # escolha do tier
-    tier = pick_tier(usd)
-    if not tier:
-        return await msg.reply_text(f"Transação encontrada na {chain}, valor ≈ ${usd:.2f}, mas é insuficiente para um VIP.")
+    chain = result["chain"]
+    tx = result["tx"]
 
-    # aqui você já tem o valor, rede, etc. -> atualize seu banco e chame seu fluxo VIP existente
-    # Exemplo (adapte aos seus modelos/funções):
-    # save_tx(user_id=update.effective_user.id, tx_hash=info["hash"], chain=chain, amount_usd=usd)
-    # vip_upsert_start_or_extend(user_id, tier, days_for_tier)
+    await msg.reply_text(
+        f"✅ Transação encontrada!\n"
+        f"🌐 Rede: {chain}\n"
+        f"💰 Valor: {wei_to_eth(tx['value'])} {CHAINS[chain]['native_symbol']}\n"
+        f"≈ ${usd_val:.2f} USD\n"
+        f"🔗 Explorer: {CHAINS[chain]['explorer']}/tx/{txhash}"
+    )
 
+
+    # …daqui você já decide qual VIP aplicar com base em usd_total
     days = {
         "basic": int(os.getenv("VIP_DAYS_BASIC", "30")),
         "pro":   int(os.getenv("VIP_DAYS_PRO", "60")),
