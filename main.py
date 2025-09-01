@@ -2655,6 +2655,9 @@ async def verify_tx_any_chain(tx_hash: str) -> Dict[str, Any]:
     return {"ok": False, "reason": "Transação não encontrada nas redes configuradas."}
 
 
+# Alias para compatibilidade externa e testes
+verify_tx_any = verify_tx_any_chain
+
 
 async def process_incoming_payment(tx_info: Dict[str, Any]) -> None:
     cfg = tx_info.get("cfg", {})
