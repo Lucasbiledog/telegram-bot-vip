@@ -148,6 +148,10 @@ def init_db():
     if not cfg_get("daily_pack_vip_hhmm"):  cfg_set("daily_pack_vip_hhmm", "09:00")
     if not cfg_get("daily_pack_free_hhmm"): cfg_set("daily_pack_free_hhmm", "09:30")
 
+    env_prices = os.getenv("VIP_PLAN_PRICES_USD")
+    if env_prices:
+        cfg_set("vip_plan_prices_usd", env_prices)
+
 def ensure_schema():
     Base.metadata.create_all(bind=engine)
     ensure_bigint_columns()
@@ -580,6 +584,20 @@ def user_id_by_address(address: Optional[str]) -> Optional[int]:
     with SessionLocal() as s:
         row = s.query(UserAddress).filter(UserAddress.address == addr).first()
         return row.user_id if row else None
+    
+def user_address_get_or_create(user_id: int) -> Optional[str]:
+    """Retorna o endereço exclusivo do usuário, gerando se necessário.
+
+    Esta função é um ponto de extensão para integrações com carteiras HD ou
+    serviços custodiais. Se um endereço já existir para o usuário, ele é
+    retornado; caso contrário, a geração deve ser implementada externamente.
+    """
+    with SessionLocal() as s:
+        row = s.query(UserAddress).filter(UserAddress.user_id == user_id).first()
+        if row:
+            return row.address
+        # TODO: integrar com serviço de geração de carteiras
+        return None
 
 
 class ScheduledMessage(Base):
@@ -2430,34 +2448,44 @@ async def verify_tx_any(tx_hash: str) -> Dict[str, Any]:
     return {"ok": False, "reason": "Transação não encontrada nas APIs"}
 
 
-async def process_incoming_payment(
-    context: ContextTypes.DEFAULT_TYPE,
-    cfg: Dict[str, Any],
-    tx_hash: str,
-    info: Dict[str, Any],
-) -> None:
-    sender = info.get("from")
-    uid = user_id_by_address(sender)
-    if not uid:
-        logging.info("Depósito de endereço desconhecido %s", sender)
+async def process_incoming_payment(tx_info: Dict[str, Any]) -> None:
+    cfg = tx_info.get("cfg", {})
+    tx_hash = tx_info.get("tx_hash")
+    uid = tx_info.get("user_id")
+    if not uid or not tx_hash:
         return
-    price = await fetch_price_usd(cfg)
-    if price is None:
-        logging.warning("Falha ao obter cotação para pagamento automático")
+    amount_usd: Optional[float] = None
+    if tx_info.get("type") == "native":
+        price = await fetch_price_usd(cfg)
+        if price is None:
+            logging.warning("Falha ao obter cotação USD para pagamento")
+            return
+        amount_native = tx_info.get("amount_wei", 0) / (10 ** 18)
+        amount_usd = amount_native * price
+    elif tx_info.get("type") == "erc20":
+        price_dec = await fetch_price_usd_for_contract(tx_info.get("contract"))
+        if not price_dec:
+            logging.warning(
+                "Falha ao obter cotação do token %s", tx_info.get("contract")
+            )
+            return
+        price, dec = price_dec
+        decimals = tx_info.get("decimals") or dec
+        amount_token = tx_info.get("amount_raw", 0) / (10 ** decimals)
+        amount_usd = amount_token * price
+    if amount_usd is None:
         return
-    amount_native = info.get("amount_wei", 0) / (10 ** 18)
-    amount_usd = amount_native * price
     plan = plan_from_amount(amount_usd)
     if not plan:
         logging.warning("Valor %s não corresponde a nenhum plano", amount_usd)
         return
-    m = vip_upsert_start_or_extend(uid, None, tx_hash, plan)
+    m = vip_upsert_start_or_extend(uid, tx_info.get("username"), tx_hash, plan)
 
     def _store():
         with SessionLocal() as s:
             p = Payment(
                 user_id=uid,
-                username=None,
+                username=tx_info.get("username"),
                 tx_hash=tx_hash,
                 chain=cfg.get("chain_name"),
                 amount=str(amount_usd),
@@ -2469,44 +2497,65 @@ async def process_incoming_payment(
 
     await asyncio.to_thread(_store)
     invite_link = await create_and_store_personal_invite(uid)
+    msg = (
+        f"✅ Pagamento confirmado na rede {cfg.get('chain_name')}\n"
+        f"VIP válido até {m.expires_at:%d/%m/%Y}.\nEntre no grupo: {invite_link}"
+    )
     try:
-        await context.bot.send_message(
-            uid,
-            (
-                f"✅ Pagamento recebido! VIP válido até {m.expires_at:%d/%m/%Y}.\n"
-                f"Entre no grupo: {invite_link}"
-            ),
-        )
+        await dm(uid, msg, parse_mode=None)
+
     except Exception as e:
         logging.warning("Falha ao enviar DM de convite: %s", e)
+        for aid in list_admin_ids():
+            try:
+                await dm(aid, f"Falha ao enviar convite para {uid}: {invite_link}", parse_mode=None)
+            except Exception:
+                pass
+
+
+async def monitor_wallet(cfg: Dict[str, Any]) -> None:
+    wallet = (cfg.get("wallet_address") or "").lower()
+    if not wallet:
+        logging.warning("wallet_address não configurado")
+        return
+    last_block: Optional[int] = None
+    while True:
+        try:
+            latest_hex = await rpc_call(cfg, "eth_blockNumber", [])
+            latest = _hex_to_int(latest_hex)
+            if last_block is None:
+                last_block = latest
+            for bn in range(last_block + 1, latest + 1):
+                block = await rpc_call(cfg, "eth_getBlockByNumber", [hex(bn), True])
+                if not block:
+                    continue
+                for tx in block.get("transactions", []):
+                    if (tx.get("to") or "").lower() != wallet:
+                        continue
+                    tx_hash = tx.get("hash")
+                    if not tx_hash:
+                        continue
+                    try:
+                        info = await verify_native_payment(cfg, tx_hash)
+                        if not info.get("ok"):
+                            info = await verify_erc20_payment(cfg, tx_hash)
+                    except Exception as e:
+                        logging.warning("Erro verificando transação %s: %s", tx_hash, e)
+                        continue
+                    if info.get("ok"):
+                        uid = user_id_by_address(info.get("from"))
+                        if uid:
+                            info.update({"user_id": uid, "cfg": cfg, "tx_hash": tx_hash})
+                            await process_incoming_payment(info)
+            last_block = latest
+        except Exception as e:
+            logging.warning("Erro no monitor_wallet: %s", e)
+        await asyncio.sleep(5)
 
 
 async def monitor_wallet_job(context: ContextTypes.DEFAULT_TYPE) -> None:
-    data = context.job.data or {}
-    cfg = data.get("cfg") or {}
-    last_block = data.get("last_block")
-    latest_hex = await rpc_call(cfg, "eth_blockNumber", [])
-    latest = _hex_to_int(latest_hex)
-    start = last_block + 1 if last_block is not None else latest
-    wallet = cfg.get("wallet_address")
-    for bn in range(start, latest + 1):
-        block = await rpc_call(cfg, "eth_getBlockByNumber", [hex(bn), True])
-        if not block:
-            continue
-        for tx in block.get("transactions", []):
-            if (tx.get("to") or "").lower() != wallet:
-                continue
-            if _hex_to_int(tx.get("value")) <= 0:
-                continue
-            tx_hash = tx.get("hash")
-            try:
-                info = await verify_native_payment(cfg, tx_hash)
-            except Exception as e:
-                logging.warning("Erro verificando transação %s: %s", tx_hash, e)
-                continue
-            if info.get("ok"):
-                await process_incoming_payment(context, cfg, tx_hash, info)
-    context.job.data["last_block"] = latest
+    cfg = (context.job.data or {}).get("cfg") or {}
+    await monitor_wallet(cfg)
 
 
 async def verify_tx_blockchair(tx_hash: str, slug: Optional[str] = None) -> Dict[str, Any]:
@@ -3597,10 +3646,9 @@ async def on_startup():
     _register_all_scheduled_messages(application.job_queue)
     schedule_pending_tx_recheck()
     for cfg in CHAIN_CONFIGS:
-        application.job_queue.run_repeating(
+        application.job_queue.run_once(
             monitor_wallet_job,
-            interval=dt.timedelta(seconds=30),
-            first=dt.timedelta(seconds=10),
+            when=dt.timedelta(seconds=0),
             data={"cfg": cfg},
             name=f"monitor_{cfg.get('chain_name', '')}",
         )
