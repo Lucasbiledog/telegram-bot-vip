@@ -6,7 +6,7 @@ from enum import Enum
 from typing import Optional, List, Dict, Any, Tuple
 from types import SimpleNamespace
 from io import BytesIO
-from evm_pay import find_tx_any_chain, pick_tier
+import evm_pay
 
 
 
@@ -37,31 +37,6 @@ from telegram.ext import (
     ChatJoinRequestHandler,
 )
 
-# Redes suportadas para checagem de transações
-CHAINS_TO_CHECK = [
-    {
-        "name": "Polygon",
-        "rpc": "https://polygon-rpc.com",
-        "explorer": "https://polygonscan.com/tx/",
-        "symbol": "MATIC",
-        "decimals": 18,
-    },
-    {
-        "name": "BSC",
-        "rpc": "https://bsc-dataseed.binance.org/",
-        "explorer": "https://bscscan.com/tx/",
-        "symbol": "BNB",
-        "decimals": 18,
-    },
-    {
-        "name": "Ethereum",
-        "rpc": "https://mainnet.infura.io/v3/${INFURA_PROJECT_ID}",  # coloque seu ID aqui
-        "explorer": "https://etherscan.io/tx/",
-        "symbol": "ETH",
-        "decimals": 18,
-    },
-    # pode adicionar outras redes que quiser
-]
 
 # === Imports ===
 from sqlalchemy import (
@@ -89,53 +64,6 @@ def strtobool(val: str) -> bool:
         return False
     raise ValueError(f"Invalid truth value: {val}")
 from web3 import Web3
-from web3.exceptions import TransactionNotFound
-import logging
-
-async def find_tx_any_chain(txhash: str):
-    for chain in CHAINS_TO_CHECK:
-        try:
-            info = await find_tx_on_chain(chain, txhash)
-            if info:
-                return info
-        except Exception:
-            continue
-    return None
-
-
-
-    logging.info(f"[tx-scan] procurando {txhash} em: {', '.join(CHAINS.keys())}")
-
-    for key, cfg in CHAINS.items():
-        rpc = cfg["rpc"]
-        try:
-            w3 = Web3(Web3.HTTPProvider(rpc, request_kwargs={"timeout": 20}))
-            if not w3.is_connected():
-                logging.warning(f"[tx-scan] {key}: RPC não conectou")
-                continue
-
-            # Confirmada?
-            try:
-                receipt = w3.eth.get_transaction_receipt(txhash)
-                if receipt:
-                    tx = w3.eth.get_transaction(txhash)
-                    return {"chain": key, "tx": tx, "receipt": receipt}
-            except TransactionNotFound:
-                pass
-
-            # Pendente?
-            try:
-                tx = w3.eth.get_transaction(txhash)
-                if tx:
-                    return {"chain": key, "tx": tx, "receipt": None}
-            except TransactionNotFound:
-                pass
-
-        except Exception as e:
-            logging.warning(f"[tx-scan] {key} falhou: {e}")
-            continue
-
-    return None
 
 from decimal import Decimal
 
@@ -3009,8 +2937,7 @@ async def tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await msg.reply_text("🔎 Verificando a transação em múltiplas redes...")
 
     try:
-        # ✅ IMPORTANTE: find_tx_any_chain é async → precisa de await
-        info = await find_tx_any_chain(txhash)
+        info = evm_pay.find_tx_any_chain(txhash)
 
         if not info:
             return await msg.reply_text("❌ Não encontrei essa hash em nenhuma rede configurada.")
