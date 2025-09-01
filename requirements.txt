@@ -6,3 +6,4 @@ apscheduler
 python-telegram-bot==22.3
 pytz
 httpx
+psycopg2
