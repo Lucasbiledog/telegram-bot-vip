@@ -21,6 +21,19 @@ Ou inclua também as dependências extras:
 pip install -r requirements.txt -r requirements-extras.txt
 ```
 
+## Atualização de dependências
+
+Os arquivos `requirements*.txt` agora possuem versões fixadas. Para atualizar as
+dependências e gerar um arquivo de *lock* com todas as versões transitivas,
+instale o [pip-tools](https://github.com/jazzband/pip-tools) e execute:
+
+```bash
+pip-compile requirements.txt requirements-extras.txt
+```
+
+O comando acima produz `requirements.lock`. Reexecute `pip-compile` sempre que
+for necessário subir versões e, em seguida, rode a suíte de testes.
+
 ## Redes suportadas pelo Blockchair
 
 As seguintes redes EVM são utilizadas para verificar transações via API pública do Blockchair. Todas utilizam 18 casas decimais.

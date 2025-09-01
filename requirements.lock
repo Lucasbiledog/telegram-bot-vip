@@ -1,0 +1,3 @@
+# Placeholder lock file. Generate with `pip-compile requirements.txt requirements-extras.txt`.
+# The current environment is offline; run the above command in a networked environment to
+# produce a full lock file with all transitive dependencies.
