@@ -19,13 +19,15 @@ INFURA_RPC = {
 }
 
 
-def get_provider(chain: str) -> Optional[Web3.HTTPProvider]:
+def get_provider(chain: str, rpc_url: str = "") -> Optional[Web3.HTTPProvider]:
     """Retorna um HTTPProvider autenticado via Web3Auth para a rede indicada.
 
-    Se o Web3Auth não estiver configurado ou ocorrer algum erro, retorna um
-    provider HTTP simples apontando para a URL configurada.
+    ``rpc_url`` pode ser usado para sobrescrever a URL padrão (por exemplo,
+    quando derivada dinamicamente de ``config.CHAIN_CONFIGS``). Se o Web3Auth
+    não estiver configurado ou ocorrer algum erro, retorna um provider HTTP
+    simples apontando para a URL configurada.
     """
-    url = (INFURA_RPC.get(chain) or "").strip()
+    url = (rpc_url or INFURA_RPC.get(chain) or "").strip()
     if not url:
         return None
 
