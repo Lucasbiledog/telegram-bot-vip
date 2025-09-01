@@ -4,21 +4,12 @@ from typing import Optional, Dict, Any, List, Tuple
 import requests
 from web3 import Web3
 from web3.types import TxReceipt
+from web3auth_provider import get_provider
 
-INFURA_PROJECT_ID = os.getenv("INFURA_PROJECT_ID", "").strip()
-RECEIVING_ADDRESS = Web3.to_checksum_address(os.getenv("RECEIVING_ADDRESS", "0x0000000000000000000000000000000000000000"))
+RECEIVING_ADDRESS = Web3.to_checksum_address(
+    os.getenv("RECEIVING_ADDRESS", "0x0000000000000000000000000000000000000000")
+)
 SUPPORTED = [s.strip() for s in os.getenv("SUPPORTED_EVM_NETWORKS", "ethereum").split(",") if s.strip()]
-
-# RPCs por rede via Infura (ajuste/adicione se desejar)
-INFURA_RPC = {
-    "ethereum": f"https://mainnet.infura.io/v3/{INFURA_PROJECT_ID}",
-    "polygon":  f"https://polygon-mainnet.infura.io/v3/{INFURA_PROJECT_ID}",
-    "arbitrum": f"https://arbitrum-mainnet.infura.io/v3/{INFURA_PROJECT_ID}",
-    "optimism": f"https://optimism-mainnet.infura.io/v3/{INFURA_PROJECT_ID}",
-    "base":     f"https://base-mainnet.infura.io/v3/{INFURA_PROJECT_ID}",
-    # redes extras fora da Infura (ex.: BSC)
-    "bsc":      os.getenv("RPC_BSC", "").strip(),
-}
 
 # topic do evento ERC20 Transfer(address,address,uint256)
 ERC20_TRANSFER_TOPIC = Web3.keccak(text="Transfer(address,address,uint256)").hex()
@@ -30,10 +21,10 @@ ERC20_ABI = [
 ]
 
 def get_web3(chain: str) -> Optional[Web3]:
-    url = (INFURA_RPC.get(chain) or "").strip()
-    if not url:
+    provider = get_provider(chain)
+    if not provider:
         return None
-    return Web3(Web3.HTTPProvider(url, request_kwargs={"timeout": 20}))
+    return Web3(provider)
 
 def _native_symbol(chain: str) -> str:
     return {
