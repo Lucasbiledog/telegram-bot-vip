@@ -6,6 +6,10 @@ from enum import Enum
 from typing import Optional, List, Dict, Any, Tuple
 from types import SimpleNamespace
 from io import BytesIO
+from evm_pay import find_tx_any_chain, pick_tier
+from distutils.util import strtobool
+
+
 
 import html
 import json
@@ -425,15 +429,13 @@ CHAIN_SYMBOL   = DEFAULT_CHAIN.get("symbol", "")
 RPC_URL        = DEFAULT_CHAIN.get("rpc_url", "")
 TOKEN_CONTRACT = DEFAULT_CHAIN.get("token_contract")
 TOKEN_DECIMALS = DEFAULT_CHAIN.get("decimals", 18)
-AUTO_APPROVE_CRYPTO = os.getenv("AUTO_APPROVE_CRYPTO", "1") == "1"
+# Accepts "1", "true", "yes", "y", "on" for True; "0", "false", "no", "n", "off" for False
+AUTO_APPROVE_CRYPTO = bool(strtobool(os.getenv("AUTO_APPROVE_CRYPTO", "1")))
 MIN_CONFIRMATIONS = int(os.getenv("MIN_CONFIRMATIONS", "5"))
 
 # ===== Multi-chain registry =====
 # Adicione/edite redes conforme precisar. Mantenha o 'key' único.
-NETWORKS = [
-    INFURA_PROJECT_ID = os.getenv("INFURA_PROJECT_ID", "")
-WALLET_ADDRESS = os.getenv("WALLET_ADDRESS", "").lower()
-
+INFURA_PROJECT_ID = os.getenv("INFURA_PROJECT_ID", "")
 def make_rpc_url(network: str) -> str:
     return f"https://{network}.infura.io/v3/{INFURA_PROJECT_ID}"
 
@@ -451,8 +453,6 @@ NETWORKS = [
     # Redes fora da Infura → usar RPC público confiável
     {"key": "bsc", "name": "Binance Smart Chain", "rpc": os.getenv("RPC_BSC", "https://bsc-dataseed.binance.org"), "native_symbol": "BNB", "native_decimals": 18, "explorer": "https://bscscan.com"},
     {"key": "fantom", "name": "Fantom Opera", "rpc": os.getenv("RPC_FANTOM", "https://rpc.ftm.tools/"), "native_symbol": "FTM", "native_decimals": 18, "explorer": "https://ftmscan.com"},
-]
-
 ]
 
 
@@ -2870,18 +2870,52 @@ async def listar_pendentes_cmd(update: Update, context: ContextTypes.DEFAULT_TYP
     
 async def tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.effective_message
-    user = update.effective_user
     if not context.args:
-        return await msg.reply_text("Uso: /tx <hash_da_transacao> (ex.: 0x… com 66 caracteres)")
+        return await msg.reply_text("Uso: /tx <hash>")
 
-    tx_raw = context.args[0]
-    tx_hash = normalize_tx_hash(tx_raw)
-    if not tx_hash:
+    txh = context.args[0].strip()
+    await msg.reply_text("🔎 Verificando a transação em múltiplas redes...")
+
+    try:
+        info = find_tx_any_chain(txh)
+    except Exception as e:
+        return await msg.reply_text(f"❌ Erro ao verificar: {e}")
+
+    if not info:
+        return await msg.reply_text("❌ Não encontrei essa hash em nenhuma rede configurada.")
+
+    usd = info["usd_total"]
+    chain = info["chain"]
+    confs = info.get("confirmations", 0)
+
+    # escolha do tier
+    tier = pick_tier(usd)
+    if not tier:
+        return await msg.reply_text(f"Transação encontrada na {chain}, valor ≈ ${usd:.2f}, mas é insuficiente para um VIP.")
+
+    # aqui você já tem o valor, rede, etc. -> atualize seu banco e chame seu fluxo VIP existente
+    # Exemplo (adapte aos seus modelos/funções):
+    # save_tx(user_id=update.effective_user.id, tx_hash=info["hash"], chain=chain, amount_usd=usd)
+    # vip_upsert_start_or_extend(user_id, tier, days_for_tier)
+
+    days = {
+        "basic": int(os.getenv("VIP_DAYS_BASIC", "30")),
+        "pro":   int(os.getenv("VIP_DAYS_PRO", "60")),
+        "ultra": int(os.getenv("VIP_DAYS_ULTRA", "120")),
+    }.get(tier, 30)
+
+    # >>>>>>>>>> chame sua função real de conceder/renovar VIP >>>>>>>>>>
+    # ok = grant_or_extend_vip(user_id=update.effective_user.id, days=days, tier=tier, usd=usd, chain=chain, tx=info["hash"])
+    ok = True  # placeholder — use sua função existente
+
+    if ok:
         return await msg.reply_text(
-            "Hash inválida. Cole o *hash da transação*, não o endereço.\n"
-            "• Deve começar com `0x` e ter 66 caracteres (0x + 64 hex).",
+            f"✅ Confirmei sua transação na **{chain}** (≈ ${usd:.2f}, {confs} confs).\n"
+            f"Você recebeu o VIP **{tier.upper()}** por **{days} dias**. Bem-vindo! 🎉",
             parse_mode="Markdown"
         )
+    else:
+        return await msg.reply_text("❌ Não consegui registrar seu VIP. Tente novamente ou fale com um admin.")
 
 
     # Já existe?

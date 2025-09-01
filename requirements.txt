@@ -7,3 +7,5 @@ python-telegram-bot==22.3
 pytz
 httpx
 psycopg2
+web3==6.20.1
+requests==2.32.5
