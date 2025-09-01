@@ -11,6 +11,7 @@ from evm_pay import find_tx_any_chain, pick_tier
 
 
 import html
+import secrets
 import json
 import pytz
 from dotenv import load_dotenv
@@ -18,6 +19,7 @@ from config import CHAIN_CONFIGS
 
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import PlainTextResponse, JSONResponse
+from eth_account.messages import encode_defunct
 import uvicorn
 import httpx
 
@@ -594,6 +596,10 @@ app = FastAPI()
 application = ApplicationBuilder().token(BOT_TOKEN).build()
 bot = None
 BOT_USERNAME = None
+
+# Desafios temporários para autenticação via assinatura
+LOGIN_CHALLENGES: Dict[int, Tuple[str, dt.datetime]] = {}
+CHALLENGE_TTL = dt.timedelta(minutes=5)
 
 
 class ConfigKV(Base):
@@ -3625,6 +3631,48 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
 # =========================
 # Webhooks + Keepalive
 # =========================
+
+@app.post("/auth_challenge")
+async def auth_challenge(request: Request):
+    data = await request.json()
+    uid = data.get("telegram_user_id")
+    if not uid:
+        return JSONResponse({"ok": False, "error": "telegram_user_id é obrigatório"}, status_code=400)
+    challenge = secrets.token_hex(16)
+    LOGIN_CHALLENGES[int(uid)] = (challenge, now_utc())
+    return {"challenge": challenge}
+
+
+@app.post("/auth_verify")
+async def auth_verify(request: Request):
+    data = await request.json()
+    uid = data.get("telegram_user_id")
+    address = (data.get("address") or "").strip()
+    signature = (data.get("signature") or "").strip()
+    if not uid or not address or not signature:
+        return JSONResponse({"ok": False, "error": "telegram_user_id, address e signature são obrigatórios"}, status_code=400)
+
+    info = LOGIN_CHALLENGES.get(int(uid))
+    if not info:
+        return JSONResponse({"ok": False, "error": "desafio não encontrado"}, status_code=400)
+    challenge, ts = info
+    if now_utc() - ts > CHALLENGE_TTL:
+        del LOGIN_CHALLENGES[int(uid)]
+        return JSONResponse({"ok": False, "error": "desafio expirado"}, status_code=400)
+
+    msg = encode_defunct(text=challenge)
+    try:
+        recovered = Web3().eth.account.recover_message(msg, signature=signature)
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": f"assinatura inválida: {e}"}, status_code=400)
+    if recovered.lower() != address.lower():
+        return JSONResponse({"ok": False, "error": "assinatura não confere com endereço"}, status_code=400)
+
+    await asyncio.to_thread(user_address_upsert, int(uid), address)
+    del LOGIN_CHALLENGES[int(uid)]
+    return {"ok": True, "address": address}
+
+
 @app.post("/crypto_webhook")
 async def crypto_webhook(request: Request):
     data   = await request.json()
