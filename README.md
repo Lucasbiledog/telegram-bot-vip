@@ -6,19 +6,19 @@ Este repositório contém um bot de Telegram para gerenciamento de planos VIP.
 
 As dependências estão divididas em dois arquivos:
 
-- `requirements-core.txt` – bibliotecas essenciais para execução do bot.
-- `requirements-extras.txt` – integrações opcionais (Stripe, Google, Web3 etc.).
+- `requirements.txt` – bibliotecas essenciais para execução do bot.
+- `requirements-extras.txt` – integrações opcionais (Stripe, Google, Web3, Web3Auth etc.).
 
 Instale apenas o núcleo:
 
 ```bash
-pip install -r requirements-core.txt
+pip install -r requirements.txt
 ```
 
 Ou inclua também as dependências extras:
 
 ```bash
-pip install -r requirements-core.txt -r requirements-extras.txt
+pip install -r requirements.txt -r requirements-extras.txt
 ```
 
 ## Redes suportadas pelo Blockchair
