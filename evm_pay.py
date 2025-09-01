@@ -5,11 +5,37 @@ import requests
 from web3 import Web3
 from web3.types import TxReceipt
 from web3auth_provider import get_provider
+from config import CHAIN_CONFIGS
+from web3auth_chains import load_web3auth_chains
 
 RECEIVING_ADDRESS = Web3.to_checksum_address(
     os.getenv("RECEIVING_ADDRESS", "0x0000000000000000000000000000000000000000")
 )
-SUPPORTED = [s.strip() for s in os.getenv("SUPPORTED_EVM_NETWORKS", "ethereum").split(",") if s.strip()]
+
+# Redes EVM suportadas são derivadas automaticamente de ``config.CHAIN_CONFIGS``.
+# Esse objeto lê a variável de ambiente ``CHAINS`` e fornece ``chain_name`` e
+# ``rpc_url`` para cada rede. Se ``CHAIN_CONFIGS`` estiver vazio, caímos no
+# conjunto oficial fornecido por ``web3auth_chains.load_web3auth_chains``.
+# As URLs podem ser sobrescritas via variáveis ``<CHAIN>_RPC_URL``.
+def _discover_supported() -> Dict[str, str]:
+    chains: Dict[str, str] = {}
+    for cfg in CHAIN_CONFIGS:
+        name = (cfg.get("chain_name") or "").strip().lower()
+        rpc = (cfg.get("rpc_url") or "").strip()
+        if name and rpc:
+            chains[name] = rpc
+    if not chains:
+        try:
+            data = load_web3auth_chains()
+            for name, info in data.items():
+                rpc = (info.get("rpc") or "").strip()
+                if name and rpc:
+                    chains[name.strip().lower()] = rpc
+        except Exception:
+            pass
+    return chains
+
+SUPPORTED: Dict[str, str] = _discover_supported()
 
 # topic do evento ERC20 Transfer(address,address,uint256)
 ERC20_TRANSFER_TOPIC = Web3.keccak(text="Transfer(address,address,uint256)").hex()
@@ -20,8 +46,8 @@ ERC20_ABI = [
     {"constant":True,"inputs":[],"name":"symbol","outputs":[{"name":"","type":"string"}],"type":"function"}
 ]
 
-def get_web3(chain: str) -> Optional[Web3]:
-    provider = get_provider(chain)
+def get_web3(chain: str, rpc_url: str = "") -> Optional[Web3]:
+    provider = get_provider(chain, rpc_url)
     if not provider:
         return None
     return Web3(provider)
@@ -117,8 +143,8 @@ def _sum_transferred_to_me(w3: Web3, receipt: TxReceipt) -> List[Dict[str, Any]]
                     results.append({"token": Web3.to_checksum_address(token), "amount": amount, "decimals": dec, "symbol": sym})
     return results
 
-def fetch_tx_on_chain(chain: str, tx_hash: str) -> Optional[Dict[str, Any]]:
-    w3 = get_web3(chain)
+def fetch_tx_on_chain(chain: str, rpc_url: str, tx_hash: str) -> Optional[Dict[str, Any]]:
+    w3 = get_web3(chain, rpc_url)
     if not w3:
         return None
     try:
@@ -190,8 +216,8 @@ def find_tx_any_chain(tx_hash: str) -> Optional[Dict[str, Any]]:
             tx_hash = "0x" + tx_hash
         else:
             return None
-    for chain in SUPPORTED:
-        info = fetch_tx_on_chain(chain, tx_hash)
+    for chain, rpc in SUPPORTED.items():
+        info = fetch_tx_on_chain(chain, rpc, tx_hash)
         if info and info.get("found"):
             return info
     return None
