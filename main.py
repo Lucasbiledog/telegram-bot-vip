@@ -509,9 +509,12 @@ NETWORKS = [
     {"key": "linea", "name": "Linea", "rpc": make_rpc_url("linea-mainnet"), "native_symbol": "ETH", "native_decimals": 18, "explorer": "https://lineascan.build"},
     {"key": "avax", "name": "Avalanche C-Chain", "rpc": make_rpc_url("avalanche-mainnet"), "native_symbol": "AVAX", "native_decimals": 18, "explorer": "https://snowtrace.io"},
     {"key": "palm", "name": "Palm", "rpc": make_rpc_url("palm-mainnet"), "native_symbol": "PALM", "native_decimals": 18, "explorer": "https://explorer.palm.io"},
+     # Redes fora da Infura → usar RPC público confiável
+    {"key": "bsc", "name": "BNB Smart Chain", "rpc": os.getenv("BSC_RPC", "https://bsc-dataseed.binance.org"), "native_symbol": "BNB", "native_decimals": 18, "explorer": "https://bscscan.com"},
+    {"key": "fantom", "name": "Fantom Opera", "rpc": os.getenv("RPC_FANTOM", "https://rpc.ftm.tools/"), "native_symbol": "FTM", "native_decimals": 18, "explorer": "https://ftmscan.com"},
+]
 
-    # Redes fora da Infura → usar RPC público confiável
-    CHAINS = {
+CHAINS = {
     # ... suas redes Infura (eth, polygon, arbitrum, optimism, base, linea) ...
     "bsc": {
         "name": "BNB Smart Chain",
@@ -522,8 +525,6 @@ NETWORKS = [
         "coingecko_id": "binancecoin",
     },
 }
-    {"key": "fantom", "name": "Fantom Opera", "rpc": os.getenv("RPC_FANTOM", "https://rpc.ftm.tools/"), "native_symbol": "FTM", "native_decimals": 18, "explorer": "https://ftmscan.com"},
-]
 
 
 
