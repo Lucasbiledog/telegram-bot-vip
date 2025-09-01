@@ -59,7 +59,60 @@ def strtobool(val: str) -> bool:
     if val in ("n", "no", "f", "false", "off", "0"):
         return False
     raise ValueError(f"Invalid truth value: {val}")
+from web3 import Web3
+from web3.exceptions import TransactionNotFound
+import logging
 
+async def find_tx_any_chain(txhash: str):
+    txhash = txhash.strip()
+    if not (txhash.startswith("0x") and len(txhash) == 66):
+        return None
+
+    logging.info(f"[tx-scan] procurando {txhash} em: {', '.join(CHAINS.keys())}")
+
+    for key, cfg in CHAINS.items():
+        rpc = cfg["rpc"]
+        try:
+            w3 = Web3(Web3.HTTPProvider(rpc, request_kwargs={"timeout": 20}))
+            if not w3.is_connected():
+                logging.warning(f"[tx-scan] {key}: RPC não conectou")
+                continue
+
+            # Confirmada?
+            try:
+                receipt = w3.eth.get_transaction_receipt(txhash)
+                if receipt:
+                    tx = w3.eth.get_transaction(txhash)
+                    return {"chain": key, "tx": tx, "receipt": receipt}
+            except TransactionNotFound:
+                pass
+
+            # Pendente?
+            try:
+                tx = w3.eth.get_transaction(txhash)
+                if tx:
+                    return {"chain": key, "tx": tx, "receipt": None}
+            except TransactionNotFound:
+                pass
+
+        except Exception as e:
+            logging.warning(f"[tx-scan] {key} falhou: {e}")
+            continue
+
+    return None
+
+from decimal import Decimal
+
+def wei_to_eth(wei: int) -> Decimal:
+    return Decimal(wei) / Decimal(10**18)
+
+async def value_usd_from_tx(result) -> Decimal:
+    key = result["chain"]
+    cfg = CHAINS[key]
+    native_amount = wei_to_eth(result["tx"]["value"])
+    # use seu fetch de preço (ex.: CoinGecko) com cfg["coingecko_id"]
+    price = await get_price_usd(cfg["coingecko_id"])  # implemente/plugue na sua função já existente
+    return native_amount * Decimal(str(price))
 
 # === Config DB ===
 DB_URL = os.getenv("DATABASE_URL", "sqlite:///./bot.db")
@@ -458,7 +511,17 @@ NETWORKS = [
     {"key": "palm", "name": "Palm", "rpc": make_rpc_url("palm-mainnet"), "native_symbol": "PALM", "native_decimals": 18, "explorer": "https://explorer.palm.io"},
 
     # Redes fora da Infura → usar RPC público confiável
-    {"key": "bsc", "name": "Binance Smart Chain", "rpc": os.getenv("RPC_BSC", "https://bsc-dataseed.binance.org"), "native_symbol": "BNB", "native_decimals": 18, "explorer": "https://bscscan.com"},
+    CHAINS = {
+    # ... suas redes Infura (eth, polygon, arbitrum, optimism, base, linea) ...
+    "bsc": {
+        "name": "BNB Smart Chain",
+        "rpc": os.getenv("BSC_RPC", "https://bsc-dataseed.binance.org"),
+        "explorer_api": "https://api.bscscan.com/api",   # opcional
+        "explorer_key": os.getenv("BSCSCAN_API_KEY", ""), # opcional
+        "native_symbol": "BNB",
+        "coingecko_id": "binancecoin",
+    },
+}
     {"key": "fantom", "name": "Fantom Opera", "rpc": os.getenv("RPC_FANTOM", "https://rpc.ftm.tools/"), "native_symbol": "FTM", "native_decimals": 18, "explorer": "https://ftmscan.com"},
 ]
 
