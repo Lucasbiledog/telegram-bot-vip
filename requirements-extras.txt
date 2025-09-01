@@ -4,6 +4,7 @@ google-auth
 google-auth-oauthlib
 web3==6.20.1
 eth-account>=0.10.0
+web3auth
 pytesseract
 pillow
 pdfminer.six
