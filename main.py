@@ -428,6 +428,35 @@ TOKEN_DECIMALS = DEFAULT_CHAIN.get("decimals", 18)
 AUTO_APPROVE_CRYPTO = os.getenv("AUTO_APPROVE_CRYPTO", "1") == "1"
 MIN_CONFIRMATIONS = int(os.getenv("MIN_CONFIRMATIONS", "5"))
 
+# ===== Multi-chain registry =====
+# Adicione/edite redes conforme precisar. Mantenha o 'key' único.
+NETWORKS = [
+    INFURA_PROJECT_ID = os.getenv("INFURA_PROJECT_ID", "")
+WALLET_ADDRESS = os.getenv("WALLET_ADDRESS", "").lower()
+
+def make_rpc_url(network: str) -> str:
+    return f"https://{network}.infura.io/v3/{INFURA_PROJECT_ID}"
+
+NETWORKS = [
+    # Redes Infura (MetaMask Developer)
+    {"key": "eth", "name": "Ethereum", "rpc": make_rpc_url("mainnet"), "native_symbol": "ETH", "native_decimals": 18, "explorer": "https://etherscan.io"},
+    {"key": "polygon", "name": "Polygon", "rpc": make_rpc_url("polygon-mainnet"), "native_symbol": "MATIC", "native_decimals": 18, "explorer": "https://polygonscan.com"},
+    {"key": "base", "name": "Base", "rpc": make_rpc_url("base-mainnet"), "native_symbol": "ETH", "native_decimals": 18, "explorer": "https://basescan.org"},
+    {"key": "arbitrum", "name": "Arbitrum One", "rpc": make_rpc_url("arbitrum-mainnet"), "native_symbol": "ETH", "native_decimals": 18, "explorer": "https://arbiscan.io"},
+    {"key": "optimism", "name": "Optimism", "rpc": make_rpc_url("optimism-mainnet"), "native_symbol": "ETH", "native_decimals": 18, "explorer": "https://optimistic.etherscan.io"},
+    {"key": "linea", "name": "Linea", "rpc": make_rpc_url("linea-mainnet"), "native_symbol": "ETH", "native_decimals": 18, "explorer": "https://lineascan.build"},
+    {"key": "avax", "name": "Avalanche C-Chain", "rpc": make_rpc_url("avalanche-mainnet"), "native_symbol": "AVAX", "native_decimals": 18, "explorer": "https://snowtrace.io"},
+    {"key": "palm", "name": "Palm", "rpc": make_rpc_url("palm-mainnet"), "native_symbol": "PALM", "native_decimals": 18, "explorer": "https://explorer.palm.io"},
+
+    # Redes fora da Infura → usar RPC público confiável
+    {"key": "bsc", "name": "Binance Smart Chain", "rpc": os.getenv("RPC_BSC", "https://bsc-dataseed.binance.org"), "native_symbol": "BNB", "native_decimals": 18, "explorer": "https://bscscan.com"},
+    {"key": "fantom", "name": "Fantom Opera", "rpc": os.getenv("RPC_FANTOM", "https://rpc.ftm.tools/"), "native_symbol": "FTM", "native_decimals": 18, "explorer": "https://ftmscan.com"},
+]
+
+]
+
+
+
 # Nativo
 MIN_NATIVE_AMOUNT = float(os.getenv("MIN_NATIVE_AMOUNT", "0"))  # em moeda nativa
 
@@ -2436,16 +2465,90 @@ async def detect_chain_from_hash(tx_hash: str) -> Optional[str]:
                 continue
     return None
 
-async def verify_tx_any(tx_hash: str) -> Dict[str, Any]:
-    for cfg in CHAIN_CONFIGS:
+async def verify_tx_any_chain(tx_hash: str) -> Dict[str, Any]:
+    if not is_valid_tx_hash(tx_hash):
+        return {"ok": False, "reason": "Hash inválida (precisa ter 66 chars com 0x + 64 hex)"}
+
+    for net in NETWORKS:
         try:
-            res = await verify_tx_blockscan(cfg, tx_hash)
-        except Exception as e:
-            logging.warning("Erro verificando via Blockscan: %s", e)
+            tx = await rpc_call_net(net, "eth_getTransactionByHash", [tx_hash])
+        except Exception:
+            continue  # tenta próxima rede
+
+        if not tx:
             continue
-        if res.get("ok"):
-            return res
-    return {"ok": False, "reason": "Transação não encontrada nas APIs"}
+
+        # Achamos a rede!
+        try:
+            receipt = await rpc_call_net(net, "eth_getTransactionReceipt", [tx_hash])
+        except Exception as e:
+            return {"ok": False, "reason": f"Falha ao obter receipt em {net['name']}: {e}"}
+
+        status_ok = (receipt and receipt.get("status") == "0x1")
+        if not status_ok:
+            return {"ok": False, "chain": net["key"], "reason": "Transação ainda não sucessful/confirmada"}
+
+        # Confirmações
+        try:
+            blk_hex = await rpc_call_net(net, "eth_blockNumber", [])
+        except Exception as e:
+            return {"ok": False, "chain": net["key"], "reason": f"Falha ao obter bloco atual: {e}"}
+        confs = hex_to_int(blk_hex) - hex_to_int(receipt.get("blockNumber","0x0"))
+        min_confs = int(net.get("min_confirmations", 5))
+        if confs < min_confs:
+            return {"ok": False, "chain": net["key"], "reason": f"Confirmações insuficientes ({confs}/{min_confs})"}
+
+        # Detectar tipo: nativo ou ERC-20
+        wallet = WALLET_ADDRESS
+        native_symbol = net["native_symbol"]
+        native_dec = net["native_decimals"]
+
+        # Checa ERC-20 nos logs primeiro
+        logs = receipt.get("logs", []) or []
+        for lg in logs:
+            if (lg.get("topics") or [None])[0] == TRANSFER_TOPIC:
+                to_addr = ("0x" + (lg["topics"][2][26:] if lg["topics"][2].startswith("0x") else lg["topics"][2])[-40:]).lower()
+                if to_addr == wallet:
+                    contract = (lg.get("address") or "").lower()
+                    amount_raw = hex_to_int(lg.get("data"))
+                    sym, dec = await erc20_symbol_decimals(net, contract)
+                    amount = to_units(amount_raw, dec)
+
+                    # USD
+                    usd_unit = await price_usd_token(net["key"], contract)
+                    usd_total = (usd_unit * amount) if usd_unit else None
+
+                    return {
+                        "ok": True, "chain": net["key"], "chain_name": net["name"],
+                        "type": "erc20", "contract": contract,
+                        "symbol": sym, "decimals": dec,
+                        "amount_raw": amount_raw, "amount": amount,
+                        "usd": usd_total, "confirmations": confs
+                    }
+
+        # Se não achou token, tenta nativo (to == WALLET_ADDRESS)
+        to_addr = (tx.get("to") or "").lower()
+        if to_addr == wallet:
+            value_wei = hex_to_int(tx.get("value"))
+            amount = to_units(value_wei, native_dec)
+
+            usd_unit = await price_usd_native(native_symbol)
+            usd_total = (usd_unit * amount) if usd_unit else None
+
+            return {
+                "ok": True, "chain": net["key"], "chain_name": net["name"],
+                "type": "native",
+                "symbol": native_symbol, "decimals": native_dec,
+                "amount_wei": value_wei, "amount": amount,
+                "usd": usd_total, "confirmations": confs
+            }
+
+        # Achou a tx nessa rede mas não é depósito para sua carteira
+        return {"ok": False, "chain": net["key"], "reason": "Transação não foi enviada para a sua carteira."}
+
+    # Não encontrou em nenhuma rede
+    return {"ok": False, "reason": "Transação não encontrada nas redes configuradas."}
+
 
 
 async def process_incoming_payment(tx_info: Dict[str, Any]) -> None:
