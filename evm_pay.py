@@ -1,12 +1,13 @@
 # evm_pay.py
 import os, json, time, math
 from typing import Optional, Dict, Any, List, Tuple
-import requests
+import asyncio
+import httpx
 from web3 import Web3
 from web3.types import TxReceipt
 from web3auth_provider import get_provider
 from config import CHAIN_CONFIGS
-from web3auth_chains import load_web3auth_chains
+from web3auth_chains import load_web3auth_chains_sync
 
 RECEIVING_ADDRESS = Web3.to_checksum_address(
     os.getenv("RECEIVING_ADDRESS", "0x0000000000000000000000000000000000000000")
@@ -26,7 +27,7 @@ def _discover_supported() -> Dict[str, str]:
             chains[name] = rpc
     if not chains:
         try:
-            data = load_web3auth_chains()
+            data = load_web3auth_chains_sync()
             for name, info in data.items():
                 rpc = (info.get("rpc") or "").strip()
                 if name and rpc:
@@ -72,7 +73,7 @@ def _coingecko_native_id(chain: str) -> str:
         "bsc":"binancecoin",
     }.get(chain, "ethereum")
 
-def _coingecko_token_price(chain: str, token_address: str) -> Optional[float]:
+async def _coingecko_token_price(chain: str, token_address: str) -> Optional[float]:
     # preços ERC20: /simple/token_price/{platform}?contract_addresses=...&vs_currencies=usd
     platform = {
         "ethereum":"ethereum",
@@ -85,11 +86,12 @@ def _coingecko_token_price(chain: str, token_address: str) -> Optional[float]:
     if not platform:
         return None
     try:
-        r = requests.get(
-            f"https://api.coingecko.com/api/v3/simple/token_price/{platform}",
-            params={"contract_addresses": token_address, "vs_currencies":"usd"},
-            timeout=15
-        )
+        async with httpx.AsyncClient() as client:
+            r = await client.get(
+                f"https://api.coingecko.com/api/v3/simple/token_price/{platform}",
+                params={"contract_addresses": token_address, "vs_currencies":"usd"},
+                timeout=15,
+            )
         data = r.json()
         key = token_address.lower()
         if key in data and "usd" in data[key]:
@@ -98,14 +100,15 @@ def _coingecko_token_price(chain: str, token_address: str) -> Optional[float]:
         pass
     return None
 
-def _coingecko_native_price(chain: str) -> Optional[float]:
+async def _coingecko_native_price(chain: str) -> Optional[float]:
     cid = _coingecko_native_id(chain)
     try:
-        r = requests.get(
-            "https://api.coingecko.com/api/v3/simple/price",
-            params={"ids": cid, "vs_currencies":"usd"},
-            timeout=15
-        )
+        async with httpx.AsyncClient() as client:
+            r = await client.get(
+                "https://api.coingecko.com/api/v3/simple/price",
+                params={"ids": cid, "vs_currencies":"usd"},
+                timeout=15,
+            )
         data = r.json()
         if cid in data and "usd" in data[cid]:
             return float(data[cid]["usd"])
@@ -143,23 +146,23 @@ def _sum_transferred_to_me(w3: Web3, receipt: TxReceipt) -> List[Dict[str, Any]]
                     results.append({"token": Web3.to_checksum_address(token), "amount": amount, "decimals": dec, "symbol": sym})
     return results
 
-def fetch_tx_on_chain(chain: str, rpc_url: str, tx_hash: str) -> Optional[Dict[str, Any]]:
+async def fetch_tx_on_chain(chain: str, rpc_url: str, tx_hash: str) -> Optional[Dict[str, Any]]:
     w3 = get_web3(chain, rpc_url)
     if not w3:
         return None
     try:
-        tx = w3.eth.get_transaction(tx_hash)
+        tx = await asyncio.to_thread(w3.eth.get_transaction, tx_hash)
     except Exception:
         return None
 
     # Precisamos do receipt pra logs/confirmations
     try:
-        receipt = w3.eth.get_transaction_receipt(tx_hash)
+        receipt = await asyncio.to_thread(w3.eth.get_transaction_receipt, tx_hash)
     except Exception:
         return None
 
     # Confirmações (melhor esforço)
-    latest = w3.eth.block_number
+    latest = await asyncio.to_thread(lambda: w3.eth.block_number)
     confirmations = latest - receipt["blockNumber"] + 1 if receipt and receipt.get("blockNumber") else 0
 
     details = {
@@ -195,12 +198,12 @@ def fetch_tx_on_chain(chain: str, rpc_url: str, tx_hash: str) -> Optional[Dict[s
     # Preço em USD
     usd_total = 0.0
     if details["native"] > 0:
-        p = _coingecko_native_price(chain)
+        p = await _coingecko_native_price(chain)
         if p:
             usd_total += details["native"] * p
 
     for t in details["erc20"]:
-        p = _coingecko_token_price(chain, t["token"]) or 0.0
+        p = await _coingecko_token_price(chain, t["token"]) or 0.0
         t["usd_price"] = p
         t["usd_amount"] = t["amount"] * p
         usd_total += t["usd_amount"]
@@ -208,7 +211,7 @@ def fetch_tx_on_chain(chain: str, rpc_url: str, tx_hash: str) -> Optional[Dict[s
     details["usd_total"] = usd_total
     return details
 
-def find_tx_any_chain(tx_hash: str) -> Optional[Dict[str, Any]]:
+async def find_tx_any_chain(tx_hash: str) -> Optional[Dict[str, Any]]:
     tx_hash = tx_hash.strip().lower()
     if not tx_hash.startswith("0x") or len(tx_hash) != 66:
         # tentar normalizar quando o usuário manda sem 0x
@@ -217,7 +220,7 @@ def find_tx_any_chain(tx_hash: str) -> Optional[Dict[str, Any]]:
         else:
             return None
     for chain, rpc in SUPPORTED.items():
-        info = fetch_tx_on_chain(chain, rpc, tx_hash)
+        info = await fetch_tx_on_chain(chain, rpc, tx_hash)
         if info and info.get("found"):
             return info
     return None

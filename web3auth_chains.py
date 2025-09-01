@@ -3,13 +3,14 @@ from __future__ import annotations
 
 from typing import Dict, Any, Iterable
 
-import requests
+import asyncio
+import httpx
 
 WEB3AUTH_CHAIN_URL = "https://rpc.web3auth.io/chain-config"
 
 
-def load_web3auth_chains() -> Dict[str, Dict[str, Any]]:
-    """Fetch the official Web3Auth chain configuration list.
+async def load_web3auth_chains() -> Dict[str, Dict[str, Any]]:
+    """Fetch the official Web3Auth chain configuration list asynchronously.
 
     Returns a mapping keyed by chain name. Each entry provides:
     ``chain_id`` (int), ``symbol`` (str) and ``rpc`` (str) when
@@ -17,7 +18,8 @@ def load_web3auth_chains() -> Dict[str, Dict[str, Any]]:
     parsing fails.
     """
     try:
-        response = requests.get(WEB3AUTH_CHAIN_URL, timeout=10)
+        async with httpx.AsyncClient() as client:
+            response = await client.get(WEB3AUTH_CHAIN_URL, timeout=10)
         response.raise_for_status()
         data = response.json()
     except Exception as exc:  # pragma: no cover - network failure path
@@ -63,3 +65,14 @@ def load_web3auth_chains() -> Dict[str, Dict[str, Any]]:
     if not chains:
         raise RuntimeError("Web3Auth chain list empty or unrecognized format")
     return chains
+
+
+def load_web3auth_chains_sync() -> Dict[str, Dict[str, Any]]:
+    """Synchronous wrapper around :func:`load_web3auth_chains`.
+
+    Useful for contexts where awaiting is not possible, such as module
+    import time. The call still performs asynchronous HTTP operations
+    under the hood but blocks until completion.
+    """
+
+    return asyncio.run(load_web3auth_chains())

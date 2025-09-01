@@ -2,13 +2,13 @@ import os
 from typing import Dict, List, Any
 from dotenv import load_dotenv
 
-from web3auth_chains import load_web3auth_chains
+from web3auth_chains import load_web3auth_chains_sync
 
 load_dotenv()
 
 
 try:
-    _CHAIN_DATA = load_web3auth_chains()
+    _CHAIN_DATA = load_web3auth_chains_sync()
 except Exception:
     # Fallback to a minimal built-in dataset when the official list is
     # unreachable. RPC URLs can still be overridden via environment

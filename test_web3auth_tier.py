@@ -51,10 +51,13 @@ def test_web3auth_tx_to_tier(monkeypatch):
             def from_wei(v, unit):
                 return Web3.from_wei(v, unit)
 
-        monkeypatch.setattr(evm_pay, "get_web3", lambda chain: DummyW3())
-        monkeypatch.setattr(evm_pay, "_coingecko_native_price", lambda chain: 2000.0)
+        monkeypatch.setattr(evm_pay, "get_web3", lambda chain, rpc_url="": DummyW3())
+        async def fake_price(chain):
+            return 2000.0
 
-        info = await asyncio.to_thread(evm_pay.fetch_tx_on_chain, "ethereum", "0x" + "1"*64)
+        monkeypatch.setattr(evm_pay, "_coingecko_native_price", fake_price)
+
+        info = await evm_pay.fetch_tx_on_chain("ethereum", "", "0x" + "1"*64)
         assert info["usd_total"] == pytest.approx(40.0)
 
         tier = evm_pay.pick_tier(info["usd_total"])
