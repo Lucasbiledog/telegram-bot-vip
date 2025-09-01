@@ -64,9 +64,13 @@ from web3.exceptions import TransactionNotFound
 import logging
 
 async def find_tx_any_chain(txhash: str):
-    txhash = txhash.strip()
-    if not (txhash.startswith("0x") and len(txhash) == 66):
-        return None
+    # tenta nas redes configuradas, uma a uma
+    for chain in CHAINS_TO_CHECK:  # ex.: ["BSC","Polygon","Ethereum",...]
+        info = await find_tx_on_chain(chain, txhash)  # também async
+        if info:
+            return info
+    return None
+
 
     logging.info(f"[tx-scan] procurando {txhash} em: {', '.join(CHAINS.keys())}")
 
@@ -2939,30 +2943,92 @@ async def listar_pendentes_cmd(update: Update, context: ContextTypes.DEFAULT_TYP
         ]
         await update.effective_message.reply_text("\n".join(lines), parse_mode="HTML")
     
+# --- /tx -------------------------------------------------------------
+from decimal import Decimal
+import logging
+
+def _fmt_usd(x) -> str:
+    try:
+        return f"${Decimal(x):,.2f}"
+    except Exception:
+        return f"${x}"
+
 async def tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.effective_message
+
+    # validação de uso
     if not context.args:
-        return await msg.reply_text("Uso: /tx <hash>")
+        return await msg.reply_text("Uso: /tx <hash>\nEx.: /tx 0xabc123...")
 
     txhash = context.args[0].strip()
-    result = await find_tx_any_chain(txhash)   # <-- precisa do await aqui
+    if not txhash.startswith("0x"):
+        txhash = "0x" + txhash
+    if len(txhash) != 66:  # 0x + 64 hex
+        return await msg.reply_text("Hash inválida. Deve ter 64 hex (começando com 0x).")
 
-    if not result:
-        return await msg.reply_text("❌ Não encontrei essa hash em nenhuma rede configurada.")
+    # feedback
+    await msg.reply_text("🔎 Verificando a transação em múltiplas redes...")
 
-    # se encontrou, converte valor para USD
-    usd_val = await value_usd_from_tx(result)  # também é async
+    try:
+        # ✅ IMPORTANTE: find_tx_any_chain é async → precisa de await
+        info = await find_tx_any_chain(txhash)
 
-    chain = result["chain"]
-    tx = result["tx"]
+        if not info:
+            return await msg.reply_text("❌ Não encontrei essa hash em nenhuma rede configurada.")
 
-    await msg.reply_text(
-        f"✅ Transação encontrada!\n"
-        f"🌐 Rede: {chain}\n"
-        f"💰 Valor: {wei_to_eth(tx['value'])} {CHAINS[chain]['native_symbol']}\n"
-        f"≈ ${usd_val:.2f} USD\n"
-        f"🔗 Explorer: {CHAINS[chain]['explorer']}/tx/{txhash}"
-    )
+        # Esperado de `info`:
+        # {
+        #   "chain": "Polygon" | "BSC" | "Ethereum" | ...,
+        #   "tx": "0x...",
+        #   "from": "0x...",
+        #   "to": "0x...",
+        #   "symbol": "MATIC" | "BNB" | "ETH" | ...,
+        #   "value_native": Decimal | float | str,
+        #   "usd_total": Decimal | float | str,
+        #   "confirmations": int | None,
+        #   "status": "success" | "pending" | "failed",
+        #   "explorer": "https://.../tx/0x..."
+        # }
+
+        chain   = info.get("chain", "?")
+        symbol  = info.get("symbol", "?")
+        v_nat   = info.get("value_native", 0)
+        usd     = info.get("usd_total") or info.get("value_usd") or 0
+        confs   = info.get("confirmations")
+        status  = info.get("status", "desconhecido")
+        expl    = info.get("explorer")
+
+        # mensagem detalhada
+        txt = (
+            "✅ Transação encontrada!\n\n"
+            f"• Rede: {chain}\n"
+            f"• Hash: <code>{txhash}</code>\n"
+            f"• De: <code>{info.get('from','')}</code>\n"
+            f"• Para: <code>{info.get('to','')}</code>\n"
+            f"• Valor: {v_nat} {symbol} (~ {_fmt_usd(usd)})\n"
+            f"• Confirmações: {confs if confs is not None else 'n/d'}\n"
+            f"• Status: {status}\n"
+        )
+        if expl:
+            txt += f"\n🔗 Explorer: {expl}"
+
+        await msg.reply_html(txt)
+
+        # (opcional) classificar VIP automático pelo USD
+        try:
+            tier = pick_vip_tier(Decimal(str(usd)))  # sua função que decide o nível
+        except Exception:
+            tier = pick_vip_tier(usd)  # fallback se já for Decimal
+
+        if tier:
+            await msg.reply_text(f"🎁 Valor {_fmt_usd(usd)} → nível {tier}")
+            # Se quiser ativar automaticamente:
+            # await grant_vip(update.effective_user.id, tier, txhash, chain)
+
+    except Exception as e:
+        logging.exception("Falha no /tx")
+        await msg.reply_text(f"❌ Erro ao verificar on-chain: {e}")
+# --------------------------------------------------------------------
 
 
     # …daqui você já decide qual VIP aplicar com base em usd_total
