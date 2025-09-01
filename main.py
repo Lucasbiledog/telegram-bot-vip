@@ -7,7 +7,6 @@ from typing import Optional, List, Dict, Any, Tuple
 from types import SimpleNamespace
 from io import BytesIO
 from evm_pay import find_tx_any_chain, pick_tier
-from distutils.util import strtobool
 
 
 
@@ -52,6 +51,14 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship
 from sqlalchemy.engine import make_url
+
+def strtobool(val: str) -> bool:
+    val = val.lower()
+    if val in ("y", "yes", "t", "true", "on", "1"):
+        return True
+    if val in ("n", "no", "f", "false", "off", "0"):
+        return False
+    raise ValueError(f"Invalid truth value: {val}")
 
 
 # === Config DB ===
