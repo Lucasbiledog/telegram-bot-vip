@@ -1,7 +1,7 @@
 fastapi==0.110.0
 uvicorn==0.29.0
 python-dotenv==1.0.1
-sqlalchemy==2.0.29
+sqlalchemy>=2.0.31,<3.0
 apscheduler==3.10.4
 python-telegram-bot==22.3
 pytz==2024.1
