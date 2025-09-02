@@ -36,6 +36,8 @@ from utils import (
 
 
 )
+from pack_flow import pack_conv_handler
+
 # ---------- logging ----------
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 logging.basicConfig(level=getattr(logging, LOG_LEVEL, logging.INFO),
@@ -131,7 +133,8 @@ async def comandos_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tabela = "\n".join([f"- {d} dias: ${p:.2f}" for d, p in sorted(prices.items())])
     txt = ("Comandos:\n"
            "/checkout — ver carteira e planos\n"
-           "/tx <hash> — validar pagamento pelo hash (ou use o botão no checkout)\n\n"
+           "/tx <hash> — validar pagamento pelo hash (ou use o botão no checkout)\n"
+           "/pack — criar novo pack\n\n"
            "Planos (USD):\n" + tabela)
     await update.effective_message.reply_text(txt)
 
@@ -238,6 +241,7 @@ application.add_handler(CommandHandler("comandos", comandos_cmd))
 application.add_handler(CommandHandler("checkout", checkout_cmd))
 application.add_handler(CommandHandler("tx", tx_cmd))
 application.add_handler(CommandHandler("vip", vip_admin_cmd))
+application.add_handler(pack_conv_handler)
 application.add_error_handler(error_handler)
 
 # -------- APIs para a página /pay --------

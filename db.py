@@ -1,10 +1,11 @@
 import os
+import json
 from contextlib import asynccontextmanager
 from typing import AsyncIterator, Optional
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
-from models import Base, Config, User, Payment
+from models import Base, Config, User, Payment, Pack
 from datetime import datetime, timezone
 
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./app.db")
@@ -107,7 +108,13 @@ async def hash_store(tx_hash: str, tg_id: int) -> None:
         try:
             await s.commit()
         except IntegrityError:
-            await s.rollback()      
+            await s.rollback()
+
+
+async def pack_create(title: str, previews: list[str], files: list[str]) -> None:
+    async with get_session() as s:
+        s.add(Pack(title=title, previews=json.dumps(previews), files=json.dumps(files)))
+        await s.commit()
 
 async def migrate_vip_until_timezone() -> None:
     """Ensure `vip_until` timestamps are timezone-aware.

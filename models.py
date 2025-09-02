@@ -30,3 +30,10 @@ class Payment(Base):
     validated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
+
+class Pack(Base):
+    __tablename__ = "packs"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    title: Mapped[str] = mapped_column(String(120), nullable=False)
+    previews: Mapped[str] = mapped_column(Text, default="[]")
+    files: Mapped[str] = mapped_column(Text, default="[]")
