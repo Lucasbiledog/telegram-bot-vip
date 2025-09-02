@@ -19,4 +19,4 @@ class User(Base):
     tg_id: Mapped[int] = mapped_column(Integer, unique=True, index=True)
     username: Mapped[str] = mapped_column(String(64), default="", nullable=False)
     is_vip: Mapped[bool] = mapped_column(Boolean, default=False)
-    vip_until: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    vip_until: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)

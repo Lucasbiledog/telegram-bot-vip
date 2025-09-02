@@ -67,13 +67,19 @@ async def user_set_vip_until(tg_id: int, until: datetime) -> None:
         await s.commit()
 
 async def migrate_vip_until_timezone() -> None:
+            """Ensure `vip_until` timestamps are timezone-aware.
+
+    Any user records missing timezone information in their ``vip_until`` field
+    are updated to use UTC. The migration is idempotent; running it multiple
+    times has no effect once all timestamps include timezone data.
+    """
             async with get_session() as s:
                 res = await s.execute(select(User).where(User.vip_until.is_not(None)))
                 users = res.scalars().all()
                 updated = False
                 for user in users:
-                     if user.vip_until.tzinfo is None:
-                          user.vip_until = user.vip_until.replace(tzinfo=timezone.utc)
+                    if user.vip_until.tzinfo is None:
+                        user.vip_until = user.vip_until.replace(tzinfo=timezone.utc)
                 updated = True
                 if updated:
                     await s.commit()

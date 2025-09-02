@@ -1,4 +1,5 @@
 from __future__ import annotations
+import asyncio
 import json, time, hmac, hashlib, logging
 from typing import Optional, Dict
 from datetime import datetime, timedelta, timezone
@@ -51,19 +52,42 @@ async def vip_upsert_and_get_until(tg_id: int, username: Optional[str], days: in
     await user_set_vip_until(tg_id, new_until)
     return new_until
 
-async def create_one_time_invite(bot: Bot, chat_id: int, expire_seconds: int = 7200, member_limit: int = 1) -> Optional[str]:
-    expire_dt = datetime.utcfromtimestamp(int(time.time()) + int(expire_seconds))
-    try:
-        invite = await bot.create_chat_invite_link(
-            chat_id=chat_id,
-            creates_join_request=False,
-            expire_date=expire_dt,
-            member_limit=member_limit,
-        )
-        return invite.invite_link
-    except (TelegramError, TimedOut):
-        logging.exception("Failed to create one-time invite link")
-        return None
+async def create_one_time_invite(
+    bot: Bot,
+    chat_id: int,
+    expire_seconds: int = 7200,
+    member_limit: int = 1,
+    *,
+    timeout: Optional[float] = None,
+    retries: int = 3,
+) -> Optional[str]:
+    expire_dt = datetime.now(timezone.utc) + timedelta(seconds=expire_seconds)
+    for attempt in range(retries):
+        try:
+            kwargs = dict(
+                chat_id=chat_id,
+                creates_join_request=False,
+                expire_date=expire_dt,
+                member_limit=member_limit,
+            )
+            if timeout is not None:
+                kwargs["timeout"] = timeout
+            invite = await bot.create_chat_invite_link(**kwargs)
+            return invite.invite_link
+        except (TelegramError, TimedOut) as e:
+            if attempt == retries - 1:
+                logging.exception(
+                    "Attempt %d/%d failed to create one-time invite link", attempt + 1, retries
+                )
+                return None
+            logging.warning(
+                "Attempt %d/%d failed to create one-time invite link: %s",
+                attempt + 1,
+                retries,
+                e,
+            )
+            await asyncio.sleep(2 ** attempt)
+    return None
 
 def make_link_sig(secret: str, uid: int, ts: int) -> str:
     raw = f"{uid}:{ts}".encode()
