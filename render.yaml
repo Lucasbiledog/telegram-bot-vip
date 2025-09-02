@@ -5,32 +5,3 @@ services:
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
     pythonVersion: 3.11.9
-    envVars:
-      - key: BOT_TOKEN
-        sync: false
-      - key: DATABASE_URL
-        sync: false
-      - key: GROUP_VIP_ID
-        sync: false
-      - key: GROUP_FREE_ID
-        sync: false
-      - key: STORAGE_GROUP_ID
-        sync: false
-      - key: WALLET_ADDRESS
-        sync: false
-      - key: RPC_URL
-        sync: false
-      - key: WEBAPP_URL
-        sync: false
-      - key: WEBAPP_LINK_SECRET
-        sync: false
-      - key: WEBHOOK_SECRET
-        sync: false
-      - key: WEB3AUTH_CLIENT_ID
-        sync: false
-      - key: STRIPE_SECRET_KEY
-        sync: false
-      - key: STRIPE_WEBHOOK_SECRET
-        sync: false
-      - key: SERVICE_ACCOUNT_JSON
-        sync: false
