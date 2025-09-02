@@ -4,6 +4,10 @@ from typing import Optional, Tuple, Dict
 from contextlib import suppress
 from datetime import datetime, timedelta, timezone
 
+import json
+from fastapi.responses import Response, JSONResponse
+
+
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import PlainTextResponse
@@ -216,3 +220,59 @@ async def on_shutdown():
         await application.stop()
     with suppress(Exception):
         await application.shutdown()
+
+
+
+# ================== CONFIG JS PARA O FRONT ==================
+@app.get("/pay/config.js")
+async def pay_config_js():
+    # preços default (pode ler do DB se quiser)
+    prices = get_vip_plan_prices_usd_sync(await cfg_get("vip_plan_prices_usd"))
+    cfg = {
+        "wallet": os.getenv("WALLET_ADDRESS", ""),
+        "apiVerify": "/api/tx/verify",
+        "plans": [{"days": d, "usd": prices[d]} for d in sorted(prices.keys())],
+        "web3auth": {
+            "clientId": os.getenv("WEB3AUTH_CLIENT_ID", ""),
+            "jwks": os.getenv("WEB3AUTH_JWKS", "https://api-auth.web3auth.io/.well-known/jwks.json"),
+        },
+    }
+    js = f"window.BOTCONF = {json.dumps(cfg, separators=(',',':'))};"
+    return Response(js, media_type="application/javascript")
+
+
+# ================== API: VALIDAR HASH E LIBERAR VIP ==================
+@app.post("/api/tx/verify")
+async def api_tx_verify(req: Request):
+    """
+    Body JSON: { "hash": "...", "uid": 123, "ts": 169..., "sig": "..." }
+    """
+    try:
+        body = await req.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="invalid json")
+
+    tx_hash = normalize_tx_hash(body.get("hash", ""))
+    uid = body.get("uid")
+    ts = body.get("ts")
+    sig = body.get("sig", "")
+
+    if not tx_hash:
+        raise HTTPException(status_code=400, detail="invalid hash")
+    if not isinstance(uid, int) or not isinstance(ts, int) or not sig:
+        raise HTTPException(status_code=400, detail="missing uid/ts/sig")
+
+    # valida a assinatura do deep-link (mesma usada no /checkout)
+    expected = make_link_sig(WEBAPP_LINK_SECRET, uid, ts)
+    if not hmac.compare_digest(expected, sig):
+        raise HTTPException(status_code=403, detail="bad signature")
+
+    # (opcional) expirar em 24h
+    if abs(int(time.time()) - ts) > 24 * 3600:
+        raise HTTPException(status_code=410, detail="link expired")
+
+    # cria/atualiza usuário e processa pagamento
+    # username vem vazio do web (ele receberá a msg pelo próprio bot depois)
+    ok, msg = await approve_by_usd_and_invite(uid, None, tx_hash)
+
+    return JSONResponse({"ok": bool(ok), "message": msg})

@@ -1,58 +1,180 @@
 <!doctype html>
-<html lang="pt-br">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Checkout VIP</title>
-    <style>
-      body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background:#0f172a; color:#e5e7eb; padding: 28px; }
-      .card { max-width: 680px; margin: 0 auto; border: 1px solid #334155; border-radius: 16px; padding: 22px; background:#0b1220; box-shadow: 0 8px 24px rgba(0,0,0,.35); }
-      h2 { margin: 0 0 8px; }
-      .muted { color: #94a3b8; font-size: 14px; }
-      .row { margin: 14px 0; }
-      label { display:block; font-weight:600; margin-bottom:6px; color:#cbd5e1 }
-      input { width:100%; padding:12px; border-radius:12px; border:1px solid #334155; background:#0f172a; color:#e5e7eb }
-      code { background:#111827; padding:3px 6px; border-radius:6px; }
-      .plans { display:grid; gap:10px; grid-template-columns: repeat(2, minmax(0,1fr)); margin-top:8px; }
-      .plan { border:1px solid #334155; border-radius:12px; padding:12px; background:#0f172a }
-      .plan b { color:#fff }
-      .tip { font-size:13px; color:#94a3b8 }
-      .steps { margin-top:10px; }
-      .steps li { margin:6px 0 }
-    </style>
-  </head>
-  <body>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Assinar VIP</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
+  <style>
+    :root { --bg:#0b1220; --panel:#121a2a; --muted:#9fb0d0; --text:#eaf2ff; --accent:#4aa3ff; --ok:#34d399; --err:#f87171; }
+    *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--text);font:16px/1.5 Inter,system-ui,-apple-system,Segoe UI,Roboto}
+    .wrap{max-width:820px;margin:24px auto;padding:0 16px}
+    .card{background:var(--panel);border-radius:16px;padding:20px;box-shadow:0 8px 24px rgba(0,0,0,.35);border:1px solid #1b2943}
+    h1{margin:0 0 12px;font-weight:800}
+    .hint{color:var(--muted);font-size:14px}
+    .row{display:grid;gap:16px}
+    @media(min-width:720px){.row2{grid-template-columns:1fr 1fr}}
+    .input{display:flex;flex-direction:column;gap:8px;margin:12px 0}
+    .input input{width:100%;padding:12px 14px;border-radius:12px;border:1px solid #223353;background:#0c1527;color:var(--text);font-size:15px}
+    .pill{display:inline-block;background:#0c1527;border:1px solid #21314e;border-radius:12px;padding:10px 12px;font-family:ui-monospace,Menlo,monospace}
+    .plans{display:grid;gap:14px;margin-top:12px}
+    @media(min-width:720px){.plans{grid-template-columns:repeat(2,1fr)}}
+    .plan{border:1px solid #1e2b46;border-radius:16px;padding:16px;cursor:pointer;background:#0d182b;transition:.2s}
+    .plan:hover{border-color:#2b3f6d;transform:translateY(-1px)}
+    .plan .days{font-weight:800;font-size:18px}
+    .plan .usd{color:var(--muted);font-weight:600}
+    .btn{display:inline-flex;gap:8px;align-items:center;justify-content:center;border:1px solid #25406b;background:#13315a;color:#d7e7ff;border-radius:12px;padding:12px 16px;font-weight:700;cursor:pointer}
+    .btn:hover{background:#173a6b}
+    .btn.ok{background:#0f3f2f;border-color:#195a45}
+    .btn.err{background:#4a1e23;border-color:#6a2a31}
+    .stack{display:flex;gap:10px;flex-wrap:wrap}
+    .center{display:flex;gap:12px;align-items:center;justify-content:space-between}
+    .muted{color:var(--muted)}
+    .msg{margin-top:12px;padding:12px 14px;border-radius:12px;border:1px solid #1f2e4e;background:#0c1527}
+    .msg.ok{border-color:#1e624d;background:#0d2a22;color:#d7ffef}
+    .msg.err{border-color:#5b262a;background:#2a1214;color:#ffdadd}
+    .small{font-size:13px}
+    .badge{padding:6px 10px;border-radius:999px;background:#0c1527;border:1px solid #23385f;color:#a7c3ff;font-weight:700;font-size:12px}
+  </style>
+  <script src="/pay/config.js"></script>
+  <!-- Web3Auth (opcional) -->
+  <script src="https://cdn.jsdelivr.net/npm/@web3auth/modal@8.11.2/dist/modal.umd.min.js"></script>
+</head>
+<body>
+  <div class="wrap">
     <div class="card">
-      <h2>Assinar VIP</h2>
-      <p class="muted">Envie cripto de qualquer rede suportada para a carteira abaixo. Depois cole o <b>hash</b> no Telegram usando <code>/tx &lt;hash&gt;</code>. O bot detecta rede & moeda automaticamente e libera o VIP.</p>
+      <h1>Assinar VIP</h1>
+      <p class="hint">Envie cripto de qualquer rede suportada para a carteira abaixo. Depois cole o <strong>hash</strong> aqui embaixo e clique em “Validar pagamento”. O bot detecta rede &amp; moeda automaticamente e libera o VIP.</p>
 
-      <div class="row">
-        <label>Carteira destino</label>
-        <input id="to" value="0x40dDBD27F878d07808339F9965f013F1CBc2F812" readonly />
-        <div class="tip">Use exatamente esse endereço ao sacar/enviar da Binance ou outra carteira.</div>
+      <div class="input">
+        <label class="muted">Carteira destino</label>
+        <input id="wallet" readonly value="">
+        <div class="small muted">Use exatamente esse endereço ao enviar da Binance/Exchange ou sua carteira.</div>
       </div>
 
-      <div class="row">
-        <label>Planos (em USD)</label>
-        <div class="plans">
-          <div class="plan"><b>30 dias</b><br/>$0.05</div>
-          <div class="plan"><b>60 dias</b><br/>$1.00</div>
-          <div class="plan"><b>180 dias</b><br/>$1.50</div>
-          <div class="plan"><b>365 dias</b><br/>$2.00</div>
-        </div>
+      <div class="center">
+        <div class="muted">Planos (em USD)</div>
+        <button id="w3authBtn" class="btn" type="button">Conectar com Web3Auth (MetaMask)</button>
       </div>
 
-      <div class="row">
-        <label>Como funciona</label>
-        <ol class="steps">
-          <li>Faça a transferência de qualquer rede popular (BSC, Polygon, Arbitrum, Optimism, Base, Ethereum, etc.) para a carteira acima.</li>
-          <li>Copie o hash da transação (da Binance/Explorers).</li>
-          <li>No Telegram, envie <code>/tx &lt;hash&gt;</code> para o bot.</li>
-          <li>O bot converte para USD, escolhe o plano e te envia o convite VIP (1 uso, expira em 2h).</li>
+      <div id="plans" class="plans"></div>
+
+      <div class="input">
+        <label for="tx" class="muted">Cole aqui o <strong>hash</strong> da transação</label>
+        <input id="tx" placeholder="0x...">
+      </div>
+
+      <div class="stack">
+        <button id="paste" class="btn" type="button">Colar hash</button>
+        <button id="validate" class="btn ok" type="button">✅ Validar pagamento</button>
+      </div>
+
+      <div id="out" class="msg small" style="display:none"></div>
+
+      <div class="msg small" style="margin-top:16px">
+        <b>Como funciona</b>
+        <ol>
+          <li>Faça a transferência em qualquer rede popular (BSC, Polygon, Arbitrum, Optimism, Base, Ethereum, etc.) para a carteira acima.</li>
+          <li>Copie o <em>hash</em> da transação (da Binance/Explorers).</li>
+          <li>Cole o hash neste checkout e clique em <b>Validar pagamento</b>.</li>
+          <li>O bot converte para USD, escolhe o plano e envia o convite (1 uso, expira em 2h) via Telegram.</li>
         </ol>
+        <div class="muted">Dica: em testes, <span class="badge">MIN_CONFIRMATIONS=1</span> acelera a aprovação.</div>
       </div>
-
-      <p class="muted">Dica: para aprovação mais rápida, o bot pode estar configurado com <code>MIN_CONFIRMATIONS=1</code> em testes.</p>
     </div>
-  </body>
+  </div>
+
+<script>
+(function(){
+  // --- utils ---
+  const $ = (q)=>document.querySelector(q);
+  const params = new URLSearchParams(location.search);
+  const uid = Number(params.get("uid")||"0");
+  const ts  = Number(params.get("ts")||"0");
+  const sig = (params.get("sig")||"").trim();
+
+  // injeta carteira e planos
+  const walletInput = $("#wallet");
+  const plansDiv = $("#plans");
+  const out = $("#out");
+  const txInput = $("#tx");
+
+  function showMsg(text, ok){
+    out.textContent = text;
+    out.className = "msg small " + (ok ? "ok":"err");
+    out.style.display = "block";
+  }
+
+  function planCard(p){
+    const el = document.createElement("div");
+    el.className = "plan";
+    el.innerHTML = `
+      <div class="days">${p.days} dias</div>
+      <div class="usd">$${p.usd.toFixed(2)}</div>
+    `;
+    el.onclick = ()=> showMsg(`Plano ${p.days} dias selecionado. Basta colar sua hash abaixo e clicar em "Validar pagamento".`, true);
+    return el;
+  }
+
+  function fillUI(){
+    walletInput.value = (window.BOTCONF?.wallet||"");
+    const plans = window.BOTCONF?.plans||[];
+    plansDiv.innerHTML = "";
+    plans.forEach(p=> plansDiv.appendChild(planCard(p)));
+  }
+
+  // colar hash
+  $("#paste").onclick = async ()=>{
+    try{
+      const txt = await navigator.clipboard.readText();
+      if(txt) txInput.value = txt.trim();
+    }catch(e){ showMsg("Não foi possível acessar a área de transferência.", false); }
+  };
+
+  // validar no backend
+  $("#validate").onclick = async ()=>{
+    const h = txInput.value.trim();
+    if(!h || !h.startsWith("0x") || h.length !== 66){ return showMsg("Hash inválido. Deve ser 0x... com 66 caracteres.", false); }
+    if(!uid || !ts || !sig){ return showMsg("Link sem assinatura. Abra o checkout pelo próprio bot.", false); }
+    try{
+      const r = await fetch(window.BOTCONF.apiVerify, {
+        method: "POST",
+        headers: {"Content-Type":"application/json"},
+        body: JSON.stringify({hash: h, uid, ts, sig})
+      });
+      const j = await r.json();
+      showMsg(j.message || (j.ok?"OK":"Falhou"), !!j.ok);
+    }catch(err){
+      showMsg("Erro ao validar. Tente novamente.", false);
+    }
+  };
+
+  // opcional: Web3Auth (apenas para conexão/conveniência)
+  let web3auth;
+  $("#w3authBtn").onclick = async ()=>{
+    if(!window.BOTCONF?.web3auth?.clientId){
+      return showMsg("WEB3AUTH_CLIENT_ID não configurado no servidor.", false);
+    }
+    try{
+      const { Web3Auth } = window.Modal;
+      web3auth = new Web3Auth({
+        clientId: window.BOTCONF.web3auth.clientId,
+        web3AuthNetwork: "sapphire_devnet", // mesmo ambiente que você mostrou no print
+        chainConfig: { chainNamespace: "eip155", chainId: "0x38" } // default BSC; o usuário pode trocar na carteira
+      });
+      await web3auth.initModal();
+      const prov = await web3auth.connect();
+      showMsg("Carteira conectada com sucesso (Web3Auth).", true);
+    }catch(e){
+      showMsg("Falha ao conectar com Web3Auth.", false);
+    }
+  };
+
+  // ready
+  fillUI();
+})();
+</script>
+</body>
 </html>
