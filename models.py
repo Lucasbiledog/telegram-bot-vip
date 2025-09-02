@@ -37,3 +37,4 @@ class Pack(Base):
     title: Mapped[str] = mapped_column(String(120), nullable=False)
     previews: Mapped[str] = mapped_column(Text, default="[]")
     files: Mapped[str] = mapped_column(Text, default="[]")
+    is_vip: Mapped[bool] = mapped_column(Boolean, default=False)

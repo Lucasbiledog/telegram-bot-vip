@@ -11,7 +11,7 @@ from telegram.ext import (
 
 from db import pack_create
 
-TITLE, PREVIEWS, FILES, CONFIRM = range(4)
+TITLE, KIND, PREVIEWS, FILES, CONFIRM = range(5)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
@@ -20,6 +20,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_title(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["title"] = update.effective_message.text.strip()
+    await update.effective_message.reply_text("Este pack é VIP ou free?")
+    return KIND
+
+async def handle_kind(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    kind = update.effective_message.text.strip().lower()
+    if kind not in ("vip", "free"):
+        await update.effective_message.reply_text("Responda com 'VIP' ou 'free'.")
+        return KIND
+    context.user_data["kind"] = kind
     context.user_data["previews"] = []
     await update.effective_message.reply_text(
         "Envie as imagens de preview. Envie /done quando terminar ou /skip para pular.")
@@ -53,10 +62,13 @@ async def add_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def files_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
     title = context.user_data.get("title", "")
+    kind = context.user_data.get("kind", "free")
+
     previews = context.user_data.get("previews", [])
     files = context.user_data.get("files", [])
     summary = (
         f"Título: {title}\n"
+        f"Tipo: {'VIP' if kind == 'vip' else 'Free'}\n"
         f"Previews: {len(previews)}\n"
         f"Arquivos: {len(files)}\n"
         "Confirmar? (sim/não)"
@@ -82,9 +94,10 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 pack_conv_handler = ConversationHandler(
-    entry_points=[CommandHandler(["pack", "p"], start)],
+    entry_points=[CommandHandler(["pack", "p", "novopack"], start)],
     states={
         TITLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_title)],
+        KIND: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_kind)],
         PREVIEWS: [
             CommandHandler("skip", skip_previews),
             CommandHandler("done", previews_done),

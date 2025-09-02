@@ -3,7 +3,7 @@ import json
 from contextlib import asynccontextmanager
 from typing import AsyncIterator, Optional
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
-from sqlalchemy import select, update
+from sqlalchemy import select, update, inspect, text
 from sqlalchemy.exc import IntegrityError
 from models import Base, Config, User, Payment, Pack
 from datetime import datetime, timezone
@@ -16,6 +16,7 @@ async def init_db() -> None:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     await migrate_vip_until_timezone()
+    await migrate_pack_is_vip()
 
 
 @asynccontextmanager
@@ -111,11 +112,21 @@ async def hash_store(tx_hash: str, tg_id: int) -> None:
             await s.rollback()
 
 
-async def pack_create(title: str, previews: list[str], files: list[str]) -> None:
+async def pack_create(title: str, previews: list[str], files: list[str], is_vip: bool) -> None:
     async with get_session() as s:
         s.add(Pack(title=title, previews=json.dumps(previews), files=json.dumps(files)))
         await s.commit()
-
+async def migrate_pack_is_vip() -> None:
+    async with engine.begin() as conn:
+        def _migrate(connection):
+            insp = inspect(connection)
+            cols = [c["name"] for c in insp.get_columns("packs")]
+            if "is_vip" not in cols:
+                connection.execute(
+                    text("ALTER TABLE packs ADD COLUMN is_vip BOOLEAN NOT NULL DEFAULT 0")
+                )
+        await conn.run_sync(_migrate)
+        
 async def migrate_vip_until_timezone() -> None:
     """Ensure `vip_until` timestamps are timezone-aware.
 
