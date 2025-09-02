@@ -1,240 +1,225 @@
 # main.py
 from __future__ import annotations
+
 import os
 import time
 import hmac
 import json
-import hashlib
 import asyncio
 import logging
-from contextlib import suppress
+from hashlib import sha256
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Optional, Tuple
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import PlainTextResponse, JSONResponse, RedirectResponse
-from fastapi.staticfiles import StaticFiles
 
-from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
-from telegram.ext import Application, ApplicationBuilder, CommandHandler, ContextTypes
-from payments import resolve_payment_usd_autochain, DEBUG_PAYMENTS
-
-
-# --- carrega .env antes de tudo
+# === Carrega .env ANTES de ler variáveis ===
 load_dotenv()
 
-# --- logging
+# === Logging ===
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
-logging.basicConfig(level=getattr(logging, LOG_LEVEL, logging.INFO))
+logging.basicConfig(
+    level=getattr(logging, LOG_LEVEL, logging.INFO),
+    format="%(asctime)s %(levelname)s [%(name)s] %(message)s"
+)
 LOG = logging.getLogger("main")
 
-# --- ENVs obrigatórias/úteis
-BOT_TOKEN       = os.getenv("BOT_TOKEN")
+# === FastAPI app (criar ANTES de usar decorators) ===
+from fastapi import FastAPI, Request, HTTPException
+from fastapi.responses import PlainTextResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
+
+app = FastAPI()
+# Servir o checkout (HTML/JS/CSS) a partir de ./webapp
+app.mount("/pay", StaticFiles(directory="./webapp", html=True), name="pay")
+
+# === Telegram PTB ===
+from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
+from contextlib import suppress
+
+# === Integrações internas ===
+from payments import resolve_payment_usd_autochain, get_wallet_address
+from db import init_db, cfg_get, user_get_or_create, user_set_vip_until
+
+# === Variáveis de ambiente ===
+BOT_TOKEN       = os.getenv("BOT_TOKEN")  # obrigatória
 SELF_URL        = os.getenv("SELF_URL", "").rstrip("/")
 WEBHOOK_SECRET  = os.getenv("WEBHOOK_SECRET", "secret")
-GROUP_VIP_ID    = int(os.getenv("GROUP_VIP_ID", "0"))  # id negativo p/ supergroup
-WEBAPP_URL      = os.getenv("WEBAPP_URL", "")          # se usar link direto do Render
+GROUP_VIP_ID    = int(os.getenv("GROUP_VIP_ID", "0") or "0")
+
+WEBAPP_URL         = os.getenv("WEBAPP_URL", "")  # ex.: https://seusite.onrender.com/pay
 WEBAPP_LINK_SECRET = os.getenv("WEBAPP_LINK_SECRET", "change-me")
-HEARTBEAT_SEC   = int(os.getenv("HEARTBEAT_SEC", "120"))
+
+# DEBUG/TEST flags
+DEBUG_PAYMENTS  = os.getenv("DEBUG_PAYMENTS", "0") == "1"
+ALLOW_ANY_TO    = os.getenv("ALLOW_ANY_TO", "0") == "1"   # payments.py também deve ler isso
 
 if not BOT_TOKEN:
     raise RuntimeError("BOT_TOKEN não definido.")
 
-# defaults da tabela de planos (USD)
-DEFAULT_PRICES: Dict[int, float] = {30: 0.05, 60: 1.00, 180: 1.50, 365: 2.00}
-
-# --- DB helpers
-from db import init_db, cfg_get, user_get_or_create, user_set_vip_until
-
-# --- payments (multi-chain)
-from payments import resolve_payment_usd_autochain, WALLET_ADDRESS
-
-# --- FastAPI
-app = FastAPI()
-# checkout estático (coloque seu index.html/JS/CSS em ./webapp)
-app.mount("/pay", StaticFiles(directory="./webapp", html=True), name="pay")
-
-@app.post("/api/validate")
-async def validate(body: dict):
-    tx_hash = (body.get("hash") or "").strip()
-    ok, msg, usd, details = await resolve_payment_usd_autochain(tx_hash)
-    resp = {"ok": ok, "message": msg, "usd": usd}
-    if DEBUG_PAYMENTS and details and details.get("debug"):
-        # devolve debug p/ aparecer no console da webapp (e nos logs do Render)
-        resp["debug"] = details["debug"]
-        for line in details["debug"]:
-            LOG.info("[PAYDBG] %s", line)
-    return resp
+# === Tabela de preços (USD) por plano (dias -> preço) ===
+# Pode definir via DB (cfg_get 'vip_plan_prices_usd' em JSON) ou usamos fallback:
+DEFAULT_PRICES = {30: 0.05, 60: 1.00, 180: 1.50, 365: 2.00}
 
 
-@app.get("/")
-async def root():
-    # redireciona para o checkout
-    return RedirectResponse(url="/pay")
-
-@app.get("/keepalive")
-async def keepalive():
-    return PlainTextResponse("ok")
-
-# -------- util: assinatura simples para link do webapp (opcional) --------
-def make_link_sig(secret: str, uid: int, ts: int) -> str:
-    mac = hmac.new(secret.encode(), f"{uid}:{ts}".encode(), hashlib.sha256).hexdigest()
-    return mac
-
-# -------- preços (podem vir do banco via cfg) --------
 def get_vip_plan_prices_usd_sync(raw: Optional[str]) -> Dict[int, float]:
     """
-    raw pode ser um JSON no banco, ex:
-    {"30":0.05,"60":1.0,"180":1.5,"365":2.0}
+    Converte uma string JSON {'30': 0.05, ...} em {30: 0.05, ...}.
     """
     if not raw:
-        return dict(DEFAULT_PRICES)
+        return DEFAULT_PRICES
     try:
         data = json.loads(raw)
-        out: Dict[int, float] = {}
+        parsed: Dict[int, float] = {}
         for k, v in data.items():
-            out[int(k)] = float(v)
-        return out or dict(DEFAULT_PRICES)
+            try:
+                parsed[int(k)] = float(v)
+            except Exception:
+                continue
+        return parsed or DEFAULT_PRICES
     except Exception:
-        return dict(DEFAULT_PRICES)
+        return DEFAULT_PRICES
+
+
+def choose_plan_from_usd(paid_usd: float, prices: Dict[int, float]) -> Optional[int]:
+    """
+    Escolhe o maior plano cujo preço seja <= valor pago.
+    """
+    candidate = None
+    for days, price in prices.items():
+        if paid_usd + 1e-9 >= float(price):
+            if candidate is None or days > candidate:
+                candidate = days
+    return candidate
+
+
+def normalize_tx_hash(s: str) -> Optional[str]:
+    s = (s or "").strip()
+    if s.startswith("0x") and len(s) == 66:
+        return s.lower()
+    return None
+
+
+def make_link_sig(secret: str, uid: int, ts: int) -> str:
+    msg = f"{uid}:{ts}".encode()
+    return hmac.new(secret.encode(), msg, sha256).hexdigest()
+
 
 async def prices_table() -> Dict[int, float]:
     raw = await cfg_get("vip_plan_prices_usd")
     return get_vip_plan_prices_usd_sync(raw)
 
-def choose_plan_from_usd(usd: float, table: Dict[int, float]) -> Optional[int]:
-    """
-    Escolhe o MAIOR plano cujo preço <= usd (ex.: pagou $1.2 → pega 60d a $1.0)
-    """
-    best_days = None
-    best_price = -1.0
-    for days, price in table.items():
-        if usd >= price and price > best_price:
-            best_days = days
-            best_price = price
-    return best_days
 
-async def vip_upsert_and_get_until(tg_id: int, username: Optional[str], days: int) -> datetime:
-    await user_get_or_create(tg_id, username or "")
+async def vip_upsert_and_get_until(tg_id: int, username: Optional[str], add_days: int) -> datetime:
+    """
+    Lê o usuário; se já VIP, agrega dias a partir do maior entre agora e vip_until.
+    Salva via user_set_vip_until e retorna a nova data.
+    """
+    user = await user_get_or_create(tg_id, username)
     now = datetime.now(timezone.utc)
-    until = now + timedelta(days=days)
-    await user_set_vip_until(tg_id, until)
-    return until
+    base = user.vip_until if (user.vip_until and user.vip_until > now) else now
+    new_until = base + timedelta(days=add_days)
+    await user_set_vip_until(tg_id, new_until)
+    return new_until
+
 
 async def create_one_time_invite(bot, chat_id: int, expire_seconds: int = 7200, member_limit: int = 1) -> str:
+    """
+    Cria link de convite (1 uso, expira em 2h). Requer que o bot seja admin do grupo.
+    """
+    expire_date = int(time.time()) + max(60, int(expire_seconds))
     link = await bot.create_chat_invite_link(
         chat_id=chat_id,
-        expire_date=int(time.time()) + expire_seconds,
-        member_limit=member_limit
+        expire_date=expire_date,
+        member_limit=max(1, int(member_limit))
     )
     return link.invite_link
 
-def normalize_tx_hash(s: str) -> Optional[str]:
-    s = (s or "").strip()
-    if not s:
-        return None
-    if s.startswith("0x") and len(s) == 66:
-        return s
-    # alguns explorers mostram "Hash: 0xabc..." — tenta extrair
-    if "0x" in s:
-        pos = s.find("0x")
-        cand = s[pos:pos+66]
-        if len(cand) == 66:
-            return cand
-    return None
 
-# -------- API pública para o checkout --------
-@app.get("/api/config")
-async def api_config():
-    prices = await prices_table()
-    return {
-        "wallet_address": WALLET_ADDRESS,
-        "prices_usd": prices,
-    }
-
-@app.post("/api/validate_tx")
-async def api_validate_tx(payload: dict):
+async def approve_by_usd_and_invite(tg_id: int, username: Optional[str], tx_hash: str) -> Tuple[bool, str]:
     """
-    payload: {"tx_hash": "0x...", "telegram_id": 12345, "username": "foo"}
-    - Valida a transação em qualquer chain suportada (payments.py)
-    - Converte para USD
-    - Se atingir um plano, grava VIP e (se tiver telegram_id) envia convite
+    Resolve o pagamento (qual chain/moeda/token, valor USD), escolhe plano e envia convite.
     """
-    tx_hash = normalize_tx_hash((payload or {}).get("tx_hash", ""))
-    if not tx_hash:
-        return JSONResponse(status_code=400, content={"ok": False, "message": "Hash inválido."})
-
     ok, info, usd, details = await resolve_payment_usd_autochain(tx_hash)
+    LOG.info("resolve_payment: ok=%s info=%s usd=%s details=%s", ok, info, usd, details)
+
     if not ok:
-        return JSONResponse(status_code=400, content={"ok": False, "message": info, "details": details})
+        # Erro amigável (ou detalhe completo se DEBUG)
+        if DEBUG_PAYMENTS and isinstance(details, dict):
+            dbg = json.dumps(details, ensure_ascii=False, indent=2)
+            return False, f"{info}\n\n[DEBUG]\n{dbg}"
+        return False, info
 
     prices = await prices_table()
-    days = choose_plan_from_usd(usd or 0.0, prices)
+    days = choose_plan_from_usd(float(usd or 0.0), prices)
     if not days:
         tabela = ", ".join(f"{d}d=${p:.2f}" for d, p in sorted(prices.items()))
-        return JSONResponse(
-            status_code=400,
-            content={"ok": False, "message": f"Valor em USD insuficiente (${usd:.2f}). Tabela: {tabela}", "usd": usd, "details": details}
+        return False, f"Valor em USD insuficiente (${float(usd or 0):.2f}). Tabela: {tabela}"
+
+    until = await vip_upsert_and_get_until(tg_id, username, days)
+
+    if not GROUP_VIP_ID:
+        # Caso não tenha grupo configurado, apenas confirma.
+        moeda = (details or {}).get("token_symbol", "CRYPTO")
+        msg = (
+            f"Pagamento confirmado em {moeda} (${float(usd or 0):.2f}).\n"
+            f"Plano: {days} dias — VIP até {until.strftime('%d/%m/%Y %H:%M')} (UTC)\n\n"
+            f"*Atenção*: GROUP_VIP_ID não configurado."
         )
+        return True, msg
 
-    # Se veio telegram_id, já libera e envia convite
-    tg_id = payload.get("telegram_id")
-    username = payload.get("username")
-    invite_link = None
-    vip_until_iso = None
-    if tg_id and GROUP_VIP_ID:
-        until = await vip_upsert_and_get_until(int(tg_id), username, days)
-        vip_until_iso = until.isoformat()
-        with suppress(Exception):
-            invite_link = await create_one_time_invite(application.bot, GROUP_VIP_ID, expire_seconds=7200, member_limit=1)
-            await application.bot.send_message(
-                chat_id=int(tg_id),
-                text=(
-                    f"✅ Pagamento confirmado (${usd:.2f}). Plano {days} dias.\n"
-                    f"VIP ativo até {until.strftime('%d/%m/%Y %H:%M')}.\n"
-                    f"Convite (1 uso, expira em 2h):\n{invite_link}"
-                )
-            )
+    try:
+        invite = await create_one_time_invite(context_bot, GROUP_VIP_ID, expire_seconds=7200, member_limit=1)  # preenchido depois
+    except Exception as e:
+        LOG.error("Falha ao criar invite link: %s", e)
+        invite = None
 
-    return {
-        "ok": True,
-        "message": f"Pagamento confirmado (${usd:.2f}). Plano {days} dias.",
-        "usd": usd,
-        "days": days,
-        "invite_link": invite_link,
-        "vip_until": vip_until_iso,
-        "details": details,
-    }
+    moeda = (details or {}).get("token_symbol", "CRYPTO")
+    msg = (
+        f"Pagamento confirmado em {moeda} (${float(usd or 0):.2f}).\n"
+        f"Plano: {days} dias — VIP até {until.strftime('%d/%m/%Y %H:%M')} (UTC)\n\n"
+        f"{'Convite VIP (1 uso, expira em 2h): ' + invite if invite else 'Não consegui gerar o link. Me avise!'}"
+    )
+    # DM pro usuário também (best-effort)
+    with suppress(Exception):
+        await application.bot.send_message(chat_id=tg_id, text=msg)
 
-# -------- Telegram bot --------
-application: Application = ApplicationBuilder().token(BOT_TOKEN).build()
+    return True, msg
 
+
+# === Telegram: Handlers ===
 async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     u = update.effective_user
     await user_get_or_create(u.id, u.username)
     await update.effective_message.reply_text(
         "Bem-vindo!\n\n"
         "1) Abra /checkout para ver a carteira e os planos.\n"
-        "2) Transfira de QUALQUER rede suportada para a carteira mostrada.\n"
-        "3) Envie /tx <hash> aqui ou valide no botão da página.\n"
-        "O bot detecta rede & moeda automaticamente e libera o VIP. 🚀"
+        "2) Transfira de QUALQUER rede suportada para a carteira exibida.\n"
+        "3) Envie /tx <hash_da_transacao>.\n\n"
+        "O bot detecta chain/moeda automaticamente e libera o VIP."
     )
+
 
 async def comandos_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     prices = await prices_table()
     tabela = "\n".join([f"- {d} dias: ${p:.2f}" for d, p in sorted(prices.items())])
+    kb = InlineKeyboardMarkup([[
+        InlineKeyboardButton("💳 Checkout", web_app=WebAppInfo(url=WEBAPP_URL)) if WEBAPP_URL else InlineKeyboardButton("Configurar WEBAPP_URL", url="https://render.com")
+    ]])
     await update.effective_message.reply_text(
         "Comandos:\n"
-        "/checkout — abrir a página de pagamento\n"
-        "/tx <hash> — validar seu pagamento pelo hash\n\n"
-        "Planos (USD):\n" + tabela
+        "/checkout — ver carteira e planos\n"
+        "/tx <hash> — validar o pagamento pelo hash\n\n"
+        "Planos (USD):\n" + tabela,
+        reply_markup=kb
     )
+
 
 async def checkout_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.effective_message
-    # apaga no grupo
-    if update.effective_chat and update.effective_chat.type in ("group", "supergroup"):
+    # Evita spam no grupo
+    if update.effective_chat.type in ("group", "supergroup"):
         with suppress(Exception):
             await msg.delete()
 
@@ -243,19 +228,21 @@ async def checkout_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     sig = make_link_sig(WEBAPP_LINK_SECRET, uid, ts)
 
     if not WEBAPP_URL:
-        # se estiver rodando no Render, o /pay já serve o index
-        url = f"{SELF_URL}/pay?uid={uid}&ts={ts}&sig={sig}"
-    else:
-        url = f"{WEBAPP_URL}?uid={uid}&ts={ts}&sig={sig}"
+        texto = "WEBAPP_URL não configurada. Envie /tx <hash> após transferir para a carteira informada."
+        return await context.bot.send_message(chat_id=uid, text=texto)
 
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("💳 Abrir Checkout", web_app=WebAppInfo(url=url))]
-    ])
+    kb = InlineKeyboardMarkup([[
+        InlineKeyboardButton(
+            "💳 Checkout (instruções & carteira)",
+            web_app=WebAppInfo(url=f"{WEBAPP_URL}?uid={uid}&ts={ts}&sig={sig}")
+        )
+    ]])
     await context.bot.send_message(
         chat_id=uid,
-        text="Use o botão abaixo para abrir o checkout:",
+        text="Abra o checkout para ver a carteira e os planos. Depois envie /tx <hash>.",
         reply_markup=kb
     )
+
 
 async def tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
@@ -263,38 +250,32 @@ async def tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     tx_hash = normalize_tx_hash(context.args[0])
     if not tx_hash:
-        return await update.effective_message.reply_text("Hash inválido.")
+        return await update.effective_message.reply_text("Hash inválido. Deve começar com 0x e ter 66 caracteres.")
 
     uid = update.effective_user.id
     uname = update.effective_user.username
 
-    ok, info, usd, details = await resolve_payment_usd_autochain(tx_hash)
-    if not ok:
-        return await update.effective_message.reply_text(info)
+    ok, msg = await approve_by_usd_and_invite(uid, uname, tx_hash)
+    await update.effective_message.reply_text(msg)
 
-    prices = await prices_table()
-    days = choose_plan_from_usd(usd or 0.0, prices)
-    if not days:
-        tabela = ", ".join(f"{d}d=${p:.2f}" for d, p in sorted(prices.items()))
-        return await update.effective_message.reply_text(
-            f"Valor em USD insuficiente (${usd:.2f}). Tabela: {tabela}"
-        )
 
-    until = await vip_upsert_and_get_until(uid, uname, days)
-    link = await create_one_time_invite(context.bot, GROUP_VIP_ID, expire_seconds=7200, member_limit=1)
-    moeda = (details.get("token_symbol") or "CRYPTO")
-    await update.effective_message.reply_text(
-        f"Pagamento confirmado em {moeda} (${usd:.2f}).\n"
-        f"Plano: {days} dias — VIP até {until.strftime('%d/%m/%Y %H:%M')}.\n\n"
-        f"Convite VIP (1 uso, expira em 2h):\n{link}"
-    )
-
+# === Constrói Application do PTB DEPOIS de definir handlers ===
+application = ApplicationBuilder().token(BOT_TOKEN).build()
 application.add_handler(CommandHandler("start", start_cmd))
 application.add_handler(CommandHandler("comandos", comandos_cmd))
 application.add_handler(CommandHandler("checkout", checkout_cmd))
 application.add_handler(CommandHandler("tx", tx_cmd))
 
-# -------- Telegram webhook --------
+# Para create_one_time_invite usar o bot atual
+context_bot = application.bot
+
+
+# === FastAPI: Webhook/validate/debug/keepalive ===
+@app.get("/keepalive")
+async def keepalive():
+    return PlainTextResponse("ok")
+
+
 @app.post("/webhook/{secret}")
 async def telegram_webhook(secret: str, request: Request):
     if secret != WEBHOOK_SECRET:
@@ -304,20 +285,72 @@ async def telegram_webhook(secret: str, request: Request):
     await application.process_update(update)
     return PlainTextResponse("ok")
 
-# -------- ciclo de vida (startup/shutdown) --------
-async def _heartbeat():
-    # pequeno heartbeat para deixar rastro nos logs
-    while True:
-        LOG.info("heartbeat: service alive, wallet=%s", WALLET_ADDRESS)
-        await asyncio.sleep(HEARTBEAT_SEC)
 
+@app.post("/api/validate")
+async def api_validate(request: Request):
+    """
+    Endpoint chamado pelo checkout (frontend) para validar hash e retornar
+    status detalhado (inclui DEBUG quando habilitado).
+    Body JSON: { "hash": "0x....", "uid": <int> (opcional) }
+    """
+    try:
+        payload = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="invalid json")
+
+    tx_hash = normalize_tx_hash((payload or {}).get("hash"))
+    uid = (payload or {}).get("uid")
+    uname = None
+
+    if not tx_hash:
+        return JSONResponse({"ok": False, "message": "Hash inválido."}, status_code=400)
+
+    ok, info, usd, details = await resolve_payment_usd_autochain(tx_hash)
+    LOG.info("[/api/validate] ok=%s info=%s usd=%s details=%s", ok, info, usd, details)
+
+    resp = {
+        "ok": bool(ok),
+        "message": info,
+        "usd": float(usd or 0.0),
+        "wallet": get_wallet_address(),
+        "details": details if DEBUG_PAYMENTS else {},
+    }
+
+    # Se o front quiser que já aprove e convide aqui (opcional):
+    auto_approve = bool((payload or {}).get("autoApprove"))
+    if ok and auto_approve and isinstance(uid, int) and uid > 0:
+        ok2, msg2 = await approve_by_usd_and_invite(uid, uname, tx_hash)
+        resp["auto_approved"] = ok2
+        resp["auto_message"] = msg2
+
+    return JSONResponse(resp)
+
+
+@app.get("/_debug/env")
+async def dbg_env():
+    return {
+        "SELF_URL": SELF_URL,
+        "WEBHOOK_SECRET": WEBHOOK_SECRET,
+        "GROUP_VIP_ID": GROUP_VIP_ID,
+        "WEBAPP_URL": WEBAPP_URL,
+        "WALLET_ADDRESS": get_wallet_address(),
+        "DEBUG_PAYMENTS": DEBUG_PAYMENTS,
+        "ALLOW_ANY_TO": ALLOW_ANY_TO,
+    }
+
+
+# === Startup / Shutdown ===
 @app.on_event("startup")
 async def on_startup():
+    LOG.info("Starting up...")
     await init_db()
+
+    # Inicializa e inicia o Application do PTB
     await application.initialize()
     with suppress(Exception):
         await application.start()
 
+    # Configura webhook (idempotente)
     if SELF_URL and WEBHOOK_SECRET:
         try:
             await application.bot.set_webhook(url=f"{SELF_URL}/webhook/{WEBHOOK_SECRET}")
@@ -325,11 +358,17 @@ async def on_startup():
         except Exception as e:
             LOG.error("Falha ao setar webhook: %s", e)
 
-    # inicia heartbeat
+    # Tarefa de ‘heartbeat’ para manter logs vivos
+    async def _heartbeat():
+        while True:
+            LOG.debug("heartbeat alive")
+            await asyncio.sleep(60)
     asyncio.create_task(_heartbeat())
+
 
 @app.on_event("shutdown")
 async def on_shutdown():
+    LOG.info("Shutting down...")
     with suppress(Exception):
         await application.stop()
     with suppress(Exception):
