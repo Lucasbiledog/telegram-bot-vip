@@ -5,7 +5,13 @@ from datetime import datetime, timedelta, timezone
 
 from telegram import Bot
 
-DEFAULT_VIP_PRICES_USD = {30: 7.99, 90: 19.99, 180: 34.99, 365: 59.99}
+# Planos pedidos
+DEFAULT_VIP_PRICES_USD = {
+    30: 0.05,
+    60: 1.00,
+    180: 1.50,
+    365: 2.00,
+}
 
 def get_vip_plan_prices_usd_sync(cfg_val: Optional[str]) -> Dict[int, float]:
     if not cfg_val:
@@ -18,7 +24,7 @@ def get_vip_plan_prices_usd_sync(cfg_val: Optional[str]) -> Dict[int, float]:
         return DEFAULT_VIP_PRICES_USD
 
 def choose_plan_from_usd(amount_usd: float, prices: Dict[int, float]) -> Optional[int]:
-    # escolhe o maior plano cujo preço <= amount_usd (com tolerância 1%)
+    # escolhe o maior plano cujo preço <= amount_usd (tolerância 1 cent)
     tol = 0.01
     best_days = None
     best_price = -1.0
@@ -29,7 +35,6 @@ def choose_plan_from_usd(amount_usd: float, prices: Dict[int, float]) -> Optiona
     return best_days
 
 async def vip_upsert_and_get_until(tg_id: int, username: Optional[str], days: int) -> datetime:
-    # estende a partir de agora ou a partir do vip_until atual, o que for maior
     from db import get_session, user_set_vip_until
     from sqlalchemy import select
     from models import User
@@ -37,15 +42,12 @@ async def vip_upsert_and_get_until(tg_id: int, username: Optional[str], days: in
         res = await s.execute(select(User).where(User.tg_id == tg_id))
         user = res.scalar_one_or_none()
         now = datetime.now(timezone.utc)
-        base = now
-        if user and user.vip_until and user.vip_until > now:
-            base = user.vip_until
+        base = user.vip_until if (user and user.vip_until and user.vip_until > now) else now
         new_until = base + timedelta(days=days)
         await user_set_vip_until(tg_id, new_until)
         return new_until
 
 async def create_one_time_invite(bot: Bot, chat_id: int, expire_seconds: int = 7200, member_limit: int = 1) -> str:
-    # cria link de convite 1 uso com expiração (usa datetime)
     expire_dt = datetime.utcfromtimestamp(int(time.time()) + int(expire_seconds))
     invite = await bot.create_chat_invite_link(
         chat_id=chat_id,

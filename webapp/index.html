@@ -1,62 +1,58 @@
-<script type="module">
-  import { Web3Auth } from "https://cdn.jsdelivr.net/npm/@web3auth/modal/+esm";
-  import { EthereumPrivateKeyProvider } from "https://cdn.jsdelivr.net/npm/@web3auth/ethereum-provider/+esm";
+<!doctype html>
+<html lang="pt-br">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Checkout VIP</title>
+    <style>
+      body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background:#0f172a; color:#e5e7eb; padding: 28px; }
+      .card { max-width: 680px; margin: 0 auto; border: 1px solid #334155; border-radius: 16px; padding: 22px; background:#0b1220; box-shadow: 0 8px 24px rgba(0,0,0,.35); }
+      h2 { margin: 0 0 8px; }
+      .muted { color: #94a3b8; font-size: 14px; }
+      .row { margin: 14px 0; }
+      label { display:block; font-weight:600; margin-bottom:6px; color:#cbd5e1 }
+      input { width:100%; padding:12px; border-radius:12px; border:1px solid #334155; background:#0f172a; color:#e5e7eb }
+      code { background:#111827; padding:3px 6px; border-radius:6px; }
+      .plans { display:grid; gap:10px; grid-template-columns: repeat(2, minmax(0,1fr)); margin-top:8px; }
+      .plan { border:1px solid #334155; border-radius:12px; padding:12px; background:#0f172a }
+      .plan b { color:#fff }
+      .tip { font-size:13px; color:#94a3b8 }
+      .steps { margin-top:10px; }
+      .steps li { margin:6px 0 }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h2>Assinar VIP</h2>
+      <p class="muted">Envie cripto de qualquer rede suportada para a carteira abaixo. Depois cole o <b>hash</b> no Telegram usando <code>/tx &lt;hash&gt;</code>. O bot detecta rede & moeda automaticamente e libera o VIP.</p>
 
-  // ... (restante inalterado)
+      <div class="row">
+        <label>Carteira destino</label>
+        <input id="to" value="0x40dDBD27F878d07808339F9965f013F1CBc2F812" readonly />
+        <div class="tip">Use exatamente esse endereço ao sacar/enviar da Binance ou outra carteira.</div>
+      </div>
 
-  const ethRequest = async (conn, method, params=[]) => conn.request({ method, params });
-  const toHex = (n) => "0x" + BigInt(n).toString(16);
+      <div class="row">
+        <label>Planos (em USD)</label>
+        <div class="plans">
+          <div class="plan"><b>30 dias</b><br/>$0.05</div>
+          <div class="plan"><b>60 dias</b><br/>$1.00</div>
+          <div class="plan"><b>180 dias</b><br/>$1.50</div>
+          <div class="plan"><b>365 dias</b><br/>$2.00</div>
+        </div>
+      </div>
 
-  document.getElementById("connect").onclick = async () => {
-    try {
-      status.textContent = "Abrindo login Web3Auth...";
-      await web3auth.initModal();
-      const conn = await web3auth.connect();
-      const userInfo = await web3auth.getUserInfo();
-      const idToken = userInfo?.idToken;
+      <div class="row">
+        <label>Como funciona</label>
+        <ol class="steps">
+          <li>Faça a transferência de qualquer rede popular (BSC, Polygon, Arbitrum, Optimism, Base, Ethereum, etc.) para a carteira acima.</li>
+          <li>Copie o hash da transação (da Binance/Explorers).</li>
+          <li>No Telegram, envie <code>/tx &lt;hash&gt;</code> para o bot.</li>
+          <li>O bot converte para USD, escolhe o plano e te envia o convite VIP (1 uso, expira em 2h).</li>
+        </ol>
+      </div>
 
-      const [from] = await ethRequest(conn, "eth_accounts");
-      const chainId = await ethRequest(conn, "eth_chainId");
-      const to = document.getElementById("to").value.trim();
-      const amount = document.getElementById("amount").value.trim();
-      if (!from || !to || !amount) { status.textContent = "Preencha todos os campos."; return; }
-
-      let txHash;
-      if (document.getElementById("mode").value === "native") {
-        const value = toHex(BigInt(Math.floor(parseFloat(amount) * 1e18)));
-        txHash = await ethRequest(conn, "eth_sendTransaction", [ { from, to, value } ]);
-      } else {
-        const token = document.getElementById("token").value.trim();
-        const decimals = Number(document.getElementById("decimals").value || 18);
-        const methodSig = "0xa9059cbb"; // transfer(address,uint256)
-        const pad = (hex, size=64) => hex.replace(/^0x/,"").padStart(size,"0");
-        const toParam = pad(to);
-        const amtRaw = BigInt(Math.floor(parseFloat(amount) * 10 ** decimals));
-        const amtParam = pad("0x"+amtRaw.toString(16));
-        const data = methodSig + toParam + amtParam;
-        txHash = await ethRequest(conn, "eth_sendTransaction", [ { from, to: token, data } ]);
-      }
-
-      status.textContent = "Tx enviada. Confirmando... " + txHash;
-
-      await fetch("/crypto_webhook", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          telegram_user_id: uid,
-          tx_hash: txHash,
-          chain_id: chainId,                 // <<<<<< ADICIONADO
-          web3auth_id_token: idToken,
-          link_sig: sig
-        })
-      });
-
-      status.textContent = "Pagamento enviado! Você receberá o convite VIP pelo Telegram.";
-      status.className = "ok";
-    } catch (e) {
-      console.error(e);
-      status.textContent = "Erro: " + (e?.message || e);
-      status.className = "err";
-    }
-  };
-</script>
+      <p class="muted">Dica: para aprovação mais rápida, o bot pode estar configurado com <code>MIN_CONFIRMATIONS=1</code> em testes.</p>
+    </div>
+  </body>
+</html>
