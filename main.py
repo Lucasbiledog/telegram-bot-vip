@@ -20,17 +20,6 @@ from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, WebAppI
 from telegram.ext import Application, ApplicationBuilder, CommandHandler, ContextTypes
 from payments import resolve_payment_usd_autochain, DEBUG_PAYMENTS
 
-@app.post("/api/validate")
-async def validate(body: dict):
-    tx_hash = (body.get("hash") or "").strip()
-    ok, msg, usd, details = await resolve_payment_usd_autochain(tx_hash)
-    resp = {"ok": ok, "message": msg, "usd": usd}
-    if DEBUG_PAYMENTS and details and details.get("debug"):
-        # devolve debug p/ aparecer no console da webapp (e nos logs do Render)
-        resp["debug"] = details["debug"]
-        for line in details["debug"]:
-            LOG.info("[PAYDBG] %s", line)
-    return resp
 
 # --- carrega .env antes de tudo
 load_dotenv()
@@ -65,6 +54,19 @@ from payments import resolve_payment_usd_autochain, WALLET_ADDRESS
 app = FastAPI()
 # checkout estático (coloque seu index.html/JS/CSS em ./webapp)
 app.mount("/pay", StaticFiles(directory="./webapp", html=True), name="pay")
+
+@app.post("/api/validate")
+async def validate(body: dict):
+    tx_hash = (body.get("hash") or "").strip()
+    ok, msg, usd, details = await resolve_payment_usd_autochain(tx_hash)
+    resp = {"ok": ok, "message": msg, "usd": usd}
+    if DEBUG_PAYMENTS and details and details.get("debug"):
+        # devolve debug p/ aparecer no console da webapp (e nos logs do Render)
+        resp["debug"] = details["debug"]
+        for line in details["debug"]:
+            LOG.info("[PAYDBG] %s", line)
+    return resp
+
 
 @app.get("/")
 async def root():
