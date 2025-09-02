@@ -4,7 +4,7 @@ from typing import AsyncIterator, Optional
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlalchemy import select, update
 from models import Base, Config, User
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./app.db")
 engine = create_async_engine(DATABASE_URL, future=True, echo=False)
@@ -62,10 +62,3 @@ async def user_set_vip_until(tg_id: int, until: datetime) -> None:
             user.vip_until = until
         await s.commit()
 
-# helper: soma dias e retorna a data/horário
-async def vip_upsert_and_get_until(tg_id: int, username: Optional[str], days: int) -> datetime:
-    now = datetime.now(timezone.utc)
-    until = now + timedelta(days=days)
-    await user_get_or_create(tg_id, username)
-    await user_set_vip_until(tg_id, until)
-    return until

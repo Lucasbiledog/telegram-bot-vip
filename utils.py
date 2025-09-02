@@ -35,17 +35,15 @@ def choose_plan_from_usd(amount_usd: float, prices: Dict[int, float]) -> Optiona
     return best_days
 
 async def vip_upsert_and_get_until(tg_id: int, username: Optional[str], days: int) -> datetime:
-    from db import get_session, user_set_vip_until
-    from sqlalchemy import select
-    from models import User
-    async with get_session() as s:
-        res = await s.execute(select(User).where(User.tg_id == tg_id))
-        user = res.scalar_one_or_none()
-        now = datetime.now(timezone.utc)
-        base = user.vip_until if (user and user.vip_until and user.vip_until > now) else now
-        new_until = base + timedelta(days=days)
-        await user_set_vip_until(tg_id, new_until)
-        return new_until
+    """Create or extend VIP membership and return the new expiry."""
+    from db import user_get_or_create, user_set_vip_until
+
+    user = await user_get_or_create(tg_id, username)
+    now = datetime.now(timezone.utc)
+    base = user.vip_until if (user.vip_until and user.vip_until > now) else now
+    new_until = base + timedelta(days=days)
+    await user_set_vip_until(tg_id, new_until)
+    return new_until
 
 async def create_one_time_invite(bot: Bot, chat_id: int, expire_seconds: int = 7200, member_limit: int = 1) -> str:
     expire_dt = datetime.utcfromtimestamp(int(time.time()) + int(expire_seconds))

@@ -10,15 +10,17 @@ from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, WebAppI
 from contextlib import suppress
 
 # suas dependências locais
-from db import init_db, cfg_get, user_get_or_create, user_set_vip_until
+from db import init_db, cfg_get, user_get_or_create
 from payments import (
     resolve_payment_usd_autochain,              # já está funcionando
-    get_prices_sync,                            # helper p/ tabela de planos
     WALLET_ADDRESS,                             # sua carteira destino
 )
 from utils import (
     choose_plan_from_usd,                       # mapeia USD -> dias
     create_one_time_invite,                     # função de convite p/ o grupo VIP
+    get_prices_sync,                            # helper p/ tabela de planos
+    vip_upsert_and_get_until,                   # centralizado
+
 )
 # ---------- logging ----------
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
@@ -53,16 +55,6 @@ def make_link_sig(secret: str, uid: int, ts: int) -> str:
 async def prices_table() -> Dict[int, float]:
     raw = await cfg_get("vip_plan_prices_usd")
     return get_prices_sync(raw)
-
-async def vip_upsert_and_get_until(tg_id: int, username: Optional[str], days: int):
-    """Soma dias ao VIP e retorna datetime."""
-    from datetime import datetime, timedelta, timezone
-    now = datetime.now(timezone.utc)
-    # aqui você pode buscar o usuário e somar corretamente (exemplo simples):
-    await user_get_or_create(tg_id, username)
-    until = now + timedelta(days=days)
-    await user_set_vip_until(tg_id, until)
-    return until
 
 async def approve_by_usd_and_invite(
     tg_id: int,
