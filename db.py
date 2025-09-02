@@ -4,7 +4,7 @@ from typing import AsyncIterator, Optional
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlalchemy import select, update
 from models import Base, Config, User
-from datetime import datetime
+from datetime import datetime, timezone
 
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./app.db")
 engine = create_async_engine(DATABASE_URL, future=True, echo=False)
@@ -13,6 +13,8 @@ SessionLocal = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSe
 async def init_db() -> None:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+    await migrate_vip_until_timezone()
+
 
 @asynccontextmanager
 async def get_session() -> AsyncIterator[AsyncSession]:
@@ -51,6 +53,8 @@ async def user_get_or_create(tg_id: int, username: Optional[str] = None) -> User
         return user
 
 async def user_set_vip_until(tg_id: int, until: datetime) -> None:
+    if until.tzinfo is None:
+        until = until.replace(tzinfo=timezone.utc)
     async with get_session() as s:
         res = await s.execute(select(User).where(User.tg_id == tg_id))
         user = res.scalar_one_or_none()
@@ -61,4 +65,16 @@ async def user_set_vip_until(tg_id: int, until: datetime) -> None:
             user.is_vip = True
             user.vip_until = until
         await s.commit()
+
+async def migrate_vip_until_timezone() -> None:
+            async with get_session() as s:
+                res = await s.execute(select(User).where(User.vip_until.is_not(None)))
+                users = res.scalars().all()
+                updated = False
+                for user in users:
+                     if user.vip_until.tzinfo is None:
+                          user.vip_until = user.vip_until.replace(tzinfo=timezone.utc)
+                updated = True
+                if updated:
+                    await s.commit()
 

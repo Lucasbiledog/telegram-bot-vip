@@ -42,7 +42,11 @@ async def vip_upsert_and_get_until(tg_id: int, username: Optional[str], days: in
 
     user = await user_get_or_create(tg_id, username)
     now = datetime.now(timezone.utc)
-    base = user.vip_until if (user.vip_until and user.vip_until > now) else now
+    vip_until = user.vip_until
+    if vip_until and vip_until.tzinfo is None:
+        vip_until = vip_until.replace(tzinfo=timezone.utc)
+
+    base = vip_until if (vip_until and vip_until > now) else now
     new_until = base + timedelta(days=days)
     await user_set_vip_until(tg_id, new_until)
     return new_until
