@@ -14,7 +14,22 @@ from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, WebAppI
 
 from db import init_db, cfg_get, user_get_or_create, user_set_vip_until
 from models import User
-from payments import resolve_payment_usd_autochain
+from payments import resolve_payment_usd_autochain, WALLET_ADDRESS
+
+app = FastAPI()
+
+@app.get("/api/config")
+async def api_config():
+    return {"wallet_address": WALLET_ADDRESS}
+
+@app.post("/api/validate_tx")
+async def api_validate_tx(payload: dict):
+    tx_hash = (payload or {}).get("tx_hash", "")
+    ok, msg, usd, details = await resolve_payment_usd_autochain(tx_hash)
+    return JSONResponse(
+        status_code=200 if ok else 400,
+        content={"ok": ok, "message": msg, "usd": usd, "details": details}
+    )
 
 load_dotenv()
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()

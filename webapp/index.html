@@ -1,49 +1,123 @@
 <!doctype html>
 <html lang="pt-br">
 <head>
-  <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Assinar VIP</title>
-  <link rel="stylesheet" href="./styles.css"/>
+  <style>
+    :root { --bg:#0b1522; --card:#0f1e2e; --muted:#8fa1b3; --ok:#1f6f43; --warn:#7f2b2b; --btn:#18354f; --white:#e8f0f7; }
+    body{margin:0;font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif;background:var(--bg);color:var(--white);}
+    .wrap{max-width:680px;margin:24px auto;padding:16px;}
+    .h1{font-size:26px;font-weight:700;margin:0 0 8px}
+    .card{background:var(--card);border:1px solid #1a324a;border-radius:14px;padding:16px;margin:12px 0}
+    .label{font-size:13px;color:var(--muted);margin-bottom:6px}
+    .inp, .btn {width:100%;border-radius:10px;border:1px solid #254261;background:#0c1a29;color:var(--white);padding:12px 12px;font-size:15px}
+    .btn{cursor:pointer;background:var(--btn);border-color:#254261}
+    .btn.ok{background:var(--ok);border-color:#2c8b58}
+    .muted{color:var(--muted);font-size:13px}
+    .row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+    .pill{padding:10px 12px;border-radius:10px;border:1px solid #26425f;background:#102133}
+    .err{background:#250f10;border-color:#5c2d2d;color:#ffbdbd;padding:12px;border-radius:10px}
+    .okmsg{background:#0f2117;border-color:#2c8b58;color:#b7ffd4;padding:12px;border-radius:10px}
+  </style>
 </head>
 <body>
-  <div class="container">
-    <h1>Assinar VIP</h1>
+<div class="wrap">
+  <div class="h1">Assinar VIP</div>
+  <div class="muted">Envie cripto de qualquer rede suportada para a carteira abaixo. Depois cole o hash no campo, clique em “Validar pagamento”. O bot detecta rede &amp; moeda automaticamente e libera o VIP.</div>
 
-    <label>Carteira destino</label>
-    <input id="wallet" readonly />
-
-    <label>Planos (USD)</label>
-    <div id="plans" class="plans">
-      <!-- os valores são apenas informativos; seleção é opcional/estética -->
-      <button data-days="30"  data-usd="0.05">30 dias • $0.05</button>
-      <button data-days="60"  data-usd="1.00">60 dias • $1.00</button>
-      <button data-days="180" data-usd="1.50">180 dias • $1.50</button>
-      <button data-days="365" data-usd="2.00">365 dias • $2.00</button>
-    </div>
-
-    <label>Cole aqui o <b>hash</b> da transação</label>
-    <input id="txhash" placeholder="0x..." />
-    <div class="row">
-      <button id="btnPaste">Colar hash</button>
-      <button id="btnValidate" class="primary">✅ Validar pagamento</button>
-    </div>
-
-    <div id="status" class="status"></div>
-
-    <section class="how">
-      <h3>Como funciona</h3>
-      <ol>
-        <li>Transfira de qualquer rede EVM popular (BSC, Polygon, Arbitrum, Base, Optimism, Ethereum, etc.) para a carteira acima.</li>
-        <li>Copie o hash da transação.</li>
-        <li>Cole o hash aqui e clique em <i>Validar pagamento</i>.</li>
-        <li>O bot detecta rede & moeda automaticamente, converte para USD e libera o VIP.</li>
-      </ol>
-      <small>Dica: em testes usamos MIN_CONFIRMATIONS=1.</small>
-    </section>
+  <div class="card">
+    <div class="label">Carteira destino</div>
+    <input id="addr" class="inp" readonly value="carregando..." />
+    <div class="muted" style="margin-top:6px">Use exatamente esse endereço ao enviar da Binance/Exchange ou sua carteira.</div>
   </div>
 
-  <script src="https://telegram.org/js/telegram-web-app.js"></script>
-  <script src="./app.js"></script>
+  <div class="card">
+    <div class="label">Planos (em USD)</div>
+    <div class="row">
+      <div class="pill"><b>30 dias</b><br/>$0.05</div>
+      <div class="pill"><b>60 dias</b><br/>$1.00</div>
+      <div class="pill"><b>180 dias</b><br/>$1.50</div>
+      <div class="pill"><b>365 dias</b><br/>$2.00</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="label">Cole aqui o <b>hash</b> da transação</div>
+    <input id="hash" class="inp" placeholder="0x..." />
+    <div class="row" style="margin-top:12px">
+      <button id="paste" class="btn" type="button">Colar hash</button>
+      <button id="validate" class="btn ok" type="button">✅ Validar pagamento</button>
+    </div>
+    <div id="out" style="margin-top:12px"></div>
+  </div>
+
+  <div class="card">
+    <div class="label">Como funciona</div>
+    <ol class="muted" style="padding-left:18px;margin:6px 0">
+      <li>Faça a transferência em qualquer rede popular (BSC, Polygon, Arbitrum, Optimism, Base, Ethereum, etc.) para a carteira acima.</li>
+      <li>Copie o <em>hash</em> da transação (da Binance/Explorer).</li>
+      <li>Cole o hash e clique em “Validar pagamento”.</li>
+      <li>O bot converte em USD, escolhe o plano e envia o convite VIP (1 uso, expira em 2h).</li>
+    </ol>
+    <div class="muted">Dica: para aprovação mais rápida em testes, <code>MIN_CONFIRMATIONS</code> pode estar em 1.</div>
+  </div>
+</div>
+
+<script>
+(async function(){
+  // evita “hibernar”: mantém logs no console e pinga backend periodicamente
+  setInterval(() => console.log("[keepalive] ui"), 15000);
+  setInterval(() => fetch("/keepalive").catch(()=>{}), 45000);
+
+  const addrEl = document.getElementById("addr");
+  const hashEl = document.getElementById("hash");
+  const outEl  = document.getElementById("out");
+
+  // pega config do backend (carteira destino)
+  try{
+    const r = await fetch("/api/config");
+    if(r.ok){
+      const j = await r.json();
+      addrEl.value = j.wallet_address || j.WALLET_ADDRESS || "—";
+    }else{
+      addrEl.value = "erro ao carregar";
+    }
+  }catch(e){
+    addrEl.value = "indisponível";
+  }
+
+  // botão colar
+  document.getElementById("paste").onclick = async () => {
+    try {
+      const t = await navigator.clipboard.readText();
+      if (t) hashEl.value = t.trim();
+    } catch {}
+  };
+
+  // validar pagamento (chama backend -> usa payments.resolve_payment_usd_autochain)
+  document.getElementById("validate").onclick = async () => {
+    outEl.innerHTML = "";
+    const tx = hashEl.value.trim();
+    if(!tx){ outEl.innerHTML = `<div class="err">Informe o hash.</div>`; return; }
+
+    try {
+      const r = await fetch("/api/validate_tx", {
+        method: "POST",
+        headers: {"Content-Type":"application/json"},
+        body: JSON.stringify({ tx_hash: tx })
+      });
+      const j = await r.json();
+      if(r.ok && j.ok){
+        outEl.innerHTML = `<div class="okmsg">${j.message || "Pagamento validado!"}</div>`;
+      }else{
+        outEl.innerHTML = `<div class="err">${j.message || "Erro ao validar."}</div>`;
+      }
+    } catch (e) {
+      outEl.innerHTML = `<div class="err">Erro ao validar. Tente novamente.</div>`;
+    }
+  };
+})();
+</script>
 </body>
 </html>
