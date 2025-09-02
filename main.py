@@ -8,6 +8,8 @@ from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, WebAppI
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 from jose import jwt
 import httpx
+from contextlib import suppress
+
 
 from db import init_db, cfg_get, user_get_or_create
 from utils import (
@@ -20,6 +22,23 @@ from utils import (
 from payments import resolve_payment_usd_autochain
 
 load_dotenv()
+
+
+@app.on_event("startup")
+async def on_startup():
+    await init_db()
+    # >>> ADICIONE estas duas linhas:
+    await application.initialize()
+    # Start é opcional mas recomendado p/ JobQueue e persistência
+    with suppress(Exception):
+        await application.start()
+
+    if SELF_URL and WEBHOOK_SECRET:
+        try:
+            await application.bot.set_webhook(url=f"{SELF_URL}/webhook/{WEBHOOK_SECRET}")
+            LOG.info("Webhook setado em %s/webhook/%s", SELF_URL, WEBHOOK_SECRET)
+        except Exception as e:
+            LOG.error("Falha ao setar webhook: %s", e)
 
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 logging.basicConfig(level=getattr(logging, LOG_LEVEL, logging.INFO))
@@ -46,6 +65,14 @@ def normalize_tx_hash(h: Optional[str]) -> Optional[str]:
     if not h.startswith("0x"): return None
     if len(h) != 66: return None
     return h
+
+@app.on_event("shutdown")
+async def on_shutdown():
+    with suppress(Exception):
+        await application.stop()
+    with suppress(Exception):
+        await application.shutdown()
+
 
 async def prices_table() -> Dict[int, float]:
     raw = await cfg_get("vip_plan_prices_usd")
