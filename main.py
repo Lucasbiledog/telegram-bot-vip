@@ -1,5 +1,6 @@
 # --- imports no topo ---
 import os, logging, time
+from typing import Optional, Tuple, Dict
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import PlainTextResponse
