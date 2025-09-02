@@ -1,5 +1,5 @@
 # --- imports no topo ---
-import os, logging, time, hmac, hashlib, asyncio
+import os, logging, time, asyncio
 from datetime import datetime, timezone
 from typing import Optional, Tuple, Dict, Any
 from dotenv import load_dotenv
@@ -11,7 +11,16 @@ from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, WebAppI
 from contextlib import suppress
 
 # suas dependências locais
-from db import init_db, cfg_get, user_get_or_create, vip_list, vip_add, vip_remove
+from db import (
+    init_db,
+    cfg_get,
+    user_get_or_create,
+    vip_list,
+    vip_add,
+    vip_remove,
+    hash_exists,
+    hash_store,
+)
 
 from payments import (
     resolve_payment_usd_autochain,              # já está funcionando
@@ -22,6 +31,8 @@ from utils import (
     create_one_time_invite,                     # função de convite p/ o grupo VIP
     get_prices_sync,                            # helper p/ tabela de planos
     vip_upsert_and_get_until,                   # centralizado
+    make_link_sig,                              # assinatura de link compartilhada
+
 
 )
 # ---------- logging ----------
@@ -52,9 +63,6 @@ app.mount("/pay", StaticFiles(directory="./webapp", html=True), name="pay")
 application = ApplicationBuilder().token(BOT_TOKEN).build()
 
 # ---------- helpers ----------
-def make_link_sig(secret: str, uid: int, ts: int) -> str:
-    mac = hmac.new(secret.encode(), f"{uid}:{ts}".encode(), hashlib.sha256).hexdigest()
-    return mac
 
 async def prices_table() -> Dict[int, float]:
     raw = await cfg_get("vip_plan_prices_usd")
@@ -215,14 +223,12 @@ application.add_handler(CommandHandler("comandos", comandos_cmd))
 application.add_handler(CommandHandler("checkout", checkout_cmd))
 application.add_handler(CommandHandler("tx", tx_cmd))
 application.add_handler(CommandHandler("vip", vip_admin_cmd))
-s
-
 # -------- APIs para a página /pay --------
 
 @app.get("/api/config")
 async def api_config(uid: int, ts: int, sig: str):
     # valida assinatura do link
-    mac = hmac.new(WEBAPP_LINK_SECRET.encode(), f"{uid}:{ts}".encode(), hashlib.sha256).hexdigest()
+    mac = make_link_sig(WEBAPP_LINK_SECRET, uid, ts)
     if mac != sig:
         raise HTTPException(status_code=403, detail="assinatura inválida")
 
