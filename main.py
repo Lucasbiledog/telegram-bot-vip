@@ -24,15 +24,47 @@ from payments import resolve_payment_usd_autochain
 load_dotenv()
 
 
+# 1) crie o FastAPI **antes** de usar @app.on_event
+app = FastAPI()
+
+# Se você tiver arquivos estáticos do checkout:
+from fastapi.staticfiles import StaticFiles
+app.mount("/pay", StaticFiles(directory="./webapp", html=True), name="pay")
+
+# 2) crie a Application do PTB
+application = ApplicationBuilder().token(BOT_TOKEN).build()
+
+# 3) keepalive e webhook (ok manter aqui)
+from fastapi import Request, HTTPException
+from fastapi.responses import PlainTextResponse
+from telegram import Update
+from contextlib import suppress
+
+@app.get("/keepalive")
+async def keepalive():
+    return PlainTextResponse("ok")
+
+@app.post("/webhook/{secret}")
+async def telegram_webhook(secret: str, request: Request):
+    if secret != WEBHOOK_SECRET:
+        raise HTTPException(status_code=403, detail="forbidden")
+    data = await request.json()
+    update = Update.de_json(data, application.bot)
+    await application.process_update(update)  # <- precisa da app inicializada
+    return PlainTextResponse("ok")
+
+# 4) STARTUP/SHUTDOWN corretos (inicializam a Application)
 @app.on_event("startup")
 async def on_startup():
+    from db import init_db
     await init_db()
-    # >>> ADICIONE estas duas linhas:
+
+    # inicializa e (opcional) starta a Application p/ JobQueue etc.
     await application.initialize()
-    # Start é opcional mas recomendado p/ JobQueue e persistência
     with suppress(Exception):
         await application.start()
 
+    # seta o webhook
     if SELF_URL and WEBHOOK_SECRET:
         try:
             await application.bot.set_webhook(url=f"{SELF_URL}/webhook/{WEBHOOK_SECRET}")
@@ -40,38 +72,13 @@ async def on_startup():
         except Exception as e:
             LOG.error("Falha ao setar webhook: %s", e)
 
-LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
-logging.basicConfig(level=getattr(logging, LOG_LEVEL, logging.INFO))
-LOG = logging.getLogger("main")
-
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-SELF_URL = os.getenv("SELF_URL", "")
-WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "secret")
-GROUP_VIP_ID = int(os.getenv("GROUP_VIP_ID","0"))
-
-WEBAPP_URL = os.getenv("WEBAPP_URL", "")
-WEBAPP_LINK_SECRET = os.getenv("WEBAPP_LINK_SECRET", "change-me")
-WEB3AUTH_CLIENT_ID = os.getenv("WEB3AUTH_CLIENT_ID", "")
-WEB3AUTH_JWKS = os.getenv("WEB3AUTH_JWKS", "https://api-auth.web3auth.io/.well-known/jwks.json")
-
-application = ApplicationBuilder().token(BOT_TOKEN).build()
-
-app = FastAPI()
-app.mount("/pay", StaticFiles(directory="./webapp", html=True), name="pay")
-
-def normalize_tx_hash(h: Optional[str]) -> Optional[str]:
-    if not h: return None
-    h = h.strip()
-    if not h.startswith("0x"): return None
-    if len(h) != 66: return None
-    return h
-
 @app.on_event("shutdown")
 async def on_shutdown():
     with suppress(Exception):
         await application.stop()
     with suppress(Exception):
         await application.shutdown()
+
 
 
 async def prices_table() -> Dict[int, float]:
