@@ -1,85 +1,68 @@
+# payments.py
 from __future__ import annotations
 
 import os
 import logging
-from typing import Optional, Tuple, Dict, Any
+from typing import Optional, Tuple, Dict, Any, List
 
-import httpx
 from web3 import Web3
+import httpx
 
 LOG = logging.getLogger("payments")
 
-# ====== ENV ======
-WALLET_ADDRESS = (os.getenv("WALLET_ADDRESS") or "").strip()
-if not WALLET_ADDRESS:
-    raise RuntimeError("WALLET_ADDRESS não configurada no ambiente.")
-
-MIN_CONFIRMATIONS = int(os.getenv("MIN_CONFIRMATIONS", "1"))  # em produção use 3~12
+# ---------- Flags/Env ----------
 DEBUG_PAYMENTS = os.getenv("DEBUG_PAYMENTS", "0") == "1"
-ALLOW_ANY_TO = os.getenv("ALLOW_ANY_TO", "0") == "1"  # aceita destino diferente (apenas para testes)
-WEB3AUTH_CLIENT_ID = os.getenv("WEB3AUTH_CLIENT_ID", "").strip()
+MIN_CONFIRMATIONS = int(os.getenv("MIN_CONFIRMATIONS", "1"))  # 1 p/ testes
+# carteira destino central
+def WALLET() -> str:
+    # lê dinamicamente para evitar problemas de ordem de import
+    w = (os.getenv("WALLET_ADDRESS") or "").strip()
+    return Web3.to_checksum_address(w) if Web3.is_address(w) else w
 
-# ====== helpers de RPC (preferir Web3Auth/Infura quando disponível) ======
-def _wa_rpc(chain_hex: str, fallback: str) -> str:
-    """
-    Se WEB3AUTH_CLIENT_ID existir, usa o endpoint do Web3Auth:
-    https://api.web3auth.io/infura-service/v1/<chainHex>/<CLIENT_ID>
-    Caso contrário, usa fallback público.
-    """
-    if WEB3AUTH_CLIENT_ID:
-        return f"https://api.web3auth.io/infura-service/v1/{chain_hex}/{WEB3AUTH_CLIENT_ID}"
-    return fallback
-
-# ====== tabela de chains suportadas ======
-#  chain_hex -> { rpc, sym, cg_native, cg_platform }
+# ---------- Chains ----------
+# chainId(hex) -> meta
 CHAINS: Dict[str, Dict[str, str]] = {
-    # EVM majors
-    "0x1":    {"rpc": _wa_rpc("0x1",    "https://rpc.ankr.com/eth"),               "sym": "ETH",  "cg_native": "ethereum",      "cg_platform": "ethereum"},
-    "0x38":   {"rpc": _wa_rpc("0x38",   "https://bsc-dataseed.binance.org"),       "sym": "BNB",  "cg_native": "binancecoin",   "cg_platform": "binance-smart-chain"},
-    "0x89":   {"rpc": _wa_rpc("0x89",   "https://polygon-rpc.com"),                "sym": "MATIC","cg_native": "polygon-pos",   "cg_platform": "polygon-pos"},
-    "0xa4b1": {"rpc": _wa_rpc("0xa4b1", "https://arb1.arbitrum.io/rpc"),           "sym": "ETH",  "cg_native": "ethereum",      "cg_platform": "arbitrum-one"},
-    "0xa":    {"rpc": _wa_rpc("0xa",    "https://mainnet.optimism.io"),            "sym": "ETH",  "cg_native": "ethereum",      "cg_platform": "optimistic-ethereum"},
-    "0x2105": {"rpc": _wa_rpc("0x2105", "https://mainnet.base.org"),               "sym": "ETH",  "cg_native": "ethereum",      "cg_platform": "base"},
-    "0xa86a": {"rpc": _wa_rpc("0xa86a", "https://api.avax.network/ext/bc/C/rpc"),  "sym": "AVAX", "cg_native": "avalanche-2",   "cg_platform": "avalanche"},
-    "0xfa":   {"rpc": _wa_rpc("0xfa",   "https://rpc.ftm.tools"),                  "sym": "FTM",  "cg_native": "fantom",        "cg_platform": "fantom"},
-    "0xe708": {"rpc": _wa_rpc("0xe708", "https://rpc.linea.build"),                "sym": "ETH",  "cg_native": "ethereum",      "cg_platform": "linea"},
-    "0x144":  {"rpc": _wa_rpc("0x144",  "https://mainnet.era.zksync.io"),          "sym": "ETH",  "cg_native": "ethereum",      "cg_platform": "zksync"},
-
-    # você pode seguir adicionando mais da sua lista; o algoritmo abaixo funciona igual
+    "0x1":    {"name":"Ethereum",          "rpc":"https://rpc.ankr.com/eth",                      "sym":"ETH",  "cg_native":"ethereum",      "cg_platform":"ethereum"},
+    "0x38":   {"name":"BNB Smart Chain",   "rpc":"https://bsc-dataseed.binance.org",              "sym":"BNB",  "cg_native":"binancecoin",   "cg_platform":"binance-smart-chain"},
+    "0x89":   {"name":"Polygon PoS",       "rpc":"https://polygon-rpc.com",                       "sym":"MATIC","cg_native":"polygon-pos",   "cg_platform":"polygon-pos"},
+    "0xa4b1": {"name":"Arbitrum One",      "rpc":"https://arb1.arbitrum.io/rpc",                  "sym":"ETH",  "cg_native":"ethereum",      "cg_platform":"arbitrum-one"},
+    "0xa":    {"name":"OP Mainnet",        "rpc":"https://mainnet.optimism.io",                   "sym":"ETH",  "cg_native":"ethereum",      "cg_platform":"optimistic-ethereum"},
+    "0x2105": {"name":"Base",              "rpc":"https://mainnet.base.org",                      "sym":"ETH",  "cg_native":"ethereum",      "cg_platform":"base"},
+    "0xa86a": {"name":"Avalanche C",       "rpc":"https://api.avax.network/ext/bc/C/rpc",         "sym":"AVAX", "cg_native":"avalanche-2",   "cg_platform":"avalanche"},
+    "0xfa":   {"name":"Fantom",            "rpc":"https://rpc.ftm.tools",                         "sym":"FTM",  "cg_native":"fantom",        "cg_platform":"fantom"},
+    "0xe708": {"name":"Linea",             "rpc":"https://rpc.linea.build",                       "sym":"ETH",  "cg_native":"ethereum",      "cg_platform":"linea"},
+    "0x144":  {"name":"zkSync Era",        "rpc":"https://mainnet.era.zksync.io",                 "sym":"ETH",  "cg_native":"ethereum",      "cg_platform":"zksync"},
 }
 
-# ====== overrides de tokens populares (quando o CoinGecko não resolve por contrato) ======
-TOKEN_OVERRIDES: Dict[str, Dict[str, str]] = {
-    # BSC (BEP20)
-    "0x7130d2a12b9bcBFAe4f2634d864A1Ee1Ce3Ead9c".lower(): {"symbol": "BTCB", "cg_id": "bitcoin"},
-    "0x55d398326f99059fF775485246999027B3197955".lower(): {"symbol": "USDT", "cg_id": "tether"},
-    "0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d".lower(): {"symbol": "USDC", "cg_id": "usd-coin"},
-    "0xe9e7cea3dedca5984780bafc599bd69add087d56".lower(): {"symbol": "BUSD", "cg_id": "binance-usd"},
-    # Adicione aqui outros contratos que você quer aceitar com mapeamento fixo…
-}
+# Se quiser acrescentar o resto da sua lista depois, adicione entradas aqui
+# (mantendo os campos rpc, sym, cg_native, cg_platform).
 
-ERC20_TRANSFER_SIG = Web3.keccak(text="Transfer(address,address,uint256)").hex().lower()
+# ---------- Constantes ----------
+# Keccak("Transfer(address,address,uint256)")
+ERC20_TRANSFER_SIG = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
 
-
-# ====== web3 utils ======
+# ---------- Utils ----------
 def _w3(rpc: str) -> Web3:
-    return Web3(Web3.HTTPProvider(rpc))
+    return Web3(Web3.HTTPProvider(rpc, request_kwargs={"timeout": 20}))
 
-def _topic_addr(topic_hex_or_bytes) -> str:
-    if hasattr(topic_hex_or_bytes, "hex"):
-        h = topic_hex_or_bytes.hex()
-    else:
-        h = str(topic_hex_or_bytes)
-    return Web3.to_checksum_address("0x" + h[-40:])
+def _topic_addr(topic_hex: str) -> str:
+    # tópico é 32 bytes; endereço vem nos 20 bytes finais
+    return Web3.to_checksum_address("0x" + topic_hex[-40:])
 
-# ====== preços ======
+async def _get_confirmations(w3: Web3, block_number: Optional[int]) -> int:
+    if block_number is None:
+        return 0
+    latest = w3.eth.block_number
+    return max(0, latest - int(block_number))
+
 async def _cg_get(url: str) -> Optional[dict]:
     try:
         async with httpx.AsyncClient(timeout=12) as cli:
-            r = await cli.get(url, headers={"Accept": "application/json"})
+            r = await cli.get(url)
             r.raise_for_status()
             return r.json()
-    except Exception:
+    except Exception as e:
+        LOG.warning("Coingecko falhou: %s", e)
         return None
 
 async def _usd_native(chain_id: str, amount_native: float) -> Optional[Tuple[float, float]]:
@@ -91,20 +74,8 @@ async def _usd_native(chain_id: str, amount_native: float) -> Optional[Tuple[flo
     return px, amount_native * px
 
 async def _usd_token(chain_id: str, token_addr: str, amount_raw: int, decimals: int) -> Optional[Tuple[float, float]]:
-    token_lc = token_addr.lower()
-
-    # 1) tenta override estático
-    if token_lc in TOKEN_OVERRIDES:
-        cg_id = TOKEN_OVERRIDES[token_lc]["cg_id"]
-        data = await _cg_get(f"https://api.coingecko.com/api/v3/simple/price?ids={cg_id}&vs_currencies=usd")
-        if not data or cg_id not in data or "usd" not in data[cg_id]:
-            return None
-        px = float(data[cg_id]["usd"])
-        amt = float(amount_raw) / float(10 ** decimals)
-        return px, amt * px
-
-    # 2) tenta plataforma do CoinGecko por contrato
     platform = CHAINS[chain_id]["cg_platform"]
+    token_lc = token_addr.lower()
     data = await _cg_get(
         f"https://api.coingecko.com/api/v3/simple/token_price/{platform}"
         f"?contract_addresses={token_lc}&vs_currencies=usd"
@@ -118,7 +89,6 @@ async def _usd_token(chain_id: str, token_addr: str, amount_raw: int, decimals: 
             return px, amt * px
     return None
 
-# ====== ERC20 helpers ======
 def _erc20_static_call(w3: Web3, token: str, sig4: str) -> Optional[bytes]:
     try:
         return w3.eth.call({"to": token, "data": sig4})
@@ -132,172 +102,170 @@ def _erc20_decimals(w3: Web3, token: str) -> int:
     return int.from_bytes(raw[-32:], "big")
 
 def _erc20_symbol(w3: Web3, token: str) -> str:
-    # tenta override primeiro
-    if token.lower() in TOKEN_OVERRIDES:
-        return TOKEN_OVERRIDES[token.lower()]["symbol"]
-
     raw = _erc20_static_call(w3, token, "0x95d89b41")  # symbol()
     if not raw:
         return "TOKEN"
     try:
-        # string dinâmica ABI
         if len(raw) >= 96 and raw[:4] == b"\x00\x00\x00\x20":
             strlen = int.from_bytes(raw[64:96], "big")
-            return raw[96:96 + strlen].decode("utf-8", errors="ignore") or "TOKEN"
-        # string fixa (bytes32)
+            return raw[96:96+strlen].decode("utf-8", errors="ignore") or "TOKEN"
         return raw.rstrip(b"\x00").decode("utf-8", errors="ignore") or "TOKEN"
     except Exception:
         return "TOKEN"
 
-async def _get_confirmations(w3: Web3, block_number: Optional[int]) -> int:
-    if block_number is None:
-        return 0
-    latest = w3.eth.block_number
-    return max(0, latest - block_number)
+# ---------- Core resolver com debug ----------
+async def _resolve_on_chain(
+    w3: Web3, chain_id: str, tx_hash: str, debug_lines: List[str]
+) -> Tuple[bool, str, Optional[float], Dict[str, Any]]:
+    chain_name = CHAINS[chain_id]["name"]
+    debug_lines.append(f"• Cadeia: {chain_name} ({chain_id}) – RPC {CHAINS[chain_id]['rpc']}")
+    debug_lines.append(f"• WALLET esperada: {WALLET()}")
 
-# ====== núcleo: resolver a tx numa chain específica ======
-async def _resolve_on_chain(w3: Web3, chain_id: str, tx_hash: str) -> Tuple[bool, str, Optional[float], Dict[str, Any]]:
+    # Buscar tx
     try:
         tx = w3.eth.get_transaction(tx_hash)
-    except Exception:
+    except Exception as e:
+        debug_lines.append(f"  - get_transaction falhou/nao encontrou: {e}")
         return False, "Transação não encontrada.", None, {}
 
+    debug_lines.append(f"  - tx.to: {tx.get('to')}  tx.from: {tx.get('from')}  valorWei: {tx.get('value')}")
     receipt = None
     if tx.get("blockHash"):
         try:
             receipt = w3.eth.get_transaction_receipt(tx_hash)
-        except Exception:
-            pass
+            debug_lines.append(f"  - receipt ok. status={receipt.get('status')} logs={len(receipt.get('logs') or [])}")
+        except Exception as e:
+            debug_lines.append(f"  - receipt erro: {e}")
 
     confirmations = await _get_confirmations(w3, tx.get("blockNumber"))
+    debug_lines.append(f"  - confirmacoes: {confirmations}/{MIN_CONFIRMATIONS}")
     if confirmations < MIN_CONFIRMATIONS:
         return False, f"Aguardando confirmações: {confirmations}/{MIN_CONFIRMATIONS}", None, {"confirmations": confirmations}
 
     if receipt and receipt.get("status") != 1:
         return False, "Transação revertida.", None, {"confirmations": confirmations}
 
-    details: Dict[str, Any] = {"chain_id": chain_id, "confirmations": confirmations}
-    to_addr = (tx.get("to") or "").lower()
+    details: Dict[str, Any] = {"chain_id": chain_id, "chain_name": chain_name, "confirmations": confirmations}
 
-    # Nativo
-    if WALLET_ADDRESS and to_addr == WALLET_ADDRESS.lower():
+    # 1) Nativo (tx.to == WALLET)
+    try:
+        to_addr = Web3.to_checksum_address(tx.get("to")) if tx.get("to") else None
+    except Exception:
+        to_addr = None
+
+    if WALLET() and to_addr and to_addr == WALLET():
         value_wei = int(tx["value"])
         amount_native = float(value_wei) / float(10 ** 18)
+        debug_lines.append(f"  - nativo para a WALLET. amount={amount_native}")
         px = await _usd_native(chain_id, amount_native)
         if not px:
+            debug_lines.append("  - preco USD (nativo) indisponivel")
             return False, "Preço USD indisponível (nativo).", None, details
         price_usd, paid_usd = px
         sym = CHAINS[chain_id]["sym"]
-        details.update({"type": "native", "token_symbol": sym, "amount_human": amount_native, "price_usd": price_usd, "paid_usd": paid_usd})
-        return True, f"{sym} nativo OK em {chain_id}: ${paid_usd:.2f}", paid_usd, details
+        details.update({"type":"native","token_symbol":sym,"amount_human":amount_native,"price_usd":price_usd,"paid_usd":paid_usd})
+        return True, f"{sym} nativo OK em {chain_name}: ${paid_usd:.2f}", paid_usd, details
+    else:
+        debug_lines.append(f"  - nativo NAO bateu: to={to_addr} vs WALLET={WALLET()}")
 
-    # ERC-20 (Transfer p/ nossa carteira)
+    # 2) ERC-20: varrer todos os eventos Transfer do recibo e mostrar por que não casou
     if not receipt:
+        debug_lines.append("  - sem recibo; nao consigo validar ERC-20")
         return False, "Receipt indisponível para token.", None, details
 
-    found_value_raw = None
-    found_token_addr = None
-    erc20_to = None
+    candidate_lines: List[str] = []
+    matched_value_raw: Optional[int] = None
+    matched_token_addr: Optional[str] = None
 
-    for log in receipt.get("logs", []):
-        addr = (log.get("address") or "").lower()
+    for idx, log in enumerate(receipt.get("logs", [])):
+        try:
+            addr = Web3.to_checksum_address(log.get("address"))
+        except Exception:
+            addr = (log.get("address") or "").lower()
+
         topics = log.get("topics") or []
         if len(topics) < 3:
+            candidate_lines.append(f"    • log#{idx} {addr}: sem 3 tópicos")
             continue
-        t0 = topics[0].hex().lower() if hasattr(topics[0], "hex") else str(topics[0]).lower()
+
+        t0 = topics[0].hex().lower() if hasattr(topics[0], 'hex') else str(topics[0]).lower()
         if t0 != ERC20_TRANSFER_SIG:
+            candidate_lines.append(f"    • log#{idx} {addr}: nao é Transfer (t0={t0[:10]}...)")
             continue
-        # topics[2] = to
-        to_topic = topics[2]
+
+        t1 = topics[1].hex() if hasattr(topics[1], 'hex') else str(topics[1])
+        t2 = topics[2].hex() if hasattr(topics[2], 'hex') else str(topics[2])
+
         try:
-            erc20_to = _topic_addr(to_topic)
+            toA = _topic_addr(t2)
+            fromA = _topic_addr(t1)
         except Exception:
+            candidate_lines.append(f"    • log#{idx} {addr}: erro ao decodificar enderecos")
             continue
 
-        if WALLET_ADDRESS and erc20_to.lower() != WALLET_ADDRESS.lower():
-            continue
-
+        data_hex = log.get("data") or "0x0"
         try:
-            data_hex = log.get("data")
             value_raw = int(data_hex, 16)
         except Exception:
-            continue
+            value_raw = 0
 
-        found_value_raw = value_raw
-        found_token_addr = Web3.to_checksum_address(addr)
-        break
+        hit = (WALLET() and toA == WALLET())
+        candidate_lines.append(
+            f"    • log#{idx} token={addr} from={fromA} to={toA} valueRaw={value_raw} "
+            + ("<-- MATCH WALLET" if hit else "")
+        )
 
-    if found_value_raw is None or not found_token_addr:
-        if ALLOW_ANY_TO:
-            # Em modo teste, aceita mesmo que não seja para a carteira destino
-            for log in receipt.get("logs", []):
-                addr = (log.get("address") or "").lower()
-                topics = log.get("topics") or []
-                if len(topics) < 3:
-                    continue
-                t0 = topics[0].hex().lower() if hasattr(topics[0], "hex") else str(topics[0]).lower()
-                if t0 != ERC20_TRANSFER_SIG:
-                    continue
-                try:
-                    data_hex = log.get("data")
-                    value_raw = int(data_hex, 16)
-                except Exception:
-                    continue
-                found_value_raw = value_raw
-                found_token_addr = Web3.to_checksum_address(addr)
-                break
+        if hit and matched_value_raw is None:
+            matched_value_raw = value_raw
+            matched_token_addr = addr
 
-        if found_value_raw is None or not found_token_addr:
-            return False, "Nenhuma transferência válida p/ a carteira destino.", None, details
+    debug_lines.extend(candidate_lines if candidate_lines else ["    • recibo sem logs"])
 
-    decimals = _erc20_decimals(w3, found_token_addr)
-    symbol = _erc20_symbol(w3, found_token_addr) or "TOKEN"
-    px = await _usd_token(chain_id, found_token_addr, found_value_raw, decimals)
+    if matched_value_raw is None or not matched_token_addr:
+        return False, "Nenhuma transferência válida p/ a carteira destino.", None, details
+
+    # Temos token transferido para a WALLET
+    decimals = _erc20_decimals(w3, matched_token_addr)
+    symbol = _erc20_symbol(w3, matched_token_addr) or "TOKEN"
+    px = await _usd_token(chain_id, matched_token_addr, matched_value_raw, decimals)
     if not px:
+        debug_lines.append("  - preco USD (token) indisponivel")
         return False, "Preço USD indisponível (token).", None, details
     price_usd, paid_usd = px
-    amount_human = float(found_value_raw) / float(10 ** decimals)
+    amount_human = float(matched_value_raw) / float(10 ** decimals)
 
     details.update({
-        "type": "erc20",
-        "token_address": found_token_addr,
-        "token_symbol": symbol,
-        "amount_human": amount_human,
-        "price_usd": price_usd,
-        "paid_usd": paid_usd,
-        "erc20_to": erc20_to,
+        "type":"erc20","token_address":matched_token_addr,"token_symbol":symbol,
+        "amount_human":amount_human,"price_usd":price_usd,"paid_usd":paid_usd
     })
-    return True, f"Token {symbol} OK em {chain_id}: ${paid_usd:.2f}", paid_usd, details
+    return True, f"Token {symbol} OK em {chain_name}: ${paid_usd:.2f}", paid_usd, details
 
 
-# ====== API pública usada pelo bot/página ======
 async def resolve_payment_usd_autochain(tx_hash: str) -> Tuple[bool, str, Optional[float], Dict[str, Any]]:
     """
-    Percorre as chains cadastradas e tenta resolver a transação.
-    Retorna: (ok, mensagem, valor_em_usd, detalhes)
+    Percorre as chains configuradas até encontrar a tx.
+    Retorna (ok, msg, amount_usd, details) — sempre inclui `details['debug']` quando DEBUG_PAYMENTS=1.
     """
-    if not tx_hash or not tx_hash.startswith("0x") or len(tx_hash) < 20:
-        return False, "Hash inválido.", None, {}
-
+    debug_lines: List[str] = []
+    debug_lines.append(f"== DEBUG pagamentos ==")
+    debug_lines.append(f"hash: {tx_hash}")
+    debug_lines.append(f"WALLET(env): {WALLET()}")
     for chain_id, meta in CHAINS.items():
         w3 = _w3(meta["rpc"])
+        # chamada barata: se não existir nessa chain, Web3 lança.
         try:
             _ = w3.eth.get_transaction(tx_hash)
         except Exception:
-            continue  # não existe nessa chain, tenta próxima
-
-        ok, msg, usd, details = await _resolve_on_chain(w3, chain_id, tx_hash)
-
+            continue  # não está nesta chain
+        # encontrou — resolve nela
+        ok, msg, usd, details = await _resolve_on_chain(w3, chain_id, tx_hash, debug_lines)
+        details = details or {}
         if DEBUG_PAYMENTS:
-            # anexa informações úteis no modo debug
-            dbg = {
-                "chain": chain_id,
-                "rpc": meta["rpc"],
-                "wallet_expected": WALLET_ADDRESS,
-                "details": details,
-            }
-            LOG.info("[DEBUG resolve] %s | %s", msg, dbg)
-
+            details["debug"] = debug_lines
         return ok, msg, usd, details
 
+    # não achou em nenhuma
+    if DEBUG_PAYMENTS:
+        debug_lines.append("hash nao encontrado em nenhuma chain configurada.")
+        return False, "Transação não encontrada nas chains suportadas.", None, {"debug": debug_lines}
     return False, "Transação não encontrada nas chains suportadas.", None, {}

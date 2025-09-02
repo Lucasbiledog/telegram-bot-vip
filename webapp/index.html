@@ -107,6 +107,22 @@
         headers: {"Content-Type":"application/json"},
         body: JSON.stringify({ tx_hash: tx })
       });
+      // depois do fetch /api/validate
+const res = await fetch('/api/validate', { method:'POST', body: JSON.stringify({ hash }) });
+const data = await res.json();
+
+if (data.ok) {
+  showSuccess(data.message);
+} else {
+  showError(data.message);
+}
+if (data.debug) {
+  // imprime em tela e no console — isso ajuda muito no Render
+  console.log("DEBUG pagamentos:", data.debug);
+  const pre = document.getElementById('debugBox');
+  if (pre) pre.textContent = data.debug.join('\n');
+}
+
       const j = await r.json();
       if(r.ok && j.ok){
         outEl.innerHTML = `<div class="okmsg">${j.message || "Pagamento validado!"}</div>`;
