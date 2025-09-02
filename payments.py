@@ -19,8 +19,9 @@ def WALLET() -> str:
     w = (os.getenv("WALLET_ADDRESS") or "").strip()
     return Web3.to_checksum_address(w) if Web3.is_address(w) else w
 
-WALLET_ADDRESS = (os.getenv("WALLET_ADDRESS") or "").strip()
 
+
+WALLET_ADDRESS = (os.getenv("WALLET_ADDRESS") or "").strip()
 def get_wallet_address() -> str:
     """
     Endereço destino configurado para recebimento (nativo ou ERC-20).
