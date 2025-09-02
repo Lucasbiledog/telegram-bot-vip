@@ -1,68 +1,55 @@
-# payments.py
 from __future__ import annotations
-
-import os
-import logging
-from typing import Optional, Tuple, Dict, Any, List
-
-from web3 import Web3
-import httpx
-
-LOG = logging.getLogger("payments")
-
-# topo do arquivo (com os imports)
-import logging, os
+import os, logging
 from typing import Optional, Tuple, Dict, Any
 from web3 import Web3
 import httpx
 
 LOG = logging.getLogger("payments")
 
-DEBUG_PAYMENTS = os.getenv("DEBUG_PAYMENTS", "0") == "1"
-ALLOW_ANY_TO   = os.getenv("ALLOW_ANY_TO", "0") == "1"
-
-# carteira destino (obrigatório)
+# =================== ENV ===================
 WALLET_ADDRESS = (os.getenv("WALLET_ADDRESS") or "").strip()
-MIN_CONFIRMATIONS = int(os.getenv("MIN_CONFIRMATIONS", "1"))  # 1 em teste
+MIN_CONFIRMATIONS = int(os.getenv("MIN_CONFIRMATIONS", "1"))
+DEBUG_PAYMENTS = os.getenv("DEBUG_PAYMENTS", "0") == "1"
 
-# nome bonitinho das chains (só para mensagens)
-CHAIN_NAMES: Dict[str, str] = {
-    "0x1": "Ethereum",
-    "0x38": "BNB Smart Chain",
-    "0x89": "Polygon",
-    "0xa4b1": "Arbitrum One",
-    "0xa": "OP Mainnet",
-    "0x2105": "Base",
-    "0xa86a": "Avalanche",
-    "0xfa": "Fantom",
-    "0xe708": "Linea",
-    "0x144": "zkSync Era",
-}
+def get_wallet_address() -> str:
+    return WALLET_ADDRESS
 
-# tabela de RPC e metadados (como você já tinha)
+def get_prices_sync(raw: Optional[str]) -> Dict[int, float]:
+    """
+    Aceita "30:0.05,60:1,180:1.5,365:2" ou JSON {"30":0.05,...}
+    """
+    import json
+    default = {30: 0.05, 60: 1.00, 180: 1.50, 365: 2.00}
+    if not raw:
+        return default
+    try:
+        if raw.strip().startswith("{"):
+            obj = json.loads(raw)
+            return {int(k): float(v) for k, v in obj.items()}
+        ans: Dict[int, float] = {}
+        for part in raw.split(","):
+            d, p = part.split(":")
+            ans[int(d.strip())] = float(p.strip())
+        return ans or default
+    except Exception:
+        return default
+
+# =================== CHAINS ===================
+# name incluído para mensagens
 CHAINS: Dict[str, Dict[str, str]] = {
-    "0x1":    {"rpc":"https://rpc.ankr.com/eth",            "sym":"ETH",  "cg_native":"ethereum",      "cg_platform":"ethereum"},
-    "0x38":   {"rpc":"https://bsc-dataseed.binance.org",    "sym":"BNB",  "cg_native":"binancecoin",   "cg_platform":"binance-smart-chain"},
-    "0x89":   {"rpc":"https://polygon-rpc.com",             "sym":"MATIC","cg_native":"polygon-pos",   "cg_platform":"polygon-pos"},
-    "0xa4b1": {"rpc":"https://arb1.arbitrum.io/rpc",        "sym":"ETH",  "cg_native":"ethereum",      "cg_platform":"arbitrum-one"},
-    "0xa":    {"rpc":"https://mainnet.optimism.io",         "sym":"ETH",  "cg_native":"ethereum",      "cg_platform":"optimistic-ethereum"},
-    "0x2105": {"rpc":"https://mainnet.base.org",            "sym":"ETH",  "cg_native":"ethereum",      "cg_platform":"base"},
-    "0xa86a": {"rpc":"https://api.avax.network/ext/bc/C/rpc","sym":"AVAX","cg_native":"avalanche-2",  "cg_platform":"avalanche"},
-    "0xfa":   {"rpc":"https://rpc.ftm.tools",               "sym":"FTM",  "cg_native":"fantom",        "cg_platform":"fantom"},
-    "0xe708": {"rpc":"https://rpc.linea.build",             "sym":"ETH",  "cg_native":"ethereum",      "cg_platform":"linea"},
-    "0x144":  {"rpc":"https://mainnet.era.zksync.io",       "sym":"ETH",  "cg_native":"ethereum",      "cg_platform":"zksync"},
+    # chainId: rpc, sym, cg_native, cg_platform, name
+    "0x38":   {"rpc":"https://bsc-dataseed.binance.org","sym":"BNB","cg_native":"binancecoin","cg_platform":"binance-smart-chain","name":"BNB Smart Chain"},
+    "0x1":    {"rpc":"https://rpc.ankr.com/eth","sym":"ETH","cg_native":"ethereum","cg_platform":"ethereum","name":"Ethereum"},
+    "0x89":   {"rpc":"https://polygon-rpc.com","sym":"MATIC","cg_native":"polygon-pos","cg_platform":"polygon-pos","name":"Polygon"},
+    "0xa4b1": {"rpc":"https://arb1.arbitrum.io/rpc","sym":"ETH","cg_native":"ethereum","cg_platform":"arbitrum-one","name":"Arbitrum One"},
+    "0xa":    {"rpc":"https://mainnet.optimism.io","sym":"ETH","cg_native":"ethereum","cg_platform":"optimistic-ethereum","name":"OP Mainnet"},
+    "0x2105": {"rpc":"https://mainnet.base.org","sym":"ETH","cg_native":"ethereum","cg_platform":"base","name":"Base"},
+    "0xe708": {"rpc":"https://rpc.linea.build","sym":"ETH","cg_native":"ethereum","cg_platform":"linea","name":"Linea"},
+    "0x144":  {"rpc":"https://mainnet.era.zksync.io","sym":"ETH","cg_native":"ethereum","cg_platform":"zksync","name":"zkSync Era"},
+    # ... adicione outras do seu interesse
 }
 
 ERC20_TRANSFER_SIG = Web3.keccak(text="Transfer(address,address,uint256)").hex()
-
-def _fmt_usd(x: float) -> str:
-    # evita $0.00 para valores pequenos
-    if x < 0.01:
-        return f"${x:.4f}"
-    return f"${x:.2f}"
-
-def _chain_name(chain_id: str) -> str:
-    return CHAIN_NAMES.get(chain_id, chain_id)
 
 def _w3(rpc: str) -> Web3:
     return Web3(Web3.HTTPProvider(rpc))
@@ -82,7 +69,9 @@ async def _cg_get(url: str) -> Optional[dict]:
             r = await cli.get(url)
             r.raise_for_status()
             return r.json()
-    except Exception:
+    except Exception as e:
+        if DEBUG_PAYMENTS:
+            LOG.warning("[CG] erro %s", e)
         return None
 
 async def _usd_native(chain_id: str, amount_native: float) -> Optional[Tuple[float, float]]:
@@ -134,19 +123,10 @@ def _erc20_symbol(w3: Web3, token: str) -> str:
         return "TOKEN"
 
 async def _resolve_on_chain(w3: Web3, chain_id: str, tx_hash: str) -> Tuple[bool, str, Optional[float], Dict[str, Any]]:
-    # estrutura base do details (debug)
-    base_details: Dict[str, Any] = {
-        "chain_id": chain_id,
-        "chain_name": _chain_name(chain_id),
-        "wallet_expected": WALLET_ADDRESS,
-        "tx_hash": tx_hash,
-        "mode": None,  # "native" ou "erc20"
-    }
-
     try:
         tx = w3.eth.get_transaction(tx_hash)
     except Exception:
-        return False, "Transação não encontrada.", None, base_details
+        return False, "Transação não encontrada.", None, {}
 
     receipt = None
     if tx.get("blockHash"):
@@ -156,59 +136,42 @@ async def _resolve_on_chain(w3: Web3, chain_id: str, tx_hash: str) -> Tuple[bool
             pass
 
     confirmations = await _get_confirmations(w3, tx.get("blockNumber"))
-    base_details["confirmations"] = confirmations
     if confirmations < MIN_CONFIRMATIONS:
-        return False, f"Aguardando confirmações: {confirmations}/{MIN_CONFIRMATIONS}", None, base_details
+        return False, f"Aguardando confirmações: {confirmations}/{MIN_CONFIRMATIONS}", None, {"confirmations": confirmations}
 
     if receipt and receipt.get("status") != 1:
-        return False, "Transação revertida.", None, base_details
+        return False, "Transação revertida.", None, {"confirmations": confirmations}
 
+    details: Dict[str, Any] = {"chain_id": chain_id, "confirmations": confirmations, "chain_name": CHAINS[chain_id]["name"]}
     to_addr = (tx.get("to") or "").lower()
-    frm_addr = (tx.get("from") or "").lower()
-    base_details["tx_from"] = frm_addr
-    base_details["tx_to"] = to_addr
 
     # Nativo
-    if WALLET_ADDRESS and to_addr == WALLET_ADDRESS.lower() and int(tx.get("value", 0)) > 0:
-        base_details["mode"] = "native"
+    if WALLET_ADDRESS and to_addr == WALLET_ADDRESS.lower():
         value_wei = int(tx["value"])
         amount_native = float(value_wei) / float(10 ** 18)
         px = await _usd_native(chain_id, amount_native)
         if not px:
-            return False, "Preço USD indisponível (nativo).", None, base_details
+            return False, "Preço USD indisponível (nativo).", None, details
         price_usd, paid_usd = px
         sym = CHAINS[chain_id]["sym"]
-        base_details.update({
-            "token_symbol": sym,
-            "amount_human": amount_native,
-            "price_usd": price_usd,
-            "paid_usd": paid_usd,
-        })
-        msg = (
-            f"Pagamento detectado: {sym} nativo em {_chain_name(chain_id)}\n"
-            f"Quantidade: {amount_native:.8f} {sym}\n"
-            f"Preço {sym}: ${price_usd:.2f}\n"
-            f"Total em USD: {_fmt_usd(paid_usd)}"
-        )
-        return True, msg, paid_usd, base_details
+        details.update({"type":"native","token_symbol":sym,"amount_human":amount_native,"price_usd":price_usd,"paid_usd":paid_usd})
+        return True, f"{sym} nativo OK em {CHAINS[chain_id]['name']}: ${paid_usd:.2f}", paid_usd, details
 
-    # ERC-20 (precisa do receipt para ler logs)
+    # ERC-20
     if not receipt:
-        return False, "Receipt indisponível para token.", None, base_details
+        return False, "Receipt indisponível para token.", None, details
 
     found_value_raw = None
     found_token_addr = None
-    found_to = None
-
     for log in receipt.get("logs", []):
         addr = (log.get("address") or "").lower()
         topics = log.get("topics") or []
         if len(topics) < 3:
             continue
-        t0 = topics[0].hex().lower() if hasattr(topics[0], 'hex') else str(topics[0]).lower()
+        t0 = topics[0].hex().lower() if hasattr(topics[0],'hex') else str(topics[0]).lower()
         if t0 != ERC20_TRANSFER_SIG.lower():
             continue
-        t2 = topics[2].hex() if hasattr(topics[2], 'hex') else str(topics[2])
+        t2 = topics[2].hex() if hasattr(topics[2],'hex') else str(topics[2])
         try:
             toA = _topic_addr(t2)
         except Exception:
@@ -222,45 +185,33 @@ async def _resolve_on_chain(w3: Web3, chain_id: str, tx_hash: str) -> Tuple[bool
             continue
         found_value_raw = value_raw
         found_token_addr = Web3.to_checksum_address(addr)
-        found_to = toA
         break
 
-    base_details["erc20_to"] = found_to
-    base_details["erc20_token"] = found_token_addr
-
     if found_value_raw is None or not found_token_addr:
-        if ALLOW_ANY_TO:
-            LOG.warning("ALLOW_ANY_TO ativo - aceitando tx sem conferir destino")
-        else:
-            return False, "Nenhuma transferência válida p/ a carteira destino.", None, base_details
+        if DEBUG_PAYMENTS:
+            return False, (
+                "Nenhuma transferência válida p/ a carteira destino.\n"
+                f"to_tx: {to_addr}\n"
+                f"wallet: {WALLET_ADDRESS}\n"
+                f"logs: {len(receipt.get('logs', []))}"
+            ), None, details
+        return False, "Nenhuma transferência válida p/ a carteira destino.", None, details
 
-    base_details["mode"] = "erc20"
     decimals = _erc20_decimals(w3, found_token_addr)
     symbol = _erc20_symbol(w3, found_token_addr) or "TOKEN"
     px = await _usd_token(chain_id, found_token_addr, found_value_raw, decimals)
     if not px:
-        return False, "Preço USD indisponível (token).", None, base_details
+        return False, "Preço USD indisponível (token).", None, details
     price_usd, paid_usd = px
     amount_human = float(found_value_raw) / float(10 ** decimals)
 
-    base_details.update({
-        "token_symbol": symbol,
-        "amount_human": amount_human,
-        "price_usd": price_usd,
-        "paid_usd": paid_usd,
+    details.update({
+        "type":"erc20","token_address":found_token_addr,"token_symbol":symbol,
+        "amount_human":amount_human,"price_usd":price_usd,"paid_usd":paid_usd
     })
-
-    msg = (
-        f"Pagamento detectado: {symbol} (ERC-20) em {_chain_name(chain_id)}\n"
-        f"Quantidade: {amount_human:.8f} {symbol}\n"
-        f"Preço {symbol}: ${price_usd:.2f}\n"
-        f"Total em USD: {_fmt_usd(paid_usd)}"
-    )
-    return True, msg, paid_usd, base_details
-
+    return True, f"Token {symbol} OK em {CHAINS[chain_id]['name']}: ${paid_usd:.2f}", paid_usd, details
 
 async def resolve_payment_usd_autochain(tx_hash: str) -> Tuple[bool, str, Optional[float], Dict[str, Any]]:
-    """Tenta localizar a tx percorrendo as chains configuradas."""
     for chain_id, meta in CHAINS.items():
         w3 = _w3(meta["rpc"])
         try:
@@ -268,7 +219,5 @@ async def resolve_payment_usd_autochain(tx_hash: str) -> Tuple[bool, str, Option
         except Exception:
             continue
         ok, msg, usd, details = await _resolve_on_chain(w3, chain_id, tx_hash)
-        if DEBUG_PAYMENTS:
-            LOG.info("[resolve] chain=%s ok=%s usd=%s details=%s", chain_id, ok, usd, details)
         return ok, msg, usd, details
     return False, "Transação não encontrada nas chains suportadas.", None, {}

@@ -1,67 +1,60 @@
-(function () {
-  const tg = window.Telegram?.WebApp;
-  tg && tg.expand();
+(async function () {
+  const $ = (sel) => document.querySelector(sel);
+  const alertBox = $("#alert");
+  const addr = $("#addr");
+  const plans = $("#plans");
+  const hashInput = $("#txhash");
 
-  // keep-alive no console a cada 25s
-  setInterval(() => console.log("[webapp] alive", Date.now()), 25000);
+  const showError = (msg) => {
+    alertBox.innerHTML = `<div class="error">${msg || "Erro ao validar. Tente novamente."}</div>`;
+  };
+  const showOk = (msg) => {
+    alertBox.innerHTML = `<div class="ok">${msg}</div>`;
+  };
 
-  // lê uid da query
-  const params = new URLSearchParams(location.search);
-  const uid = Number(params.get("uid") || "0");
-
-  // mostra carteira fixa embutida pelo servidor via env (renderizada no HTML via pequena injeção opcional)
-  // como não temos templating aqui, vamos buscar /keepalive só para pegar a baseURL e usar wallet do .env injetada via data-attr no HTML
-  fetch("/keepalive").catch(() => {});
-
-  // você pode injetar a carteira por data-attr ou simplesmente fixar abaixo
-  const WALLET = "0x40dDBD27F878d07808339F9965f013F1CBc2F812";
-  document.getElementById("wallet").value = WALLET;
-
-  // UI dos planos (só highlight visual)
-  const plans = document.getElementById("plans");
-  plans.addEventListener("click", (e) => {
-    const btn = e.target.closest("button");
-    if (!btn) return;
-    plans.querySelectorAll("button").forEach(b => b.classList.remove("active"));
-    btn.classList.add("active");
-  });
-
-  // Colar do clipboard
-  document.getElementById("btnPaste").addEventListener("click", async () => {
-    try {
-      const t = await navigator.clipboard.readText();
-      if (t && t.startsWith("0x")) document.getElementById("txhash").value = t.trim();
-    } catch(e) {}
-  });
-
-  // Validar pagamento
-  const status = document.getElementById("status");
-  document.getElementById("btnValidate").addEventListener("click", async () => {
-    const hash = document.getElementById("txhash").value.trim();
-    if (!hash || !hash.startsWith("0x")) {
-      status.textContent = "Informe um hash válido (0x...)";
-      status.className = "status error";
-      return;
+  // carrega config backend
+  try {
+    const r = await fetch("/api/config");
+    if (!r.ok) throw 0;
+    const cfg = await r.json();
+    addr.value = cfg.wallet || "—";
+    if (cfg.prices_usd) {
+      plans.innerHTML = Object.entries(cfg.prices_usd)
+        .sort((a, b) => parseInt(a[0]) - parseInt(b[0]))
+        .map(([d, p]) => `<div class="pill"><div style="font-weight:700">${d} dias</div><div class="muted">$${Number(p).toFixed(2)}</div></div>`)
+        .join("");
     }
-    status.textContent = "Validando pagamento…";
-    status.className = "status info";
+  } catch (e) {
+    addr.value = "erro ao carregar";
+  }
+
+  $("#pasteBtn").onclick = async () => {
+    try {
+      const txt = await navigator.clipboard.readText();
+      if (txt) hashInput.value = txt.trim();
+    } catch {}
+  };
+
+  $("#validarBtn").onclick = async () => {
+    alertBox.innerHTML = "";
+    const h = (hashInput.value || "").trim();
+    if (!(h.startsWith("0x") && h.length === 66)) {
+      return showError("Hash inválido.");
+    }
     try {
       const r = await fetch("/api/validate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ uid, hash })
+        body: JSON.stringify({ hash: h })
       });
       const data = await r.json();
-      if (data.ok) {
-        status.textContent = data.msg || "Pagamento aprovado. Convite enviado no bot.";
-        status.className = "status ok";
-      } else {
-        status.textContent = data.msg || "Não foi possível validar. Tente novamente.";
-        status.className = "status error";
-      }
+      if (!data.ok) return showError(data.error || data.message || "Falha ao validar.");
+      showOk(data.message);
     } catch (e) {
-      status.textContent = "Erro ao validar. Tente novamente.";
-      status.className = "status error";
+      showError("Erro ao validar. Tente novamente.");
     }
-  });
+  };
+
+  // evita idle no Render (ping leve nos logs)
+  setInterval(() => console.log("[keepalive] checkout open"), 60000);
 })();
