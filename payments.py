@@ -1,29 +1,29 @@
 from __future__ import annotations
-import logging
+import logging, os
 from typing import Optional, Tuple, Dict, Any
 from web3 import Web3
 import httpx
-import os
 
 LOG = logging.getLogger("payments")
 
 WALLET_ADDRESS = (os.getenv("WALLET_ADDRESS") or "").strip()
-MIN_CONFIRMATIONS = int(os.getenv("MIN_CONFIRMATIONS", "1"))  # 1 p/ teste; depois aumente
+MIN_CONFIRMATIONS = int(os.getenv("MIN_CONFIRMATIONS", "1"))   # aumente em prod
+DEBUG_PAYMENTS = os.getenv("DEBUG_PAYMENTS", "0") == "1"
+ALLOW_ANY_TO   = os.getenv("ALLOW_ANY_TO", "0") == "1"         # apenas para testes
 
-# ===== Tabela multi-chain embutida =====
-# chainId -> { rpc, native_symbol, cg_native_id, cg_platform }
+# --------- Tabela multi-chain ----------
+# chainId(hex) -> { rpc, sym (nativo), cg_native (id CoinGecko), cg_platform (slug)}
 CHAINS: Dict[str, Dict[str, str]] = {
-    "0x1":    {"rpc":"https://rpc.ankr.com/eth",            "sym":"ETH",  "cg_native":"ethereum",      "cg_platform":"ethereum"},
-    "0x38":   {"rpc":"https://bsc-dataseed.binance.org",    "sym":"BNB",  "cg_native":"binancecoin",   "cg_platform":"binance-smart-chain"},
-    "0x89":   {"rpc":"https://polygon-rpc.com",             "sym":"MATIC","cg_native":"polygon-pos",   "cg_platform":"polygon-pos"},
-    "0xa4b1": {"rpc":"https://arb1.arbitrum.io/rpc",        "sym":"ETH",  "cg_native":"ethereum",      "cg_platform":"arbitrum-one"},
-    "0xa":    {"rpc":"https://mainnet.optimism.io",         "sym":"ETH",  "cg_native":"ethereum",      "cg_platform":"optimistic-ethereum"},
-    "0x2105": {"rpc":"https://mainnet.base.org",            "sym":"ETH",  "cg_native":"ethereum",      "cg_platform":"base"},
-    "0xa86a": {"rpc":"https://api.avax.network/ext/bc/C/rpc","sym":"AVAX","cg_native":"avalanche-2",  "cg_platform":"avalanche"},
-    "0xfa":   {"rpc":"https://rpc.ftm.tools",               "sym":"FTM",  "cg_native":"fantom",        "cg_platform":"fantom"},
-    "0xe708": {"rpc":"https://rpc.linea.build",             "sym":"ETH",  "cg_native":"ethereum",      "cg_platform":"linea"},
-    "0x144":  {"rpc":"https://mainnet.era.zksync.io",       "sym":"ETH",  "cg_native":"ethereum",      "cg_platform":"zksync"},
-    # pode adicionar mais entradas aqui se quiser
+    "0x1":    {"rpc":"https://rpc.ankr.com/eth",              "sym":"ETH",  "cg_native":"ethereum",      "cg_platform":"ethereum"},
+    "0x38":   {"rpc":"https://bsc-dataseed.binance.org",      "sym":"BNB",  "cg_native":"binancecoin",   "cg_platform":"binance-smart-chain"},
+    "0x89":   {"rpc":"https://polygon-rpc.com",               "sym":"MATIC","cg_native":"polygon-pos",   "cg_platform":"polygon-pos"},
+    "0xa4b1": {"rpc":"https://arb1.arbitrum.io/rpc",          "sym":"ETH",  "cg_native":"ethereum",      "cg_platform":"arbitrum-one"},
+    "0xa":    {"rpc":"https://mainnet.optimism.io",           "sym":"ETH",  "cg_native":"ethereum",      "cg_platform":"optimistic-ethereum"},
+    "0x2105": {"rpc":"https://mainnet.base.org",              "sym":"ETH",  "cg_native":"ethereum",      "cg_platform":"base"},
+    "0xa86a": {"rpc":"https://api.avax.network/ext/bc/C/rpc", "sym":"AVAX", "cg_native":"avalanche-2",   "cg_platform":"avalanche"},
+    "0xfa":   {"rpc":"https://rpc.ftm.tools",                 "sym":"FTM",  "cg_native":"fantom",        "cg_platform":"fantom"},
+    "0xe708": {"rpc":"https://rpc.linea.build",               "sym":"ETH",  "cg_native":"ethereum",      "cg_platform":"linea"},
+    "0x144":  {"rpc":"https://mainnet.era.zksync.io",         "sym":"ETH",  "cg_native":"ethereum",      "cg_platform":"zksync"},
 }
 
 ERC20_TRANSFER_SIG = Web3.keccak(text="Transfer(address,address,uint256)").hex()
@@ -132,21 +132,23 @@ async def _resolve_on_chain(w3: Web3, chain_id: str, tx_hash: str) -> Tuple[bool
         details.update({"type":"native","token_symbol":sym,"amount_human":amount_native,"price_usd":price_usd,"paid_usd":paid_usd})
         return True, f"{sym} nativo OK em {chain_id}: ${paid_usd:.2f}", paid_usd, details
 
-    # ERC-20 (Transfer para nossa carteira)
+    # ERC-20 (analisa logs Transfer para a nossa carteira)
     if not receipt:
         return False, "Receipt indisponível para token.", None, details
 
     found_value_raw = None
     found_token_addr = None
+    found_to = None
+
     for log in receipt.get("logs", []):
         addr = (log.get("address") or "").lower()
         topics = log.get("topics") or []
         if len(topics) < 3:
             continue
-        t0 = topics[0].hex().lower() if hasattr(topics[0],'hex') else str(topics[0]).lower()
+        t0 = topics[0].hex().lower() if hasattr(topics[0], "hex") else str(topics[0]).lower()
         if t0 != ERC20_TRANSFER_SIG.lower():
             continue
-        t2 = topics[2].hex() if hasattr(topics[2],'hex') else str(topics[2])
+        t2 = topics[2].hex() if hasattr(topics[2], "hex") else str(topics[2])
         try:
             toA = _topic_addr(t2)
         except Exception:
@@ -160,10 +162,34 @@ async def _resolve_on_chain(w3: Web3, chain_id: str, tx_hash: str) -> Tuple[bool
             continue
         found_value_raw = value_raw
         found_token_addr = Web3.to_checksum_address(addr)
+        found_to = toA
         break
 
+    # fallback de teste
     if found_value_raw is None or not found_token_addr:
-        return False, "Nenhuma transferência válida p/ a carteira destino.", None, details
+        if ALLOW_ANY_TO and receipt and receipt.get("logs"):
+            # pega o primeiro Transfer que aparecer
+            for log in receipt["logs"]:
+                topics = log.get("topics") or []
+                if len(topics) < 3:
+                    continue
+                t0 = topics[0].hex().lower() if hasattr(topics[0], "hex") else str(topics[0]).lower()
+                if t0 != ERC20_TRANSFER_SIG.lower():
+                    continue
+                try:
+                    data_hex = log.get("data")
+                    found_value_raw = int(data_hex, 16)
+                    found_token_addr = Web3.to_checksum_address((log.get("address") or "0x0"))
+                    break
+                except Exception:
+                    pass
+
+    if found_value_raw is None or not found_token_addr:
+        msg = "Nenhuma transferência válida p/ a carteira destino."
+        if DEBUG_PAYMENTS:
+            msg = (msg +
+                   f"\n[DEBUG] chain={chain_id} tx.to={to_addr} expected={WALLET_ADDRESS.lower() if WALLET_ADDRESS else '-'}")
+        return False, msg, None, details
 
     decimals = _erc20_decimals(w3, found_token_addr)
     symbol = _erc20_symbol(w3, found_token_addr) or "TOKEN"
@@ -175,23 +201,20 @@ async def _resolve_on_chain(w3: Web3, chain_id: str, tx_hash: str) -> Tuple[bool
 
     details.update({
         "type":"erc20","token_address":found_token_addr,"token_symbol":symbol,
-        "amount_human":amount_human,"price_usd":price_usd,"paid_usd":paid_usd
+        "amount_human":amount_human,"price_usd":price_usd,"paid_usd":paid_usd, "to": found_to
     })
     return True, f"Token {symbol} OK em {chain_id}: ${paid_usd:.2f}", paid_usd, details
 
 async def resolve_payment_usd_autochain(tx_hash: str) -> Tuple[bool, str, Optional[float], Dict[str, Any]]:
-    """
-    Tenta localizar a tx percorrendo as chains configuradas.
-    Retorna (ok, mensagem, amount_usd, detalhes).
-    """
+    # percorre as chains definidas e tenta achar a tx
     for chain_id, meta in CHAINS.items():
         w3 = _w3(meta["rpc"])
         try:
-            # chamada baratinha: get_transaction; se não achar, levanta/retorna None
-            tx = w3.eth.get_transaction(tx_hash)
+            _ = w3.eth.get_transaction(tx_hash)
         except Exception:
-            continue  # não existe nessa chain, tenta próxima
-        # se achou, resolve nela
+            continue
         ok, msg, usd, details = await _resolve_on_chain(w3, chain_id, tx_hash)
+        # anexa nome da rede
+        details["chain_name"] = chain_id
         return ok, msg, usd, details
     return False, "Transação não encontrada nas chains suportadas.", None, {}
