@@ -1,9 +1,11 @@
 from __future__ import annotations
-import json, time, hmac, hashlib
+import json, time, hmac, hashlib, logging
 from typing import Optional, Dict
 from datetime import datetime, timedelta, timezone
 
+
 from telegram import Bot
+from telegram.error import TelegramError, TimedOut
 
 # Planos pedidos
 DEFAULT_VIP_PRICES_USD = {
@@ -45,7 +47,7 @@ async def vip_upsert_and_get_until(tg_id: int, username: Optional[str], days: in
     await user_set_vip_until(tg_id, new_until)
     return new_until
 
-async def create_one_time_invite(bot: Bot, chat_id: int, expire_seconds: int = 7200, member_limit: int = 1) -> str:
+async def create_one_time_invite(bot: Bot, chat_id: int, expire_seconds: int = 7200, member_limit: int = 1) -> Optional[str]:
     expire_dt = datetime.utcfromtimestamp(int(time.time()) + int(expire_seconds))
     invite = await bot.create_chat_invite_link(
         chat_id=chat_id,

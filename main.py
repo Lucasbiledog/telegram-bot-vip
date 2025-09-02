@@ -78,6 +78,12 @@ async def approve_by_usd_and_invite(
 
     until = await vip_upsert_and_get_until(tg_id, username, days)
     link = await create_one_time_invite(application.bot, GROUP_VIP_ID, expire_seconds=7200, member_limit=1)
+    if not link:
+        fail_msg = "Invite link creation failed, please try again later"
+        if notify_user:
+            with suppress(Exception):
+                await application.bot.send_message(chat_id=tg_id, text=fail_msg)
+        return False, fail_msg, {"error": "invite_failed", "details": details, "usd": usd, "until": until.isoformat()}
 
     moeda = details.get("token_symbol") or details.get("symbol") or "CRYPTO"
     msg = (
