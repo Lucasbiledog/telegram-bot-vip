@@ -8,6 +8,7 @@ from fastapi.responses import PlainTextResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
+from telegram.error import TimedOut, TelegramError
 from contextlib import suppress
 
 # suas dependências locais
@@ -152,12 +153,16 @@ async def checkout_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             web_app=WebAppInfo(url=f"{url}?uid={uid}&ts={ts}&sig={sig}")
         )
     ]])
-    await context.bot.send_message(
-        chat_id=uid,
-        text="Abra o checkout para ver a carteira e validar o pagamento pelo botão.",
-        reply_markup=kb
-    )
-
+    try:
+        await context.bot.send_message(
+            chat_id=uid,
+            text="Abra o checkout para ver a carteira e validar o pagamento pelo botão.",
+            reply_markup=kb,
+        )
+    except (TimedOut, TelegramError) as e:
+        LOG.warning("Failed to send checkout message to %d: %s", uid, e)
+        with suppress(Exception):
+            await msg.reply_text("Falha ao enviar o checkout. Tente novamente com /checkout.")
 async def tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         return await update.effective_message.reply_text("Uso: /tx <hash>\nEx.: /tx 0xabc...def")
@@ -199,6 +204,9 @@ async def vip_admin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except ValueError:
             await update.effective_message.reply_text("tg_id/dias inválidos")
             return
+        if dias <= 0:
+            await update.effective_message.reply_text("dias deve ser maior que zero")
+            return
         until = await vip_add(tgt, dias)
         await update.effective_message.reply_text(
             f"VIP até {until.strftime('%d/%m/%Y %H:%M')}"
@@ -218,11 +226,20 @@ async def vip_admin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.effective_message.reply_text("Uso: /vip <list|add|remove>")
 
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
+    """Log the exception and notify admins."""
+    LOG.exception("Exception while handling update", exc_info=context.error)
+    for admin_id in ADMIN_IDS:
+        with suppress(Exception):
+            await context.bot.send_message(chat_id=admin_id, text=f"Erro: {context.error}")
+
 application.add_handler(CommandHandler("start", start_cmd))
 application.add_handler(CommandHandler("comandos", comandos_cmd))
 application.add_handler(CommandHandler("checkout", checkout_cmd))
 application.add_handler(CommandHandler("tx", tx_cmd))
 application.add_handler(CommandHandler("vip", vip_admin_cmd))
+application.add_error_handler(error_handler)
+
 # -------- APIs para a página /pay --------
 
 @app.get("/api/config")

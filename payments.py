@@ -423,36 +423,3 @@ def get_wallet_address() -> str:
     return WALLET_ADDRESS or ""
 
 
-def get_prices_sync(raw: Optional[str]) -> Dict[int, float]:
-    """
-    Aceita texto JSON/CSV simples tipo:
-      "30:5, 90:12, 180:20"
-    ou JSON: {"30": 5, "90": 12}
-    Retorna {30:5.0, 90:12.0}
-    """
-    if not raw:
-        return {}
-    raw = raw.strip()
-    out: Dict[int, float] = {}
-    # tenta JSON
-    with suppress(Exception):
-        import json
-        j = json.loads(raw)
-        for k, v in j.items():
-            out[int(k)] = float(v)
-        return out
-    # tenta CSV simples
-    parts = [p.strip() for p in raw.split(",")]
-    for p in parts:
-        if not p:
-            continue
-        if ":" in p:
-            d, val = p.split(":", 1)
-            with suppress(Exception):
-                out[int(d.strip())] = float(val.strip())
-    return out
-
-
-# Alias para compatibilidade com código antigo
-def get_vip_plan_prices_usd_sync(raw: Optional[str]) -> Dict[int, float]:
-    return get_prices_sync(raw)

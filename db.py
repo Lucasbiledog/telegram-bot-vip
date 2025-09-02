@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 from typing import AsyncIterator, Optional
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
 from models import Base, Config, User, Payment
 from datetime import datetime, timezone
 
@@ -69,7 +70,7 @@ async def user_set_vip_until(tg_id: int, until: datetime) -> None:
 
 async def vip_list() -> list[User]:
     async with get_session() as s:
-        res = await s.execute(select(User).where(User.is_vip == True))
+        res = await s.execute(select(User).where(User.is_vip.is_(True)))
         return res.scalars().all()
 
 async def vip_remove(tg_id: int) -> bool:
@@ -103,7 +104,10 @@ async def hash_store(tx_hash: str, tg_id: int) -> None:
                 validated_at=datetime.now(timezone.utc),
             )
         )
-        await s.commit()        
+        try:
+            await s.commit()
+        except IntegrityError:
+            await s.rollback()      
 
 async def migrate_vip_until_timezone() -> None:
     """Ensure `vip_until` timestamps are timezone-aware.
