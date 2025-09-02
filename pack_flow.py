@@ -1,5 +1,5 @@
 from __future__ import annotations
-
+import re
 from telegram import Update
 from telegram.ext import (
     CommandHandler,
@@ -95,8 +95,8 @@ pack_conv_handler = ConversationHandler(
             MessageHandler(filters.Document.ALL, add_file),
         ],
         CONFIRM: [
-            MessageHandler(filters.Regex("^(?i)(sim|s|yes|y)$"), confirm),
-            MessageHandler(filters.Regex("^(?i)(nao|não|n)$"), cancel),
+            MessageHandler(filters.Regex("^(sim|s|yes|y)$", flags=re.IGNORECASE), confirm),
+            MessageHandler(filters.Regex("^(nao|não|n)$", flags=re.IGNORECASE), cancel),
         ],
     },
     fallbacks=[CommandHandler("cancel", cancel)],
