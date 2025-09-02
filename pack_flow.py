@@ -95,9 +95,15 @@ pack_conv_handler = ConversationHandler(
             MessageHandler(filters.Document.ALL, add_file),
         ],
         CONFIRM: [
-            MessageHandler(filters.Regex("^(sim|s|yes|y)$", flags=re.IGNORECASE), confirm),
-            MessageHandler(filters.Regex("^(nao|não|n)$", flags=re.IGNORECASE), cancel),
-        ],
+            MessageHandler(
+                filters.Regex(re.compile(r"^(sim|s|yes|y)$", re.IGNORECASE)),
+                confirm,
+            ),
+            MessageHandler(
+                filters.Regex(re.compile(r"^(nao|não|n)$", re.IGNORECASE)),
+                cancel,
+            )
+        ]
     },
     fallbacks=[CommandHandler("cancel", cancel)],
 )
