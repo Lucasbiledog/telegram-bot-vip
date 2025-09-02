@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="pt-br">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Pagamento VIP — Web3Auth</title>
+    <style>
+      body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; padding: 24px; }
+      .card { max-width: 560px; margin: 0 auto; border: 1px solid #ddd; border-radius: 12px; padding: 20px; }
+      button { padding: 12px 16px; border-radius: 10px; border: 1px solid #ccc; cursor: pointer; }
+      .row { margin: 12px 0; }
+      label { display:block; font-weight: 600; margin-bottom: 6px; }
+      input, select { width: 100%; padding: 10px; border-radius: 8px; border: 1px solid #bbb; }
+      .muted { color: #666; font-size: 14px; }
+      .ok { color: #0a7a0a; }
+      .err { color: #a00; }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h2>Assinar VIP</h2>
+      <p class="muted">Conecte com Web3Auth, escolha pagar com moeda nativa (ex. MATIC) ou um token ERC-20 e envie para a carteira do bot. O hash será enviado automaticamente.</p>
+      <div class="row">
+        <label>Destino (carteira do bot)</label>
+        <input id="to" value="SEU_ENDERECO_WALLET" />
+      </div>
+      <div class="row">
+        <label>Modo de pagamento</label>
+        <select id="mode">
+          <option value="native">Nativo (ex.: MATIC)</option>
+          <option value="erc20">Token ERC-20 (transfer)</option>
+        </select>
+      </div>
+      <div id="erc20_fields" style="display:none">
+        <div class="row">
+          <label>Contrato do Token (0x...)</label>
+          <input id="token" placeholder="0xTOKEN..." />
+        </div>
+        <div class="row">
+          <label>Decimais do Token</label>
+          <input id="decimals" type="number" value="18" />
+        </div>
+      </div>
+      <div class="row">
+        <label>Valor (unidades humanas)</label>
+        <input id="amount" placeholder="ex.: 25" />
+      </div>
+      <div class="row">
+        <button id="connect">Conectar & Pagar</button>
+      </div>
+      <p id="status" class="muted"></p>
+    </div>
+
+    <script type="module">
+      import { Web3Auth } from "https://cdn.jsdelivr.net/npm/@web3auth/modal/+esm";
+      import { EthereumPrivateKeyProvider } from "https://cdn.jsdelivr.net/npm/@web3auth/ethereum-provider/+esm";
+
+      const qs = new URLSearchParams(location.search);
+      const uid = Number(qs.get("uid"));
+      const ts = Number(qs.get("ts"));
+      const sig = qs.get("sig");
+
+      const clientId = "SEU_WEB3AUTH_CLIENT_ID";
+      const chainConfig = {
+        chainNamespace: "eip155",
+        chainId: "0x89", // Polygon mainnet
+        rpcTarget: "https://polygon-rpc.com",
+        displayName: "Polygon",
+        ticker: "MATIC",
+        tickerName: "MATIC",
+      };
+      const provider = new EthereumPrivateKeyProvider({ config: { chainConfig } });
+      const web3auth = new Web3Auth({
+        clientId,
+        web3AuthNetwork: "sapphire_mainnet",
+        privateKeyProvider: provider,
+      });
+
+      const $ = (id) => document.getElementById(id);
+      const status = $("status");
+      const mode = $("mode");
+      const erc20Fields = $("erc20_fields");
+
+      mode.addEventListener("change", () => {
+        erc20Fields.style.display = mode.value === "erc20" ? "block" : "none";
+      });
+
+      const ethRequest = async (conn, method, params) => {
+        return await conn.request({ method, params });
+      };
+
+      const toHex = (n) => "0x" + BigInt(n).toString(16);
+
+      $("connect").onclick = async () => {
+        try {
+          status.textContent = "Abrindo login Web3Auth...";
+          await web3auth.initModal();
+          const conn = await web3auth.connect();
+          const userInfo = await web3auth.getUserInfo();
+          const idToken = userInfo?.idToken;
+
+          const accounts = await ethRequest(conn, "eth_accounts", []);
+          const from = accounts[0];
+          const to = $("to").value.trim();
+          const amount = $("amount").value.trim();
+          if (!from || !to || !amount) { status.textContent = "Preencha todos os campos."; return; }
+
+          let txHash;
+          if (mode.value === "native") {
+            const value = toHex(BigInt(Math.floor(parseFloat(amount) * 1e18)));
+            txHash = await ethRequest(conn, "eth_sendTransaction", [ { from, to, value } ]);
+          } else {
+            const token = $("token").value.trim();
+            const decimals = Number($("decimals").value || 18);
+            const methodSig = "0xa9059cbb"; // transfer(address,uint256)
+            const pad = (hex, size=64) => hex.replace(/^0x/,"").padStart(size,"0");
+            const toParam = pad(to);
+            const amtRaw = BigInt(Math.floor(parseFloat(amount) * 10 ** decimals));
+            const amtParam = pad("0x"+amtRaw.toString(16));
+            const data = methodSig + toParam + amtParam;
+            txHash = await ethRequest(conn, "eth_sendTransaction", [ { from, to: token, data } ]);
+          }
+
+          status.textContent = "Tx enviada. Confirmando... " + txHash;
+          await fetch("/crypto_webhook", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              telegram_user_id: uid,
+              tx_hash: txHash,
+              web3auth_id_token: idToken,
+              link_sig: sig
+            })
+          });
+          status.textContent = "Pagamento enviado! Você receberá o convite VIP pelo Telegram.";
+          status.className = "ok";
+        } catch (e) {
+          console.error(e);
+          status.textContent = "Erro: " + (e?.message || e);
+          status.className = "err";
+        }
+      };
+    </script>
+  </body>
+</html>
