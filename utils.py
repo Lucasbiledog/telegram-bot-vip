@@ -13,7 +13,7 @@ DEFAULT_VIP_PRICES_USD = {
     365: 2.00,
 }
 
-def get_vip_plan_prices_usd_sync(cfg_val: Optional[str]) -> Dict[int, float]:
+def get_prices_sync(cfg_val: Optional[str]) -> Dict[int, float]:
     if not cfg_val:
         return DEFAULT_VIP_PRICES_USD
     try:

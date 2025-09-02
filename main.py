@@ -14,11 +14,12 @@ from db import init_db, cfg_get, user_get_or_create, user_set_vip_until
 from payments import (
     resolve_payment_usd_autochain,              # já está funcionando
     get_prices_sync,                            # helper p/ tabela de planos
-    choose_plan_from_usd,                       # mapeia USD -> dias
     WALLET_ADDRESS,                             # sua carteira destino
 )
-from invites import create_one_time_invite      # sua função de convite p/ o grupo VIP
-
+from utils import (
+    choose_plan_from_usd,                       # mapeia USD -> dias
+    create_one_time_invite,                     # função de convite p/ o grupo VIP
+)
 # ---------- logging ----------
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 logging.basicConfig(level=getattr(logging, LOG_LEVEL, logging.INFO),
