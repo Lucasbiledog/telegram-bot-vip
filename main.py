@@ -1,44 +1,59 @@
+# --- imports no topo ---
 import os, logging, time
-from typing import Optional, Tuple, Dict
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import PlainTextResponse
 from fastapi.staticfiles import StaticFiles
-from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
-from jose import jwt
-import httpx
+from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
 from contextlib import suppress
+# ... (demais imports)
 
-
-from db import init_db, cfg_get, user_get_or_create
-from utils import (
-    get_vip_plan_prices_usd_sync,
-    choose_plan_from_usd,
-    vip_upsert_and_get_until,
-    create_one_time_invite,
-    make_link_sig,
-)
-from payments import resolve_payment_usd_autochain
-
+# 1) carregue o .env ANTES de ler as variáveis
 load_dotenv()
 
+# 2) leia TODAS as envs ANTES de construir Application
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+SELF_URL = os.getenv("SELF_URL", "")
+WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "secret")
+GROUP_VIP_ID = int(os.getenv("GROUP_VIP_ID", "0"))
+WEBAPP_URL = os.getenv("WEBAPP_URL", "")
+WEBAPP_LINK_SECRET = os.getenv("WEBAPP_LINK_SECRET", "change-me")
+WEB3AUTH_CLIENT_ID = os.getenv("WEB3AUTH_CLIENT_ID", "")
+WEB3AUTH_JWKS = os.getenv("WEB3AUTH_JWKS", "https://api-auth.web3auth.io/.well-known/jwks.json")
 
-# 1) crie o FastAPI **antes** de usar @app.on_event
+if not BOT_TOKEN:
+    raise RuntimeError("BOT_TOKEN não definido no ambiente.")
+
+# 3) crie o FastAPI e monte static antes de usar decorators
 app = FastAPI()
-
-# Se você tiver arquivos estáticos do checkout:
-from fastapi.staticfiles import StaticFiles
 app.mount("/pay", StaticFiles(directory="./webapp", html=True), name="pay")
 
-# 2) crie a Application do PTB
+# 4) só AGORA construa a Application do PTB
 application = ApplicationBuilder().token(BOT_TOKEN).build()
 
-# 3) keepalive e webhook (ok manter aqui)
-from fastapi import Request, HTTPException
-from fastapi.responses import PlainTextResponse
-from telegram import Update
-from contextlib import suppress
+# ... seus handlers/rotas ...
+
+@app.on_event("startup")
+async def on_startup():
+    from db import init_db
+    await init_db()
+    await application.initialize()
+    with suppress(Exception):
+        await application.start()
+    if SELF_URL and WEBHOOK_SECRET:
+        try:
+            await application.bot.set_webhook(url=f"{SELF_URL}/webhook/{WEBHOOK_SECRET}")
+            logging.getLogger("main").info("Webhook setado em %s/webhook/%s", SELF_URL, WEBHOOK_SECRET)
+        except Exception as e:
+            logging.getLogger("main").error("Falha ao setar webhook: %s", e)
+
+@app.on_event("shutdown")
+async def on_shutdown():
+    with suppress(Exception):
+        await application.stop()
+    with suppress(Exception):
+        await application.shutdown()
 
 @app.get("/keepalive")
 async def keepalive():
@@ -50,34 +65,8 @@ async def telegram_webhook(secret: str, request: Request):
         raise HTTPException(status_code=403, detail="forbidden")
     data = await request.json()
     update = Update.de_json(data, application.bot)
-    await application.process_update(update)  # <- precisa da app inicializada
+    await application.process_update(update)
     return PlainTextResponse("ok")
-
-# 4) STARTUP/SHUTDOWN corretos (inicializam a Application)
-@app.on_event("startup")
-async def on_startup():
-    from db import init_db
-    await init_db()
-
-    # inicializa e (opcional) starta a Application p/ JobQueue etc.
-    await application.initialize()
-    with suppress(Exception):
-        await application.start()
-
-    # seta o webhook
-    if SELF_URL and WEBHOOK_SECRET:
-        try:
-            await application.bot.set_webhook(url=f"{SELF_URL}/webhook/{WEBHOOK_SECRET}")
-            LOG.info("Webhook setado em %s/webhook/%s", SELF_URL, WEBHOOK_SECRET)
-        except Exception as e:
-            LOG.error("Falha ao setar webhook: %s", e)
-
-@app.on_event("shutdown")
-async def on_shutdown():
-    with suppress(Exception):
-        await application.stop()
-    with suppress(Exception):
-        await application.shutdown()
 
 
 
