@@ -1,65 +1,141 @@
-(async function () {
-  const $ = (sel) => document.querySelector(sel);
-  const alertBox = $("#alert");
-  const addr = $("#addr");
-  const plans = $("#plans");
-  const hashInput = $("#txhash");
+// ./webapp/app.js
 
-  const showError = (msg) => {
-    alertBox.innerHTML = `<div class="error">${msg || "Erro ao validar. Tente novamente."}</div>`;
-  };
-  const showOk = (msg) => {
-    alertBox.innerHTML = `<div class="ok">${msg}</div>`;
-  };
+// --- helpers de DOM ---
+const $ = (id) => document.getElementById(id);
+const alertBox = $("alert");
 
-  // carrega config backend
+function showAlert(html, ok = false) {
+  alertBox.innerHTML = `<div class="${ok ? "ok" : "error"}">${html}</div>`;
+}
+
+function clearAlert() {
+  alertBox.innerHTML = "";
+}
+
+// --- pega uid/ts/sig da query ---
+const q = new URLSearchParams(location.search);
+const uid = q.get("uid");
+const ts  = q.get("ts");
+const sig = q.get("sig");
+
+// --- render de planos ---
+function renderPlans(plansObj) {
+  const el = $("plans");
+  el.innerHTML = "";
+  // Espera { "30": 19.99, "90": 49.99, ... }
+  const entries = Object.entries(plansObj || {}).map(([days, price]) => [Number(days), Number(price)]);
+  // ordenar por dias crescente
+  entries.sort((a, b) => a[0] - b[0]);
+  for (const [days, price] of entries) {
+    const pill = document.createElement("div");
+    pill.className = "pill";
+    pill.innerHTML = `<div><b>${days} dias</b></div><div class="muted">$${price.toFixed(2)}</div>`;
+    el.appendChild(pill);
+  }
+  if (!entries.length) {
+    el.innerHTML = `<div class="muted">Nenhum plano configurado.</div>`;
+  }
+}
+
+// --- carrega carteira + planos do backend ---
+async function loadConfig() {
+  if (!uid || !ts || !sig) {
+    showAlert("Link sem parâmetros de segurança (uid/ts/sig). Abra esta página pelo botão /checkout no Telegram.", false);
+    return;
+  }
   try {
-    const r = await fetch("/api/config");
-    if (!r.ok) throw 0;
-    const cfg = await r.json();
-    addr.value = cfg.wallet || "—";
-    if (cfg.prices_usd) {
-      plans.innerHTML = Object.entries(cfg.prices_usd)
-        .sort((a, b) => parseInt(a[0]) - parseInt(b[0]))
-        .map(([d, p]) => `<div class="pill"><div style="font-weight:700">${d} dias</div><div class="muted">$${Number(p).toFixed(2)}</div></div>`)
-        .join("");
+    const r = await fetch(`/api/config?uid=${encodeURIComponent(uid)}&ts=${encodeURIComponent(ts)}&sig=${encodeURIComponent(sig)}`);
+    if (!r.ok) {
+      const t = await r.text().catch(() => "");
+      throw new Error(`Falha ao carregar config (${r.status}) ${t || ""}`);
     }
-  } catch (e) {
-    addr.value = "erro ao carregar";
+    const j = await r.json();
+    $("addr").value = j.wallet || "";
+    renderPlans(j.plans_usd || {});
+    if (!j.wallet) {
+      showAlert("Carteira não configurada no servidor.", false);
+    }
+  } catch (err) {
+    console.error(err);
+    showAlert("Erro ao carregar configurações. Tente abrir o /checkout novamente.", false);
+  }
+}
+
+// --- validar pagamento (POST /api/validate) ---
+async function validatePayment() {
+  clearAlert();
+  const hash = $("txhash").value.trim();
+  if (!hash) {
+    showAlert("Informe o hash da transação (ex.: 0xabc...)", false);
+    return;
+  }
+  if (!uid) {
+    showAlert("UID ausente. Abra esta página pelo botão /checkout no Telegram.", false);
+    return;
   }
 
-  $("#pasteBtn").onclick = async () => {
-    try {
-      const txt = await navigator.clipboard.readText();
-      if (txt) hashInput.value = txt.trim();
-    } catch {}
-  };
+  const btn = $("validarBtn");
+  const pasteBtn = $("pasteBtn");
+  btn.disabled = true;
+  pasteBtn.disabled = true;
+  btn.textContent = "Validando…";
 
-  $("#validarBtn").onclick = async () => {
-    alertBox.innerHTML = "";
-    const h = (hashInput.value || "").trim();
-    if (!(h.startsWith("0x") && h.length === 66)) {
-      return showError("Hash inválido.");
+  try {
+    const r = await fetch("/api/validate", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ uid: Number(uid), username: null, hash }),
+    });
+
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      showAlert(`Erro ${r.status}: ${j.detail || "Falha na validação"}`, false);
+      return;
     }
-    try {
-      const r = await fetch("/api/validate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ hash: h })
-      });
-      const data = await r.json();
-      if (!data.ok) return showError(data.error || data.message || "Falha ao validar.");
-       if (data.invite) {
-        showOk(`${data.message}<br><br>Redirecionando…`);
-        setTimeout(() => { window.location.href = data.invite; }, 1000);
+
+    if (j.ok) {
+      // mostra mensagem e redireciona para o convite se existir
+      showAlert(j.message || "Pagamento confirmado!", true);
+
+      if (j.invite) {
+        // redireciona imediatamente
+        setTimeout(() => {
+          window.location.href = j.invite;
+        }, 600); // pequeno delay para o usuário ver a mensagem
       } else {
-        showError("Pagamento confirmado, mas link de convite não fornecido.");
+        showAlert((j.message || "Pagamento confirmado!") + "<br><br>Não recebemos o link de convite. Tente novamente.", true);
       }
-    } catch (e) {
-      showError("Erro ao validar. Tente novamente.");
+    } else {
+      showAlert(j.message || "Pagamento não reconhecido.", false);
     }
-  };
+  } catch (err) {
+    console.error(err);
+    showAlert("Erro de rede. Tente novamente em alguns segundos.", false);
+  } finally {
+    btn.disabled = false;
+    pasteBtn.disabled = false;
+    btn.textContent = "Validar pagamento";
+  }
+}
 
-  // evita idle no Render (ping leve nos logs)
-  setInterval(() => console.log("[keepalive] checkout open"), 60000);
-})();
+// --- eventos ---
+$("pasteBtn").addEventListener("click", async () => {
+  try {
+    const t = await navigator.clipboard.readText();
+    if (t) $("txhash").value = t.trim();
+  } catch (e) {
+    console.warn("Clipboard read falhou:", e);
+  }
+});
+
+$("validarBtn").addEventListener("click", validatePayment);
+
+// --- heartbeat p/ manter Render ativo + log no console ---
+console.log("[checkout] page loaded", { uid, ts });
+setInterval(() => {
+  console.log("[heartbeat] page alive", new Date().toISOString());
+  fetch("/keepalive").catch(() => {});
+}, 60_000);
+
+// start
+loadConfig();
