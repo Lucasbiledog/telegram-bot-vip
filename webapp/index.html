@@ -1,138 +1,109 @@
-<!doctype html>
-<html lang="pt-br">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Checkout VIP</title>
-  <style>
-    :root { color-scheme: light dark; }
-    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, sans-serif; margin: 24px; }
-    .card { max-width: 720px; margin: 0 auto; padding: 20px; border: 1px solid #ccc3; border-radius: 16px; box-shadow: 0 6px 24px #0001; }
-    h1 { margin-top: 0; font-size: 22px; }
-    label { font-size: 14px; opacity: .8; }
-    .row { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
-    input[type=text] { flex: 1; padding: 10px 12px; border-radius: 10px; border: 1px solid #8884; font-size: 14px; }
-    button { padding: 10px 14px; border-radius: 10px; border: 0; cursor: pointer; font-weight: 600; }
-    .secondary { background: #eee; }
-    .primary { background: #22c55e; color: #fff; }
-    .muted { opacity: .8 }
-    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
-    .status { margin-top: 14px; padding: 12px; border-radius: 12px; background: #00000008; white-space: pre-wrap; }
-    .ok { background: #16a34a20; }
-    .err { background: #ef444420; }
-    .wallet-box { padding: 10px 12px; border-radius: 12px; background: #00000008; font-size: 14px; }
-    .plans { font-size: 14px; }
-  </style>
-</head>
-<body>
-  <div class="card">
-    <h1>💳 Checkout — UNREAL PACK5</h1>
-
-    <p class="muted">Transfira de qualquer rede suportada para a carteira abaixo. Depois cole o <b>hash</b> e clique em <b>Validar pagamento</b>.</p>
-
-    <div>
-      <label>Carteira de destino</label>
-      <div class="wallet-box mono" id="wallet">carregando…</div>
-    </div>
-
-    <div style="margin-top: 12px;">
-      <label>Planos (USD)</label>
-      <div class="plans" id="plans">carregando…</div>
-    </div>
-
-    <div style="margin-top: 16px;">
-      <label for="tx">Cole aqui o hash da transação</label>
-      <div class="row">
-        <input type="text" id="tx" placeholder="0x..." autocomplete="off" />
-        <button class="secondary" id="paste">Colar hash</button>
-        <button class="primary" id="validate">✅ Validar pagamento</button>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Assinar VIP</title>
+    <style>
+      :root { color-scheme: dark; }
+      body {
+        margin: 0;
+        padding: 40px 16px;
+        font-family: system-ui, -apple-system, "Segoe UI", Roboto, Ubuntu, sans-serif;
+        background: #0e0e0e;
+        color: #f1f1f1;
+        display: flex;
+        justify-content: center;
+      }
+      h1 {
+        margin: 0 0 24px;
+        text-align: center;
+        font-size: 24px;
+      }
+      .wrapper {
+        width: 100%;
+        max-width: 420px;
+      }
+      .field { margin-bottom: 16px; }
+      label {
+        display: block;
+        margin-bottom: 6px;
+        font-size: 14px;
+        opacity: .8;
+      }
+      input[type=text] {
+        width: 100%;
+        padding: 12px 14px;
+        border-radius: 10px;
+        border: 1px solid #444;
+        background: #1b1b1b;
+        color: #f1f1f1;
+        font-size: 14px;
+      }
+      .plan-list {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+      .pill {
+        flex: 1;
+        min-width: 110px;
+        padding: 12px 16px;
+        border: 1px solid #444;
+        border-radius: 9999px;
+        background: #1b1b1b;
+        text-align: center;
+      }
+      .muted { opacity: .6; font-size: 12px; }
+      .buttons {
+        display: flex;
+        gap: 8px;
+      }
+      button {
+        flex: 1;
+        padding: 12px 16px;
+        border: 0;
+        border-radius: 10px;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      .primary { background: #22c55e; color: #fff; }
+      .secondary { background: #2a2a2a; color: #fff; }
+      #alert { margin-top: 16px; }
+      #alert .ok, #alert .error {
+        padding: 12px;
+        border-radius: 10px;
+      }
+      #alert .ok { background: #16a34a20; }
+      #alert .error { background: #ef444420; }
+    </style>
+  </head>
+  <body>
+    <div class="wrapper">
+      <h1>Assinar VIP</h1>
+      <div class="field">
+        <label for="addr">Carteira de destino</label>
+        <input id="addr" type="text" readonly />
       </div>
-      <div class="status" id="status"></div>
+
+      <div class="field">
+        <label>Planos (USD)</label>
+        <div id="plans" class="plan-list"></div>
+      </div>
+
+      <div class="field">
+        <label for="txhash">Hash da transação</label>
+        <input id="txhash" type="text" placeholder="0x..." autocomplete="off" />
+      </div>
+
+      <div class="buttons">
+        <button id="pasteBtn" class="secondary">Colar hash</button>
+        <button id="validarBtn" class="primary">Validar pagamento</button>
+        
+      </div>
+
+
+      <div id="alert"></div>
     </div>
-  </div>
 
-  <script>
-    // --- util: pega params do link (uid/ts/sig vêm do botão do Telegram) ---
-    const q = new URLSearchParams(location.search);
-    const uid = q.get("uid");
-    const ts  = q.get("ts");
-    const sig = q.get("sig");
-
-    // --- UI helpers ---
-    const $ = (id) => document.getElementById(id);
-    const setStatus = (html, ok=false) => {
-      const el = $("status");
-      el.className = "status " + (ok ? "ok" : "err");
-      el.innerHTML = html;
-    };
-
-    // --- carregar config (wallet + planos) ---
-    async function loadConfig() {
-      try {
-        const r = await fetch(`/api/config?uid=${encodeURIComponent(uid)}&ts=${encodeURIComponent(ts)}&sig=${encodeURIComponent(sig)}`);
-        if (!r.ok) throw new Error("Falha ao buscar /api/config");
-        const j = await r.json();
-        $("wallet").textContent = j.wallet || "(indefinida)";
-        const plans = j.plans_usd || {};
-        const lines = Object.entries(plans).map(([d, p]) => `• ${d} dias — $${Number(p).toFixed(2)}`);
-        $("plans").innerText = lines.join("\n");
-      } catch (e) {
-        console.error(e);
-        $("wallet").textContent = "erro ao carregar carteira";
-        $("plans").textContent = "erro ao carregar planos";
-      }
-    }
-
-    // --- validar hash via API (sem DM do bot) ---
-    async function validatePayment() {
-      const hash = $("tx").value.trim();
-      if (!hash) {
-        setStatus("Informe o hash (ex: 0xabc...)", false);
-        return;
-      }
-      setStatus("Validando… aguarde ~5–15s");
-      try {
-        const body = { uid: Number(uid || 0), username: null, hash };
-        const r = await fetch("/api/validate", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify(body),
-        });
-        const j = await r.json();
-        if (!r.ok) {
-          setStatus(`Erro ${r.status}: ${j?.detail || "Falha na validação"}`, false);
-          return;
-        }
-        if (j.ok) {
-          const invite = j.invite ? `<br><br><b>Convite:</b><br><span class="mono">${j.invite}</span>` : "";
-          setStatus(`${j.message}${invite}`, true);
-        } else {
-          setStatus(j.message || "Pagamento não reconhecido.", false);
-        }
-      } catch (e) {
-        console.error(e);
-        setStatus("Erro de rede. Tente novamente em instantes.", false);
-      }
-    }
-
-    // --- eventos dos botões ---
-    $("paste").addEventListener("click", async () => {
-      try {
-        const t = await navigator.clipboard.readText();
-        if (t) $("tx").value = t.trim();
-      } catch {}
-    });
-    $("validate").addEventListener("click", validatePayment);
-
-    // --- heartbeat: log e ping keepalive p/ não hibernar ---
-    console.log("[checkout] loaded; uid=", uid, "ts=", ts);
-    setInterval(() => {
-      console.log("[heartbeat] page alive", new Date().toISOString());
-      fetch("/keepalive").catch(() => {});
-    }, 60_000);
-
-    // inicializa
-    loadConfig();
-  </script>
-</body>
+    <script src="app.js"></script>
+  </body>
 </html>

@@ -49,7 +49,12 @@
       });
       const data = await r.json();
       if (!data.ok) return showError(data.error || data.message || "Falha ao validar.");
-      showOk(data.message);
+       if (data.invite) {
+        showOk(`${data.message}<br><br>Redirecionando…`);
+        setTimeout(() => { window.location.href = data.invite; }, 1000);
+      } else {
+        showError("Pagamento confirmado, mas link de convite não fornecido.");
+      }
     } catch (e) {
       showError("Erro ao validar. Tente novamente.");
     }
