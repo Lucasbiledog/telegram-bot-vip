@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from typing import AsyncIterator, Optional
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlalchemy import select, update
-from models import Base, Config, User
+from models import Base, Config, User, Payment
 from datetime import datetime, timezone
 
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./app.db")
@@ -65,6 +65,45 @@ async def user_set_vip_until(tg_id: int, until: datetime) -> None:
             user.is_vip = True
             user.vip_until = until
         await s.commit()
+
+
+async def vip_list() -> list[User]:
+    async with get_session() as s:
+        res = await s.execute(select(User).where(User.is_vip == True))
+        return res.scalars().all()
+
+async def vip_remove(tg_id: int) -> bool:
+    async with get_session() as s:
+        res = await s.execute(select(User).where(User.tg_id == tg_id))
+        user = res.scalar_one_or_none()
+        if not user:
+            return False
+        user.is_vip = False
+        user.vip_until = None
+        await s.commit()
+        return True
+
+async def vip_add(tg_id: int, days: int):
+    from utils import vip_upsert_and_get_until
+    return await vip_upsert_and_get_until(tg_id, None, days)
+
+
+async def hash_exists(tx_hash: str) -> bool:
+    async with get_session() as s:
+        res = await s.execute(select(Payment).where(Payment.tx_hash == tx_hash))
+        return res.scalar_one_or_none() is not None
+
+
+async def hash_store(tx_hash: str, tg_id: int) -> None:
+    async with get_session() as s:
+        s.add(
+            Payment(
+                tx_hash=tx_hash,
+                tg_id=tg_id,
+                validated_at=datetime.now(timezone.utc),
+            )
+        )
+        await s.commit()        
 
 async def migrate_vip_until_timezone() -> None:
             """Ensure `vip_until` timestamps are timezone-aware.

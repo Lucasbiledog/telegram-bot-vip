@@ -1,5 +1,6 @@
 # --- imports no topo ---
 import os, logging, time, hmac, hashlib, asyncio
+from datetime import datetime, timezone
 from typing import Optional, Tuple, Dict, Any
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request, HTTPException
@@ -10,7 +11,8 @@ from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, WebAppI
 from contextlib import suppress
 
 # suas dependências locais
-from db import init_db, cfg_get, user_get_or_create
+from db import init_db, cfg_get, user_get_or_create, vip_list, vip_add, vip_remove
+
 from payments import (
     resolve_payment_usd_autochain,              # já está funcionando
     WALLET_ADDRESS,                             # sua carteira destino
@@ -36,6 +38,8 @@ WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "secret")
 GROUP_VIP_ID = int(os.getenv("GROUP_VIP_ID", "0"))
 WEBAPP_URL = os.getenv("WEBAPP_URL", "")  # ex.: https://seu-servico.onrender.com/pay/
 WEBAPP_LINK_SECRET = os.getenv("WEBAPP_LINK_SECRET", "change-me")
+ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()]
+
 
 if not BOT_TOKEN:
     raise RuntimeError("BOT_TOKEN não definido no ambiente.")
@@ -66,6 +70,8 @@ async def approve_by_usd_and_invite(
     Valida a transação (auto-chain), escolhe o plano por USD e gera convite 1-uso.
     Se notify_user=False, não envia DM pelo bot (para evitar duplicidade com a página).
     """
+    if await hash_exists(tx_hash):
+        return False, "hash já usada", {"error": "hash_used"}
     ok, info, usd, details = await resolve_payment_usd_autochain(tx_hash)
     if not ok:
         return False, info, {"details": details}
@@ -96,6 +102,7 @@ async def approve_by_usd_and_invite(
         with suppress(Exception):
             await application.bot.send_message(chat_id=tg_id, text=msg)
 
+    await hash_store(tx_hash, tg_id)
     return True, msg, {"invite": link, "until": until.isoformat(), "usd": usd, "details": details}
 
 # -------- Telegram handlers --------
@@ -152,10 +159,63 @@ async def tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ok, msg, _payload = await approve_by_usd_and_invite(uid, uname, tx_hash, notify_user=True)
     await update.effective_message.reply_text(msg)
 
+
+async def vip_admin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    if uid not in ADMIN_IDS:
+        return
+    args = context.args
+    if not args:
+        await update.effective_message.reply_text("Uso: /vip <list|add|remove>")
+        return
+    sub = args[0].lower()
+    if sub == "list":
+        users = await vip_list()
+        if not users:
+            await update.effective_message.reply_text("Nenhum VIP.")
+            return
+        lines = []
+        for u in users:
+            until = u.vip_until
+            until_str = until.strftime('%d/%m/%Y %H:%M') if until else '-'
+            uname = f"@{u.username}" if u.username else ''
+            lines.append(f"{u.tg_id} {uname} até {until_str}")
+        await update.effective_message.reply_text("\n".join(lines))
+    elif sub == "add":
+        if len(args) < 3:
+            await update.effective_message.reply_text("Uso: /vip add <tg_id> <dias>")
+            return
+        try:
+            tgt = int(args[1])
+            dias = int(args[2])
+        except ValueError:
+            await update.effective_message.reply_text("tg_id/dias inválidos")
+            return
+        until = await vip_add(tgt, dias)
+        await update.effective_message.reply_text(
+            f"VIP até {until.strftime('%d/%m/%Y %H:%M')}"
+        )
+    elif sub == "remove":
+        if len(args) < 2:
+            await update.effective_message.reply_text("Uso: /vip remove <tg_id>")
+            return
+        try:
+            tgt = int(args[1])
+        except ValueError:
+            await update.effective_message.reply_text("tg_id inválido")
+            return
+        ok = await vip_remove(tgt)
+        msg = "VIP removido" if ok else "Usuário não encontrado"
+        await update.effective_message.reply_text(msg)
+    else:
+        await update.effective_message.reply_text("Uso: /vip <list|add|remove>")
+
 application.add_handler(CommandHandler("start", start_cmd))
 application.add_handler(CommandHandler("comandos", comandos_cmd))
 application.add_handler(CommandHandler("checkout", checkout_cmd))
 application.add_handler(CommandHandler("tx", tx_cmd))
+application.add_handler(CommandHandler("vip", vip_admin_cmd))
+s
 
 # -------- APIs para a página /pay --------
 

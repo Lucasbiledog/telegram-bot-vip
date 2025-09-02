@@ -1,7 +1,8 @@
 from __future__ import annotations
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy import String, Integer, Boolean, DateTime, Text
-from datetime import datetime
+from datetime import datetime, timezone
+
 from typing import Optional
 
 class Base(DeclarativeBase):
@@ -20,3 +21,12 @@ class User(Base):
     username: Mapped[str] = mapped_column(String(64), default="", nullable=False)
     is_vip: Mapped[bool] = mapped_column(Boolean, default=False)
     vip_until: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+class Payment(Base):
+    __tablename__ = "payments"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    tx_hash: Mapped[str] = mapped_column(String(120), unique=True, index=True)
+    tg_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    validated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )

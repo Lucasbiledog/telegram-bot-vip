@@ -3,6 +3,8 @@
 // --- helpers de DOM ---
 const $ = (id) => document.getElementById(id);
 const alertBox = $("alert");
+const ctxInfo = $("ctxInfo");
+
 
 function showAlert(html, ok = false) {
   alertBox.innerHTML = `<div class="${ok ? "ok" : "error"}">${html}</div>`;
@@ -52,6 +54,20 @@ async function loadConfig() {
     const j = await r.json();
     $("addr").value = j.wallet || "";
     renderPlans(j.plans_usd || {});
+    // Mensagens contextuais opcionais
+    if (ctxInfo) {
+      const parts = [];
+      if (Array.isArray(j.networks) && j.networks.length) {
+        parts.push(`Redes suportadas: ${j.networks.join(", ")}`);
+      }
+      if (j.confirmations_min) {
+        parts.push(`Confirmação mínima: ${j.confirmations_min}`);
+      }
+      if (parts.length) {
+        ctxInfo.textContent = parts.join(" • ");
+        ctxInfo.style.display = "block";
+      }
+    }
     if (!j.wallet) {
       showAlert("Carteira não configurada no servidor.", false);
     }

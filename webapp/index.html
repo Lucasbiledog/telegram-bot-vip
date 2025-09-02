@@ -53,6 +53,25 @@
         text-align: center;
       }
       .muted { opacity: .6; font-size: 12px; }
+      .info-block {
+        border: 1px solid #444;
+        border-radius: 10px;
+        background: #1b1b1b;
+        padding: 16px;
+        margin-bottom: 24px;
+        font-size: 14px;
+      }
+      .info-block h2 {
+        font-size: 18px;
+        margin: 0 0 12px;
+        text-align: center;
+      }
+      .info-block ol {
+        margin: 0 0 12px 20px;
+        padding: 0;
+      }
+      .info-block li { margin-bottom: 8px; }
+      #ctxInfo { display: none; margin-top: 8px; }
       .buttons {
         display: flex;
         gap: 8px;
@@ -88,7 +107,16 @@
         <label>Planos (USD)</label>
         <div id="plans" class="plan-list"></div>
       </div>
-
+      <div class="info-block">
+        <h2>Como pagar</h2>
+        <ol>
+          <li>Copie a carteira acima.</li>
+          <li>Envie o valor do plano escolhido pela rede suportada.</li>
+          <li>Aguarde a confirmação mínima da rede.</li>
+          <li>Cole o hash da transação abaixo e valide o pagamento.</li>
+        </ol>
+        <p id="ctxInfo" class="muted"></p>
+      </div>
       <div class="field">
         <label for="txhash">Hash da transação</label>
         <input id="txhash" type="text" placeholder="0x..." autocomplete="off" />
