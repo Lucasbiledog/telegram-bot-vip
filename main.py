@@ -63,8 +63,10 @@ async def prices_table() -> Dict[int, float]:
     raw = await cfg_get("vip_plan_prices_usd")
     return get_vip_plan_prices_usd_sync(raw)
 
-async def approve_by_usd_and_invite(tg_id: int, username: Optional[str], tx_hash: str) -> Tuple[bool, str]:
-    ok, info, usd = await resolve_payment_usd(tx_hash)
+# ... imports e config iguais ...
+
+async def approve_by_usd_and_invite(tg_id: int, username: Optional[str], tx_hash: str, chain_id: Optional[str]) -> Tuple[bool, str]:
+    ok, info, usd, details = await resolve_payment_usd(tx_hash, chain_id)
     if not ok:
         return False, info
 
@@ -76,13 +78,61 @@ async def approve_by_usd_and_invite(tg_id: int, username: Optional[str], tx_hash
 
     until = await vip_upsert_and_get_until(tg_id, username, days)
     link = await create_one_time_invite(application.bot, GROUP_VIP_ID, expire_seconds=7200, member_limit=1)
-    msg = (f"Pagamento confirmado (${usd:.2f}). Plano: {days} dias — VIP até {until.strftime('%d/%m/%Y %H:%M')}\n"
-           f"Convite VIP (1 uso, expira em 2h):\n{link}")
+
+    # Mensagem amigável com a moeda detectada
+    moeda = details.get("token_symbol", "CRYPTO")
+    msg = (
+        f"Pagamento confirmado em {moeda} (${usd:.2f}).\n"
+        f"Plano: {days} dias — VIP até {until.strftime('%d/%m/%Y %H:%M')}\n\n"
+        f"Convite VIP (1 uso, expira em 2h):\n{link}"
+    )
     try:
         await application.bot.send_message(chat_id=tg_id, text=msg)
     except Exception:
         pass
     return True, msg
+
+# /tx (manual) — se o usuário não informou chain, assume a principal (ex.: Polygon 0x89)
+DEFAULT_CHAIN_ID = os.getenv("DEFAULT_CHAIN_ID", "0x89")
+
+async def tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.args:
+        return await update.effective_message.reply_text("Uso: /tx <hash> [chainId_hex]\nEx.: /tx 0xabc... 0x89")
+    tx_hash = normalize_tx_hash(context.args[0])
+    if not tx_hash:
+        return await update.effective_message.reply_text("Hash inválido.")
+    chain_id = context.args[1] if len(context.args) > 1 else DEFAULT_CHAIN_ID
+
+    uid = update.effective_user.id
+    uname = update.effective_user.username
+    ok, msg = await approve_by_usd_and_invite(uid, uname, tx_hash, chain_id)
+    await update.effective_message.reply_text(msg)
+
+# /crypto_webhook — recebe chainId do WebApp
+@app.post("/crypto_webhook")
+async def crypto_webhook(request: Request):
+    body = await request.json()
+    tg_id = int(body.get("telegram_user_id"))
+    tx_hash = body.get("tx_hash")
+    chain_id = body.get("chain_id")   # <<<<<< ADICIONADO
+    idt = body.get("web3auth_id_token")
+
+    if idt and WEB3AUTH_CLIENT_ID:
+        try:
+            _ = await verify_web3auth_idtoken(idt)
+        except Exception:
+            raise HTTPException(status_code=401, detail="idToken inválido")
+
+    if not tg_id or not tx_hash:
+        raise HTTPException(status_code=400, detail="telegram_user_id/tx_hash inválidos")
+
+    tx_hash = normalize_tx_hash(tx_hash)
+    if not tx_hash:
+        raise HTTPException(status_code=400, detail="hash inválido")
+
+    ok, msg = await approve_by_usd_and_invite(tg_id, None, tx_hash, chain_id or os.getenv("DEFAULT_CHAIN_ID", "0x89"))
+    return {"ok": ok, "message": msg}
+
 
 # ----------- Handlers ----------- #
 async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
