@@ -49,13 +49,17 @@ async def vip_upsert_and_get_until(tg_id: int, username: Optional[str], days: in
 
 async def create_one_time_invite(bot: Bot, chat_id: int, expire_seconds: int = 7200, member_limit: int = 1) -> Optional[str]:
     expire_dt = datetime.utcfromtimestamp(int(time.time()) + int(expire_seconds))
-    invite = await bot.create_chat_invite_link(
-        chat_id=chat_id,
-        creates_join_request=False,
-        expire_date=expire_dt,
-        member_limit=member_limit
-    )
-    return invite.invite_link
+    try:
+        invite = await bot.create_chat_invite_link(
+            chat_id=chat_id,
+            creates_join_request=False,
+            expire_date=expire_dt,
+            member_limit=member_limit,
+        )
+        return invite.invite_link
+    except (TelegramError, TimedOut):
+        logging.exception("Failed to create one-time invite link")
+        return None
 
 def make_link_sig(secret: str, uid: int, ts: int) -> str:
     raw = f"{uid}:{ts}".encode()
