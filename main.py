@@ -656,12 +656,14 @@ async def send_next_pack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE)
     kind = context.args[0].lower() if context.args else "vip"
     if kind == "free":
         pack = await pack_get_next_free()
+        dest_group_id = GROUP_FREE_ID
     else:
         pack = await pack_get_next_vip()
+        dest_group_id = GROUP_VIP_ID
     if not pack:
         await reply_with_retry(update.effective_message,("Nenhum pack pendente"))
         return
-    await _send_pack(pack)
+    await _send_pack(pack, dest_group_id)
     await reply_with_retry(update.effective_message,("Pack enviado com sucesso"))
 
 
