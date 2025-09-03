@@ -101,6 +101,9 @@ async def confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if target_group:
             if title:
                 await context.bot.send_message(chat_id=target_group, text=title)
+            if is_vip and previews:
+                media = [InputMediaPhoto(p) for p in previews[:10]]
+                await context.bot.send_media_group(chat_id=target_group, media=media)
             for fid in files:
                 await context.bot.send_document(chat_id=target_group, document=fid)
 
