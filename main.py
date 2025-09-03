@@ -36,6 +36,8 @@ from db import (
     pack_mark_sent,
     pack_mark_pending,
     pack_schedule,
+    pack_remove_item,
+    pack_delete,
     packs_get_due,
     scheduled_msg_create,
     scheduled_msg_list,
@@ -351,6 +353,123 @@ async def vip_admin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await reply_with_retry(update.effective_message,(msg))
     else:
         await reply_with_retry(update.effective_message,("Uso: /vip <list|add|remove>"))
+
+async def listar_packsvip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await _ensure_is_admin(update):
+        return
+    packs = await pack_list(True)
+    if not packs:
+        await reply_with_retry(update.effective_message, "Nenhum pack VIP.")
+        return
+    lines = [f"{p.id}: {p.title}" for p in packs]
+    await reply_with_retry(update.effective_message, "\n".join(lines))
+
+async def listar_packsfree_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await _ensure_is_admin(update):
+        return
+    packs = await pack_list(False)
+    if not packs:
+        await reply_with_retry(update.effective_message, "Nenhum pack free.")
+        return
+    lines = [f"{p.id}: {p.title}" for p in packs]
+    await reply_with_retry(update.effective_message, "\n".join(lines))
+
+async def pack_info_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await _ensure_is_admin(update):
+        return
+    if not context.args:
+        await reply_with_retry(update.effective_message, "Uso: /pack_info <id>")
+        return
+    try:
+        pack_id = int(context.args[0])
+    except ValueError:
+        await reply_with_retry(update.effective_message, "ID inválido")
+        return
+    pack = await pack_get(pack_id)
+    if not pack:
+        await reply_with_retry(update.effective_message, "Pack não encontrado")
+        return
+    previews = json.loads(pack.previews or "[]")
+    files = json.loads(pack.files or "[]")
+    status = "enviado" if pack.sent_at else ("agendado" if pack.scheduled_at else "pendente")
+    lines = [f"Título: {pack.title}", f"Status: {status}"]
+    if previews:
+        lines.append("Previews:")
+        lines.extend(f"{i+1}. {p}" for i, p in enumerate(previews))
+    if files:
+        start = len(previews)
+        lines.append("Arquivos:")
+        lines.extend(f"{i+1+start}. {f}" for i, f in enumerate(files))
+    await reply_with_retry(update.effective_message, "\n".join(lines))
+    context.user_data["pack_info"] = {"pack_id": pack_id, "previews": previews, "files": files}
+
+async def excluir_item_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await _ensure_is_admin(update):
+        return
+    info = context.user_data.get("pack_info")
+    if not info:
+        await reply_with_retry(update.effective_message, "Use /pack_info <id> primeiro.")
+        return
+    if not context.args:
+        await reply_with_retry(update.effective_message, "Uso: /excluir_item <id_item>")
+        return
+    try:
+        idx = int(context.args[0]) - 1
+    except ValueError:
+        await reply_with_retry(update.effective_message, "ID inválido")
+        return
+    previews = info["previews"]
+    files = info["files"]
+    pack_id = info["pack_id"]
+    total = len(previews) + len(files)
+    if idx < 0 or idx >= total:
+        await reply_with_retry(update.effective_message, "ID inválido")
+        return
+    if idx < len(previews):
+        ok = await pack_remove_item(pack_id, idx, preview=True)
+        if ok:
+            previews.pop(idx)
+    else:
+        j = idx - len(previews)
+        ok = await pack_remove_item(pack_id, j, preview=False)
+        if ok:
+            files.pop(j)
+    msg = "Item excluído" if ok else "Item não encontrado"
+    await reply_with_retry(update.effective_message, msg)
+    if ok:
+        info["previews"] = previews
+        info["files"] = files
+
+async def excluir_pack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await _ensure_is_admin(update):
+        return
+    pack_id = None
+    if context.args:
+        try:
+            pack_id = int(context.args[0])
+        except ValueError:
+            await reply_with_retry(update.effective_message, "ID inválido")
+            return
+    else:
+        info = context.user_data.get("pack_info")
+        if info:
+            pack_id = info["pack_id"]
+    if not pack_id:
+        await reply_with_retry(update.effective_message, "Uso: /excluir_pack <id>")
+        return
+    if context.user_data.get("confirm_delete_pack") == pack_id:
+        ok = await pack_delete(pack_id)
+        msg = "Pack excluído" if ok else "Pack não encontrado"
+        await reply_with_retry(update.effective_message, msg)
+        context.user_data.pop("confirm_delete_pack", None)
+        if ok:
+            context.user_data.pop("pack_info", None)
+    else:
+        context.user_data["confirm_delete_pack"] = pack_id
+        await reply_with_retry(
+            update.effective_message,
+            f"Confirme com /excluir_pack {pack_id} para excluir.",
+        )
 
 async def pack_pending_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
@@ -749,6 +868,11 @@ application.add_handler(CommandHandler("comandos", comandos_cmd))
 application.add_handler(CommandHandler("checkout", checkout_cmd))
 application.add_handler(CommandHandler("tx", tx_cmd))
 application.add_handler(CommandHandler("packs", packs_cmd))
+application.add_handler(CommandHandler("listar_packsvip", listar_packsvip_cmd))
+application.add_handler(CommandHandler("listar_packsfree", listar_packsfree_cmd))
+application.add_handler(CommandHandler("pack_info", pack_info_cmd))
+application.add_handler(CommandHandler("excluir_item", excluir_item_cmd))
+application.add_handler(CommandHandler("excluir_pack", excluir_pack_cmd))
 application.add_handler(CommandHandler("admin", admin_add_cmd))
 application.add_handler(CommandHandler("radmin", radmin_cmd))
 application.add_handler(CommandHandler("add_msg_vip", add_msg_vip_cmd))

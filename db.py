@@ -189,6 +189,33 @@ async def pack_requeue(pack_id: int) -> None:
         except IntegrityError:
             await s.rollback()
 
+async def pack_remove_item(pack_id: int, index: int, *, preview: bool) -> bool:
+    async with get_session() as s:
+        res = await s.execute(select(Pack).where(Pack.id == pack_id))
+        pack = res.scalar_one_or_none()
+        if not pack:
+            return False
+        items = json.loads(pack.previews if preview else pack.files)
+        if index < 0 or index >= len(items):
+            return False
+        items.pop(index)
+        if preview:
+            pack.previews = json.dumps(items)
+        else:
+            pack.files = json.dumps(items)
+        await s.commit()
+        return True
+
+async def pack_delete(pack_id: int) -> bool:
+    async with get_session() as s:
+        res = await s.execute(select(Pack).where(Pack.id == pack_id))
+        pack = res.scalar_one_or_none()
+        if not pack:
+            return False
+        await s.delete(pack)
+        await s.commit()
+        return True
+
 async def pack_schedule(pack_id: int, when: datetime) -> bool:
     if when.tzinfo is None:
         when = when.replace(tzinfo=timezone.utc)
