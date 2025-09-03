@@ -7,7 +7,6 @@ from fastapi.responses import PlainTextResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
-from telegram.error import TimedOut, TelegramError
 from contextlib import suppress
 
 from config import WEBAPP_URL, SELF_URL, ADMIN_IDS
@@ -46,6 +45,8 @@ from utils import (
     get_prices_sync,                            # helper p/ tabela de planos
     vip_upsert_and_get_until,                   # centralizado
     make_link_sig,                              # assinatura de link compartilhada
+    send_with_retry,
+
 
 
 )
@@ -74,8 +75,14 @@ app = FastAPI()
 app.mount("/pay", StaticFiles(directory="./webapp", html=True), name="pay")
 
 # ---------- Telegram Application ----------
-application = ApplicationBuilder().token(BOT_TOKEN).build()
-
+application = (
+    ApplicationBuilder()
+    .token(BOT_TOKEN)
+    .connect_timeout(30.0)
+    .read_timeout(30.0)
+    .write_timeout(30.0)
+    .build()
+)
 # ---------- helpers ----------
 
 async def prices_table() -> Dict[int, float]:
@@ -109,8 +116,9 @@ async def approve_by_usd_and_invite(
     if not link:
         fail_msg = "Invite link creation failed, please try again later"
         if notify_user:
-            with suppress(Exception):
-                await application.bot.send_message(chat_id=tg_id, text=fail_msg)
+            await send_with_retry(
+                application.bot.send_message, chat_id=tg_id, text=fail_msg
+            )
         return False, fail_msg, {"error": "invite_failed", "details": details, "usd": usd, "until": until.isoformat()}
 
     moeda = details.get("token_symbol") or details.get("symbol") or "CRYPTO"
@@ -121,8 +129,9 @@ async def approve_by_usd_and_invite(
     )
 
     if notify_user:
-        with suppress(Exception):
-            await application.bot.send_message(chat_id=tg_id, text=msg)
+        await send_with_retry(
+            application.bot.send_message, chat_id=tg_id, text=msg
+        )
 
     await hash_store(tx_hash, tg_id)
     return True, msg, {"invite": link, "until": until.isoformat(), "usd": usd, "details": details}
@@ -172,14 +181,13 @@ async def checkout_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             web_app=WebAppInfo(url=f"{url}?uid={uid}&ts={ts}&sig={sig}")
         )
     ]])
-    try:
-        await context.bot.send_message(
-            chat_id=uid,
-            text="Abra o checkout para ver a carteira e validar o pagamento pelo botão.",
-            reply_markup=kb,
-        )
-    except (TimedOut, TelegramError) as e:
-        LOG.warning("Failed to send checkout message to %d: %s", uid, e)
+    res = await send_with_retry(
+        context.bot.send_message,
+        chat_id=uid,
+        text="Abra o checkout para ver a carteira e validar o pagamento pelo botão.",
+        reply_markup=kb,
+    )
+    if res is None:
         with suppress(Exception):
             await msg.reply_text("Falha ao enviar o checkout. Tente novamente com /checkout.")
 async def tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -214,6 +222,7 @@ async def packs_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def admin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     if uid not in ADMIN_IDS:
+        await update.effective_message.reply_text("Você não tem permissão para usar este comando.")
         return
     args = context.args
     if not args:
@@ -387,23 +396,27 @@ async def send_pack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     previews = json.loads(pack.previews or "[]")
     files = json.loads(pack.files or "[]")
     errors = []
-    try:
-        await context.bot.send_message(chat_id=chat_id, text=f"Pack: {pack.title}")
-    except Exception as e:
-        LOG.warning("Failed to send pack title: %s", e)
-        errors.append(str(e))
+    if (
+        await send_with_retry(
+            context.bot.send_message, chat_id=chat_id, text=f"Pack: {pack.title}"
+        )
+        is None
+    ):
+        errors.append("title")
     for p in previews:
-        try:
-            await context.bot.send_photo(chat_id=chat_id, photo=p)
-        except Exception as e:
-            LOG.warning("Failed to send preview %s: %s", p, e)
-            errors.append(str(e))
+        if (
+            await send_with_retry(context.bot.send_photo, chat_id=chat_id, photo=p)
+            is None
+        ):
+            errors.append(p)
     for f in files:
-        try:
-            await context.bot.send_document(chat_id=chat_id, document=f)
-        except Exception as e:
-            LOG.warning("Failed to send file %s: %s", f, e)
-            errors.append(str(e))
+        if (
+            await send_with_retry(
+                context.bot.send_document, chat_id=chat_id, document=f
+            )
+            is None
+        ):
+            errors.append(f)
     if errors:
         await update.effective_message.reply_text("Falha ao enviar o pack")
     else:
@@ -414,8 +427,11 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
     """Log the exception and notify admins."""
     LOG.exception("Exception while handling update", exc_info=context.error)
     for admin_id in ADMIN_IDS:
-        with suppress(Exception):
-            await context.bot.send_message(chat_id=admin_id, text=f"Erro: {context.error}")
+        await send_with_retry(
+            context.bot.send_message,
+            chat_id=admin_id,
+            text=f"Erro: {context.error}",
+        )
 
 application.add_handler(CommandHandler("start", start_cmd))
 application.add_handler(CommandHandler("id", id_cmd))
@@ -490,13 +506,26 @@ async def _send_pack(pack):
     try:
         if previews:
             first, *rest = previews
-            await application.bot.send_photo(GROUP_VIP_ID, first, caption=pack.title)
+            await send_with_retry(
+                application.bot.send_photo,
+                chat_id=GROUP_VIP_ID,
+                photo=first,
+                caption=pack.title,
+            )
             for p in rest:
-                await application.bot.send_photo(GROUP_VIP_ID, p)
+                await send_with_retry(
+                    application.bot.send_photo, chat_id=GROUP_VIP_ID, photo=p
+                )
         else:
-            await application.bot.send_message(GROUP_VIP_ID, pack.title)
+            await send_with_retry(
+                application.bot.send_message,
+                chat_id=GROUP_VIP_ID,
+                text=pack.title,
+            )
         for f in files:
-            await application.bot.send_document(GROUP_VIP_ID, f)
+            await send_with_retry(
+                application.bot.send_document, chat_id=GROUP_VIP_ID, document=f
+            )
         await pack_mark_sent(pack.id)
     except Exception as e:
         LOG.error("Falha ao enviar pack %s: %s", pack.id, e)

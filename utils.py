@@ -89,6 +89,23 @@ async def create_one_time_invite(
             await asyncio.sleep(2 ** attempt)
     return None
 
+async def send_with_retry(func, *args, retries: int = 3, base_delay: float = 1.0, **kwargs):
+    for attempt in range(retries):
+        try:
+            return await func(*args, **kwargs)
+        except (TelegramError, TimedOut) as e:
+            if attempt == retries - 1:
+                logging.error(
+                    "Failed to send after %d attempts: %s", retries, e
+                )
+                return None
+            logging.warning(
+                "Attempt %d/%d failed to send: %s", attempt + 1, retries, e
+            )
+            await asyncio.sleep(base_delay * (2 ** attempt))
+    return None
+
+
 def make_link_sig(secret: str, uid: int, ts: int) -> str:
     raw = f"{uid}:{ts}".encode()
     return hmac.new(secret.encode(), raw, hashlib.sha256).hexdigest()

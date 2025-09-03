@@ -1,4 +1,5 @@
 from __future__ import annotations
+import logging
 import re
 from telegram import Update
 from telegram.ext import (
@@ -8,6 +9,7 @@ from telegram.ext import (
     MessageHandler,
     filters,
 )
+from telegram.error import TimedOut, TelegramError
 
 from config import ADMIN_IDS
 from db import pack_create
@@ -16,7 +18,12 @@ TITLE, KIND, PREVIEWS, FILES, CONFIRM = range(5)
 
 async def _check_admin(update: Update) -> bool:
     if update.effective_user.id not in ADMIN_IDS:
-        await update.effective_message.reply_text("Você não tem permissão para usar este comando.")
+        try:
+            await update.effective_message.reply_text(
+                "Você não tem permissão para usar este comando."
+            )
+        except (TimedOut, TelegramError) as e:
+            logging.warning("Failed to send admin warning: %s", e)
         return False
     return True
 
