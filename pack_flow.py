@@ -29,14 +29,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await _check_admin(update):
         return ConversationHandler.END
     context.user_data.clear()
-    await reply_with_retry(update.effective_message,("Informe o título do pack:"))
+    await reply_with_retry(update.effective_message, "Informe o título do pack:")
     return TITLE
 
 async def handle_title(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await _check_admin(update):
         return ConversationHandler.END
     context.user_data["title"] = update.effective_message.text.strip()
-    await reply_with_retry(update.effective_message,("Este pack é VIP ou free?"))
+    await reply_with_retry(update.effective_message, "Este pack é VIP ou free?")
     return KIND
 
 async def handle_kind(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -44,11 +44,11 @@ async def handle_kind(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ConversationHandler.END
     kind = update.effective_message.text.strip().lower()
     if kind not in ("vip", "free"):
-        await reply_with_retry(update.effective_message,("Responda com 'VIP' ou 'free'."))
+        await reply_with_retry(update.effective_message, "Responda com 'VIP' ou 'free'.")
         return KIND
     context.user_data["kind"] = kind
     context.user_data["previews"] = []
-    await reply_with_retry(update.effective_message,("Envie as imagens de preview. Envie /done quando terminar ou /skip para pular."))
+    await reply_with_retry(update.effective_message, "Envie as imagens de preview. Envie /done quando terminar ou /skip para pular.")
     return PREVIEWS
 
 
@@ -66,16 +66,20 @@ async def skip_previews(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ConversationHandler.END
     context.user_data["previews"] = []
     context.user_data["files"] = []
-    await reply_with_retry(update.effective_message,(
-        "Agora envie os arquivos do pack. Envie /done quando terminar."))
+    await reply_with_retry(
+        update.effective_message,
+        "Agora envie os arquivos do pack. Envie /done quando terminar.",
+    )
     return FILES
 
 async def previews_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await _check_admin(update):
         return ConversationHandler.END
     context.user_data["files"] = []
-    await reply_with_retry(update.effective_message,(
-        "Agora envie os arquivos do pack. Envie /done quando terminar."))
+    await reply_with_retry(
+        update.effective_message,
+        "Agora envie os arquivos do pack. Envie /done quando terminar.",
+    )
     return FILES
 
 async def add_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -97,9 +101,9 @@ async def files_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Tipo: {'VIP' if kind == 'vip' else 'Free'}\n"
         f"Previews: {len(previews)}\n"
         f"Arquivos: {len(files)}\n"
-        "Confirmar? (sim/não)",
+        "Confirmar? (sim/não)"
     )
-    await reply_with_retry(update.effective_message,(summary))
+    await reply_with_retry(update.effective_message, summary)
     return CONFIRM
 
 async def confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -112,17 +116,17 @@ async def confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
         previews = context.user_data.get("previews", [])
         files = context.user_data.get("files", [])
         await pack_create(title, previews, files, is_vip)
-        await reply_with_retry(update.effective_message,(
-            "Pack salvo para envio futuro."
-        )
+        await reply_with_retry(
+            update.effective_message,
+            "Pack salvo para envio futuro.",
         )
 
     else:
-        await reply_with_retry(update.effective_message,("Operação cancelada."))
+        await reply_with_retry(update.effective_message, "Operação cancelada.")
     return ConversationHandler.END
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await reply_with_retry(update.effective_message,("Operação cancelada."))
+    await reply_with_retry(update.effective_message, "Operação cancelada.")
     return ConversationHandler.END
 
 pack_conv_handler = ConversationHandler(
