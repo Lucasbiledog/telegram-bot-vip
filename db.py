@@ -19,6 +19,7 @@ async def init_db() -> None:
     await migrate_pack_is_vip()
     await migrate_pack_sent_at()
     await migrate_pack_sent_fields()
+    await migrate_user_remove_sent_fields()
 
 
 @asynccontextmanager
@@ -135,7 +136,19 @@ async def pack_mark_pending(pack_id: int) -> bool:
         pack.sent_at = None
         await s.commit()
         return True
-    
+
+async def pack_get(pack_id: int) -> Optional[Pack]:
+    async with get_session() as s:
+        res = await s.execute(select(Pack).where(Pack.id == pack_id))
+        return res.scalar_one_or_none()
+
+async def pack_list(is_vip: bool) -> list[Pack]:
+    async with get_session() as s:
+        res = await s.execute(
+            select(Pack).where(Pack.is_vip == is_vip).order_by(Pack.id)
+        )
+        return res.scalars().all()
+
 async def pack_get_next_vip() -> Optional[Pack]:
     async with get_session() as s:
         res = await s.execute(
@@ -161,6 +174,10 @@ async def pack_requeue(pack_id: int) -> None:
             .where(Pack.id == pack_id)
             .values(sent_at=None, requeued_at=datetime.now(timezone.utc))
         )
+        try:
+            await s.commit()
+        except IntegrityError:
+            await s.rollback()
     
 async def migrate_pack_is_vip() -> None:
     async with engine.begin() as conn:
@@ -199,7 +216,17 @@ async def migrate_pack_sent_fields() -> None:
                 )
         await conn.run_sync(_migrate)
 
-
+async def migrate_user_remove_sent_fields() -> None:
+    async with engine.begin() as conn:
+        def _migrate(connection):
+            insp = inspect(connection)
+            cols = [c["name"] for c in insp.get_columns("users")]
+            if "sent_at" in cols:
+                connection.execute(text("ALTER TABLE users DROP COLUMN sent_at"))
+            if "requeued_at" in cols:
+                connection.execute(text("ALTER TABLE users DROP COLUMN requeued_at"))
+        await conn.run_sync(_migrate)
+        
 async def migrate_vip_until_timezone() -> None:
     """Ensure `vip_until` timestamps are timezone-aware.
 
