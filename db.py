@@ -159,6 +159,14 @@ async def pack_get_next_vip() -> Optional[Pack]:
         )
         return res.scalars().first()
 
+async def pack_get_next_free() -> Optional[Pack]:
+    async with get_session() as s:
+        res = await s.execute(
+            select(Pack)
+            .where(Pack.is_vip.is_(False), Pack.sent_at.is_(None))
+            .order_by(Pack.id.asc())
+        )
+        return res.scalars().first()
 
 async def pack_get_next_free() -> Optional[Pack]:
     async with get_session() as s:

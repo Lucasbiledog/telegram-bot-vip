@@ -527,34 +527,23 @@ async def send_pack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not pack:
         await reply_with_retry(update.effective_message,("Pack não encontrado"))
         return
-    previews = json.loads(pack.previews or "[]")
-    files = json.loads(pack.files or "[]")
-    errors = []
-    if (
-        await send_with_retry(
-            context.bot.send_message, chat_id=chat_id, text=f"Pack: {pack.title}"
-        )
-        is None
-    ):
-        errors.append("title")
-    for p in previews:
-        if (
-            await send_with_retry(context.bot.send_photo, chat_id=chat_id, photo=p)
-            is None
-        ):
-            errors.append(p)
-    for f in files:
-        if (
-            await send_with_retry(
-                context.bot.send_document, chat_id=chat_id, document=f
-            )
-            is None
-        ):
-            errors.append(f)
-    if errors:
-        await reply_with_retry(update.effective_message,("Falha ao enviar o pack"))
+    await _send_pack(pack, chat_id)
+    await reply_with_retry(update.effective_message,("Pack enviado com sucesso"))
+
+async def send_next_pack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    if uid not in ADMIN_IDS:
+        return
+    kind = context.args[0].lower() if context.args else "vip"
+    if kind == "free":
+        pack = await pack_get_next_free()
     else:
-        await reply_with_retry(update.effective_message,("Pack enviado com sucesso"))
+        pack = await pack_get_next_vip()
+    if not pack:
+        await reply_with_retry(update.effective_message,("Nenhum pack pendente"))
+        return
+    await _send_pack(pack)
+    await reply_with_retry(update.effective_message,("Pack enviado com sucesso"))
 
 def _parse_hhmm(hhmm: str) -> Optional[dtime]:
     if not re.match(r"^\d{2}:\d{2}$", hhmm):
@@ -779,6 +768,7 @@ application.add_handler(CommandHandler("set_packvip", set_packvip_cmd))
 application.add_handler(CommandHandler("set_packfree", set_packfree_cmd))
 application.add_handler(CommandHandler("schedule_pack", schedule_pack_cmd))
 application.add_handler(CommandHandler("send_pack", send_pack_cmd))
+application.add_handler(CommandHandler("send_next", send_next_pack_cmd))
 application.add_handler(pack_conv_handler)
 application.add_error_handler(error_handler)
 
