@@ -159,7 +159,9 @@ async def comandos_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "/id — mostrar seu ID numérico\n"
            "/checkout — ver carteira e planos\n"
            "/tx <hash> — validar pagamento pelo hash (ou use o botão no checkout)\n"
-           "/pack — criar novo pack\n\n"
+           "/pack — criar novo pack\n"
+           "/admin <tg_id> — adicionar admin\n"
+           "/radmin <tg_id> — remover admin\n\n"
            "Planos (USD):\n" + tabela)
     await update.effective_message.reply_text(txt)
 
@@ -219,51 +221,55 @@ async def packs_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = "\n\n".join(sections) if sections else "Nenhum pack disponível."
     await update.effective_message.reply_text(text)
 
-async def admin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def _ensure_is_admin(update: Update) -> bool:
     uid = update.effective_user.id
     if uid not in ADMIN_IDS:
         await update.effective_message.reply_text("Você não tem permissão para usar este comando.")
+        return False
+    return True
+async def _admin_add(tgt: int, msg):
+    if tgt in ADMIN_IDS:
+        await msg.reply_text("Usuário já é admin")
         return
-    args = context.args
-    if not args:
-        await update.effective_message.reply_text("Uso: /admin <list|add|remove>")
+    ADMIN_IDS.append(tgt)
+    await cfg_set("admin_ids", ",".join(str(i) for i in ADMIN_IDS))
+    await msg.reply_text("Admin adicionado")
+async def _admin_remove(tgt: int, msg):
+    if tgt not in ADMIN_IDS:
+        await msg.reply_text("Usuário não é admin")
         return
-    sub = args[0].lower()
-    if sub == "list":
-        ids = ", ".join(str(i) for i in ADMIN_IDS)
-        await update.effective_message.reply_text(ids or "Nenhum admin")
-    elif sub == "add":
-        if len(args) < 2:
-            await update.effective_message.reply_text("Uso: /admin add <tg_id>")
-            return
-        try:
-            tgt = int(args[1])
-        except ValueError:
-            await update.effective_message.reply_text("tg_id inválido")
-            return
-        if tgt in ADMIN_IDS:
-            await update.effective_message.reply_text("Usuário já é admin")
-            return
-        ADMIN_IDS.append(tgt)
-        await cfg_set("admin_ids", ",".join(str(i) for i in ADMIN_IDS))
-        await update.effective_message.reply_text("Admin adicionado")
-    elif sub == "remove":
-        if len(args) < 2:
-            await update.effective_message.reply_text("Uso: /admin remove <tg_id>")
-            return
-        try:
-            tgt = int(args[1])
-        except ValueError:
-            await update.effective_message.reply_text("tg_id inválido")
-            return
-        if tgt not in ADMIN_IDS:
-            await update.effective_message.reply_text("Usuário não é admin")
-            return
-        ADMIN_IDS.remove(tgt)
-        await cfg_set("admin_ids", ",".join(str(i) for i in ADMIN_IDS))
-        await update.effective_message.reply_text("Admin removido")
-    else:
-        await update.effective_message.reply_text("Uso: /admin <list|add|remove>")
+    
+    ADMIN_IDS.remove(tgt)
+    await cfg_set("admin_ids", ",".join(str(i) for i in ADMIN_IDS))
+    await msg.reply_text("Admin removido")
+
+
+async def admin_add_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await _ensure_is_admin(update):
+        return
+    if not context.args:
+        await update.effective_message.reply_text("Uso: /admin <tg_id>")
+        return
+    try:
+        tgt = int(context.args[0])
+    except ValueError:
+        await update.effective_message.reply_text("tg_id inválido")
+        return
+    await _admin_add(tgt, update.effective_message)
+
+
+async def radmin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await _ensure_is_admin(update):
+        return
+    if not context.args:
+        await update.effective_message.reply_text("Uso: /radmin <tg_id>")
+        return
+    try:
+        tgt = int(context.args[0])
+    except ValueError:
+        await update.effective_message.reply_text("tg_id inválido")
+        return
+    await _admin_remove(tgt, update.effective_message)
 
 async def vip_admin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
@@ -439,7 +445,8 @@ application.add_handler(CommandHandler("comandos", comandos_cmd))
 application.add_handler(CommandHandler("checkout", checkout_cmd))
 application.add_handler(CommandHandler("tx", tx_cmd))
 application.add_handler(CommandHandler("packs", packs_cmd))
-application.add_handler(CommandHandler("admin", admin_cmd))
+application.add_handler(CommandHandler("admin", admin_add_cmd))
+application.add_handler(CommandHandler("radmin", radmin_cmd))
 application.add_handler(CommandHandler("vip", vip_admin_cmd))
 application.add_handler(CommandHandler("pack_pending", pack_pending_cmd))
 application.add_handler(CommandHandler("set_packvip", set_packvip_cmd))
