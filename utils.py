@@ -106,6 +106,9 @@ async def send_with_retry(func, *args, retries: int = 3, base_delay: float = 1.0
     return None
 
 
+async def reply_with_retry(message, *args, **kwargs):
+    return await send_with_retry(message.reply_text, *args, **kwargs)
+
 def make_link_sig(secret: str, uid: int, ts: int) -> str:
     raw = f"{uid}:{ts}".encode()
     return hmac.new(secret.encode(), raw, hashlib.sha256).hexdigest()

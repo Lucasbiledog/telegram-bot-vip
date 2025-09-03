@@ -47,6 +47,7 @@ from utils import (
     vip_upsert_and_get_until,                   # centralizado
     make_link_sig,                              # assinatura de link compartilhada
     send_with_retry,
+    reply_with_retry,
 
 
 
@@ -141,7 +142,7 @@ async def approve_by_usd_and_invite(
 async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     u = update.effective_user
     await user_get_or_create(u.id, u.username)
-    await update.effective_message.reply_text(
+    await reply_with_retry(update.effective_message,
         "Bem-vindo! Passos:\n"
         "1) Abra /checkout para ver a carteira e os planos.\n"
         "2) Transfira de qualquer rede suportada para a carteira informada.\n"
@@ -151,7 +152,7 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def id_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    await update.effective_message.reply_text(f"Seu ID: {uid}")   
+    await reply_with_retry(update.effective_message, f"Seu ID: {uid}")   
 
 async def comandos_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     prices = await prices_table()
@@ -192,7 +193,7 @@ async def checkout_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     if res is None:
         with suppress(Exception):
-            await msg.reply_text("Falha ao enviar o checkout. Tente novamente com /checkout.")
+            await reply_with_retry(msg, "Falha ao enviar o checkout. Tente novamente com /checkout.")
 async def tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         return await update.effective_message.reply_text("Uso: /tx <hash>\nEx.: /tx 0xabc...def")
@@ -200,7 +201,7 @@ async def tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     uname = update.effective_user.username
     ok, msg, _payload = await approve_by_usd_and_invite(uid, uname, tx_hash, notify_user=True)
-    await update.effective_message.reply_text(msg)
+    await reply_with_retry(update.effective_message, msg)
 
 
 async def packs_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -225,36 +226,37 @@ async def packs_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def _ensure_is_admin(update: Update) -> bool:
     uid = update.effective_user.id
     if uid not in ADMIN_IDS:
-        await update.effective_message.reply_text("Você não tem permissão para usar este comando.")
+        await reply_with_retry(update.effective_message, "Você não tem permissão para usar este comando.")
         return False
     return True
 async def _admin_add(tgt: int, msg):
     if tgt in ADMIN_IDS:
-        await msg.reply_text("Usuário já é admin")
+        await reply_with_retry(msg, "Usuário já é admin")
         return
     ADMIN_IDS.append(tgt)
     await cfg_set("admin_ids", ",".join(str(i) for i in ADMIN_IDS))
-    await msg.reply_text("Admin adicionado")
+    await reply_with_retry(msg, "Admin adicionado")
+
 async def _admin_remove(tgt: int, msg):
     if tgt not in ADMIN_IDS:
-        await msg.reply_text("Usuário não é admin")
+        await reply_with_retry(msg, "Usuário não é admin")
         return
     
     ADMIN_IDS.remove(tgt)
     await cfg_set("admin_ids", ",".join(str(i) for i in ADMIN_IDS))
-    await msg.reply_text("Admin removido")
+    await reply_with_retry(msg, "Admin removido")
 
 
 async def admin_add_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await _ensure_is_admin(update):
         return
     if not context.args:
-        await update.effective_message.reply_text("Uso: /admin <tg_id>")
+        await reply_with_retry(update.effective_message, "Uso: /admin <tg_id>")
         return
     try:
         tgt = int(context.args[0])
     except ValueError:
-        await update.effective_message.reply_text("tg_id inválido")
+        await reply_with_retry(update.effective_message, "tg_id inválido")
         return
     await _admin_add(tgt, update.effective_message)
 
@@ -263,12 +265,12 @@ async def radmin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await _ensure_is_admin(update):
         return
     if not context.args:
-        await update.effective_message.reply_text("Uso: /radmin <tg_id>")
+        await reply_with_retry(update.effective_message, "Uso: /radmin <tg_id>")
         return
     try:
         tgt = int(context.args[0])
     except ValueError:
-        await update.effective_message.reply_text("tg_id inválido")
+        await reply_with_retry(update.effective_message,("tg_id inválido"))
         return
     await _admin_remove(tgt, update.effective_message)
 
@@ -278,13 +280,13 @@ async def vip_admin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     args = context.args
     if not args:
-        await update.effective_message.reply_text("Uso: /vip <list|add|remove>")
+        await reply_with_retry(update.effective_message,("Uso: /vip <list|add|remove>"))
         return
     sub = args[0].lower()
     if sub == "list":
         users = await vip_list()
         if not users:
-            await update.effective_message.reply_text("Nenhum VIP.")
+            await reply_with_retry(update.effective_message,("Nenhum VIP."))
             return
         lines = []
         for u in users:
@@ -292,85 +294,86 @@ async def vip_admin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             until_str = until.strftime('%d/%m/%Y %H:%M') if until else '-'
             uname = f"@{u.username}" if u.username else ''
             lines.append(f"{u.tg_id} {uname} até {until_str}")
-        await update.effective_message.reply_text("\n".join(lines))
+        await reply_with_retry(update.effective_message,("\n".join(lines)))
     elif sub == "add":
         if len(args) < 3:
-            await update.effective_message.reply_text("Uso: /vip add <tg_id> <dias>")
+            await reply_with_retry(update.effective_message,("Uso: /vip add <tg_id> <dias>"))
             return
         try:
             tgt = int(args[1])
             dias = int(args[2])
         except ValueError:
-            await update.effective_message.reply_text("tg_id/dias inválidos")
+            await reply_with_retry(update.effective_message,("tg_id/dias inválidos"))
             return
         if dias <= 0:
-            await update.effective_message.reply_text("dias deve ser maior que zero")
+            await reply_with_retry(update.effective_message,("dias deve ser maior que zero"))
             return
         until = await vip_add(tgt, dias)
-        await update.effective_message.reply_text(
+        await reply_with_retry(update.effective_message,(
             f"VIP até {until.strftime('%d/%m/%Y %H:%M')}"
+        )
         )
     elif sub == "remove":
         if len(args) < 2:
-            await update.effective_message.reply_text("Uso: /vip remove <tg_id>")
+            await reply_with_retry(update.effective_message,("Uso: /vip remove <tg_id>"))
             return
         try:
             tgt = int(args[1])
         except ValueError:
-            await update.effective_message.reply_text("tg_id inválido")
+            await reply_with_retry(update.effective_message,("tg_id inválido"))
             return
         ok = await vip_remove(tgt)
         msg = "VIP removido" if ok else "Usuário não encontrado"
-        await update.effective_message.reply_text(msg)
+        await reply_with_retry(update.effective_message,(msg))
     else:
-        await update.effective_message.reply_text("Uso: /vip <list|add|remove>")
+        await reply_with_retry(update.effective_message,("Uso: /vip <list|add|remove>"))
 
 async def pack_pending_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     if uid not in ADMIN_IDS:
         return
     if not context.args:
-        await update.effective_message.reply_text("Uso: /pack_pending <id>")
+        await reply_with_retry(update.effective_message,("Uso: /pack_pending <id>"))
         return
     try:
         pack_id = int(context.args[0])
     except ValueError:
-        await update.effective_message.reply_text("ID inválido")
+        await reply_with_retry(update.effective_message,("ID inválido"))
         return
     ok = await pack_mark_pending(pack_id)
     msg = f"Pack {pack_id} marcado como pendente" if ok else "Pack não encontrado"
-    await update.effective_message.reply_text(msg)
+    await reply_with_retry(update.effective_message,(msg))
 
 async def set_packvip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     if uid not in ADMIN_IDS:
         return
     if not context.args:
-        await update.effective_message.reply_text("Uso: /set_packvip HH:MM")
+        await reply_with_retry(update.effective_message,("Uso: /set_packvip HH:MM"))
         return
     hhmm = context.args[0]
     if not re.match(r"^\d{2}:\d{2}$", hhmm):
-        await update.effective_message.reply_text("Formato inválido. Use HH:MM")
+        await reply_with_retry(update.effective_message,("Formato inválido. Use HH:MM"))
         return
     await cfg_set(PACK_VIP_TIME_KEY, hhmm)
     _packvip_event.set()
-    await update.effective_message.reply_text(f"Horário do pack VIP ajustado para {hhmm}")
+    await reply_with_retry(update.effective_message,(f"Horário do pack VIP ajustado para {hhmm}"))
 
 async def schedule_pack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     if uid not in ADMIN_IDS:
         return
     if len(context.args) < 2:
-        await update.effective_message.reply_text("Uso: /schedule_pack <id> <HH:MM>")
+        await reply_with_retry(update.effective_message,("Uso: /schedule_pack <id> <HH:MM>"))
         return
     try:
         pack_id = int(context.args[0])
     except ValueError:
-        await update.effective_message.reply_text("ID inválido")
+        await reply_with_retry(update.effective_message,("ID inválido"))
         return
     hhmm = context.args[1]
     if not re.match(r"^\d{2}:\d{2}$", hhmm):
-        await update.effective_message.reply_text("Formato inválido. Use HH:MM")
+        await reply_with_retry(update.effective_message,("Formato inválido. Use HH:MM"))
         return
     hour, minute = map(int, hhmm.split(":"))
     now = datetime.now(timezone.utc)
@@ -381,24 +384,24 @@ async def schedule_pack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = (
         f"Pack {pack_id} agendado para {when.strftime('%d/%m/%Y %H:%M')}" if ok else "Pack não encontrado"
     )
-    await update.effective_message.reply_text(msg)
+    await reply_with_retry(update.effective_message,(msg))
                                               
 async def send_pack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     if uid not in ADMIN_IDS:
         return
     if len(context.args) < 2:
-        await update.effective_message.reply_text("Uso: /send_pack <id> <chat_id>")
+        await reply_with_retry(update.effective_message,("Uso: /send_pack <id> <chat_id>"))
         return
     try:
         pack_id = int(context.args[0])
         chat_id = int(context.args[1])
     except ValueError:
-        await update.effective_message.reply_text("IDs inválidos")
+        await reply_with_retry(update.effective_message,("IDs inválidos"))
         return
     pack = await pack_get(pack_id)
     if not pack:
-        await update.effective_message.reply_text("Pack não encontrado")
+        await reply_with_retry(update.effective_message,("Pack não encontrado"))
         return
     previews = json.loads(pack.previews or "[]")
     files = json.loads(pack.files or "[]")
@@ -425,9 +428,9 @@ async def send_pack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ):
             errors.append(f)
     if errors:
-        await update.effective_message.reply_text("Falha ao enviar o pack")
+        await reply_with_retry(update.effective_message,("Falha ao enviar o pack"))
     else:
-        await update.effective_message.reply_text("Pack enviado com sucesso")
+        await reply_with_retry(update.effective_message,("Pack enviado com sucesso"))
 
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
