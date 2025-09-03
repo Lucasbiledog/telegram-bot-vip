@@ -100,9 +100,9 @@ application = (
     .token(BOT_TOKEN)
     .connect_timeout(10.0)
     .read_timeout(10.0)
-    .write_timeout(10.0
+    .write_timeout(10.0)
     .build()
-))
+)
 scheduler = AsyncIOScheduler()
 
 # ---------- helpers ----------
