@@ -2,7 +2,6 @@
 import os, logging, time, asyncio, json, re
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Tuple, Dict, Any
-from dotenv import load_dotenv
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import PlainTextResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -10,6 +9,8 @@ from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
 from telegram.error import TimedOut, TelegramError
 from contextlib import suppress
+
+from config import WEBAPP_URL, SELF_URL
 
 # suas dependências locais
 from db import (
@@ -53,12 +54,9 @@ logging.basicConfig(level=getattr(logging, LOG_LEVEL, logging.INFO),
 LOG = logging.getLogger("main")
 
 # ---------- env ----------
-load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-SELF_URL = os.getenv("SELF_URL", "")
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "secret")
 GROUP_VIP_ID = int(os.getenv("GROUP_VIP_ID", "0"))
-WEBAPP_URL = os.getenv("WEBAPP_URL", "")  # ex.: https://seu-servico.onrender.com/pay/
 WEBAPP_LINK_SECRET = os.getenv("WEBAPP_LINK_SECRET", "change-me")
 ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()]
 PACK_VIP_TIME_KEY = "pack_vip_time"
@@ -159,7 +157,7 @@ async def checkout_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     sig = make_link_sig(WEBAPP_LINK_SECRET, uid, ts)
 
     # monta o botão webapp
-    url = WEBAPP_URL or f"{SELF_URL}/pay/"
+    url = WEBAPP_URL
     kb = InlineKeyboardMarkup([[
         InlineKeyboardButton(
             "💳 Checkout (instruções & carteira)",

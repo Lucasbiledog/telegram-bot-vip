@@ -1,13 +1,15 @@
 from __future__ import annotations
 import os
 import re
+import logging
 from telegram import (
     Update,
     InputMediaPhoto,
     InlineKeyboardMarkup,
     InlineKeyboardButton,
-    WebAppInfo,
 )
+from telegram.error import TelegramError
+from telegram.error import BadRequest
 from telegram.ext import (
     CommandHandler,
     ConversationHandler,
@@ -16,8 +18,10 @@ from telegram.ext import (
     filters,
 )
 
-from db import pack_create
+from config import WEBAPP_URL
 
+from db import pack_create
+LOG = logging.getLogger("pack_flow")
 GROUP_VIP_ID = int(os.getenv("GROUP_VIP_ID", "0"))
 GROUP_FREE_ID = int(os.getenv("GROUP_FREE_ID", "0"))
 WEBAPP_URL = os.getenv("WEBAPP_URL") or f"{os.getenv('SELF_URL', '').rstrip('/')}/pay/"
@@ -108,17 +112,23 @@ async def confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await context.bot.send_document(chat_id=target_group, document=fid)
 
         if is_vip and GROUP_FREE_ID:
-            if previews:
-                media = [InputMediaPhoto(p) for p in previews[:10]]
-                await context.bot.send_media_group(chat_id=GROUP_FREE_ID, media=media)
-            kb = InlineKeyboardMarkup([
-                [InlineKeyboardButton("Assinar VIP", web_app=WebAppInfo(url=WEBAPP_URL))]
-            ])
-            await context.bot.send_message(
-                chat_id=GROUP_FREE_ID,
-                text="Curtiu as previews? Assine VIP para acessar o pack completo!",
-                reply_markup=kb,
-            )
+            try:
+                if previews:
+                    media = [InputMediaPhoto(p) for p in previews[:10]]
+                    await context.bot.send_media_group(chat_id=GROUP_FREE_ID, media=media)
+                kb = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("Assinar VIP", web_app=WebAppInfo(url=WEBAPP_URL))]
+                ])
+                await context.bot.send_message(
+                    chat_id=GROUP_FREE_ID,
+                    text="Curtiu as previews? Assine VIP para acessar o pack completo!",
+                    reply_markup=kb,
+                )
+            except TelegramError:
+                LOG.exception("Falha ao notificar grupo free")
+                await update.effective_message.reply_text(
+                    "Falha ao notificar grupo free."
+                )
 
 
     else:
