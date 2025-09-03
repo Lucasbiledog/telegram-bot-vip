@@ -6,6 +6,7 @@ from telegram import (
     InputMediaPhoto,
     InlineKeyboardMarkup,
     InlineKeyboardButton,
+    WebAppInfo,
 )
 from telegram.ext import (
     CommandHandler,
@@ -19,6 +20,8 @@ from db import pack_create
 
 GROUP_VIP_ID = int(os.getenv("GROUP_VIP_ID", "0"))
 GROUP_FREE_ID = int(os.getenv("GROUP_FREE_ID", "0"))
+WEBAPP_URL = os.getenv("WEBAPP_URL") or f"{os.getenv('SELF_URL', '').rstrip('/')}/pay/"
+
 
 TITLE, KIND, PREVIEWS, FILES, CONFIRM = range(5)
 
@@ -105,10 +108,9 @@ async def confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if previews:
                 media = [InputMediaPhoto(p) for p in previews[:10]]
                 await context.bot.send_media_group(chat_id=GROUP_FREE_ID, media=media)
-            bot = await context.bot.get_me()
-            kb = InlineKeyboardMarkup(
-                [[InlineKeyboardButton("Assinar VIP", url=f"https://t.me/{bot.username}?start=checkout")]]
-            )
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("Assinar VIP", web_app=WebAppInfo(url=WEBAPP_URL))]
+            ])
             await context.bot.send_message(
                 chat_id=GROUP_FREE_ID,
                 text="Curtiu as previews? Assine VIP para acessar o pack completo!",
