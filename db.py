@@ -1,16 +1,18 @@
 import os
 import json
+import logging
 from contextlib import asynccontextmanager
 from typing import AsyncIterator, Optional
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlalchemy import select, update, inspect, text
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from models import Base, Config, User, Payment, Pack, ScheduledMessage
 from datetime import datetime, timezone, time as dtime
 
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./app.db")
 engine = create_async_engine(DATABASE_URL, future=True, echo=False)
 SessionLocal = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+LOG = logging.getLogger(__name__)
 
 async def init_db() -> None:
     async with engine.begin() as conn:
@@ -116,17 +118,29 @@ async def hash_store(tx_hash: str, tg_id: int) -> None:
             await s.rollback()
 
 
-async def pack_create(title: str, previews: list[str], files: list[str], is_vip: bool = False) -> None:
+async def pack_create(
+    title: str, previews: list[str], files: list[str], is_vip: bool = False
+) -> Pack:
     async with get_session() as s:
-        s.add(
-            Pack(
-                title=title,
-                previews=json.dumps(previews),
-                files=json.dumps(files),
-                is_vip=is_vip,
-            )
+        pack = Pack(
+            title=title,
+            previews=json.dumps(previews),
+            files=json.dumps(files),
+            is_vip=is_vip,
         )
-        await s.commit()
+        s.add(pack)
+        try:
+            await s.commit()
+            await s.refresh(pack)
+            return pack
+        except IntegrityError:
+            await s.rollback()
+            LOG.exception("Integrity error inserting pack title=%s", title)
+            raise
+        except SQLAlchemyError:
+            await s.rollback()
+            LOG.exception("Database error inserting pack title=%s", title)
+            raise
          
 async def pack_mark_pending(pack_id: int) -> bool:
     async with get_session() as s:
