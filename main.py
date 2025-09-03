@@ -10,7 +10,8 @@ from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, WebAppI
 from telegram.error import TimedOut, TelegramError
 from contextlib import suppress
 
-from config import WEBAPP_URL, SELF_URL
+from config import WEBAPP_URL, SELF_URL, ADMIN_IDS
+
 
 # suas dependências locais
 from db import (
@@ -61,7 +62,6 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "secret")
 GROUP_VIP_ID = int(os.getenv("GROUP_VIP_ID", "0"))
 WEBAPP_LINK_SECRET = os.getenv("WEBAPP_LINK_SECRET", "change-me")
-ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()]
 PACK_VIP_TIME_KEY = "pack_vip_time"
 _packvip_event = asyncio.Event()
 

@@ -9,21 +9,34 @@ from telegram.ext import (
     filters,
 )
 
+from config import ADMIN_IDS
 from db import pack_create
 
 TITLE, KIND, PREVIEWS, FILES, CONFIRM = range(5)
 
+async def _check_admin(update: Update) -> bool:
+    if update.effective_user.id not in ADMIN_IDS:
+        await update.effective_message.reply_text("Você não tem permissão para usar este comando.")
+        return False
+    return True
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await _check_admin(update):
+        return ConversationHandler.END
     context.user_data.clear()
     await update.effective_message.reply_text("Informe o título do pack:")
     return TITLE
 
 async def handle_title(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await _check_admin(update):
+        return ConversationHandler.END
     context.user_data["title"] = update.effective_message.text.strip()
     await update.effective_message.reply_text("Este pack é VIP ou free?")
     return KIND
 
 async def handle_kind(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await _check_admin(update):
+        return ConversationHandler.END
     kind = update.effective_message.text.strip().lower()
     if kind not in ("vip", "free"):
         await update.effective_message.reply_text("Responda com 'VIP' ou 'free'.")
@@ -35,6 +48,8 @@ async def handle_kind(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return PREVIEWS
 
 async def add_preview(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await _check_admin(update):
+        return ConversationHandler.END
     photos = update.effective_message.photo
     if photos:
         file_id = photos[-1].file_id
@@ -42,6 +57,8 @@ async def add_preview(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return PREVIEWS
 
 async def skip_previews(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await _check_admin(update):
+        return ConversationHandler.END
     context.user_data["previews"] = []
     context.user_data["files"] = []
     await update.effective_message.reply_text(
@@ -49,12 +66,16 @@ async def skip_previews(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return FILES
 
 async def previews_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await _check_admin(update):
+        return ConversationHandler.END
     context.user_data["files"] = []
     await update.effective_message.reply_text(
         "Agora envie os arquivos do pack. Envie /done quando terminar.")
     return FILES
 
 async def add_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await _check_admin(update):
+        return ConversationHandler.END
     doc = update.effective_message.document
     if doc:
         context.user_data["files"].append(doc.file_id)
@@ -71,12 +92,14 @@ async def files_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Tipo: {'VIP' if kind == 'vip' else 'Free'}\n"
         f"Previews: {len(previews)}\n"
         f"Arquivos: {len(files)}\n"
-        "Confirmar? (sim/não)"
+        "Confirmar? (sim/não)",
     )
     await update.effective_message.reply_text(summary)
     return CONFIRM
 
 async def confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await _check_admin(update):
+        return ConversationHandler.END
     text = update.effective_message.text.lower()
     if text.startswith("s"):
         is_vip = context.user_data.get("kind", "free") == "vip"

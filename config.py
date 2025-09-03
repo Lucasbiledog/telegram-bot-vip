@@ -10,5 +10,7 @@ load_dotenv()
 
 SELF_URL = os.getenv("SELF_URL", "")
 WEBAPP_URL = os.getenv("WEBAPP_URL") or f"{SELF_URL.rstrip('/')}/pay/"
+ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()]
 
-__all__ = ["SELF_URL", "WEBAPP_URL"]
+
+__all__ = ["SELF_URL", "WEBAPP_URL", "ADMIN_IDS"]
