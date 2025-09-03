@@ -92,7 +92,6 @@ async def confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
         title = context.user_data.get("title", "")
         previews = context.user_data.get("previews", [])
         files = context.user_data.get("files", [])
-        is_vip=context.user_data.get("kind", "free") == "vip",
         await pack_create(title, previews, files, is_vip)
         await update.effective_message.reply_text("Pack salvo!")
         target_group = GROUP_VIP_ID if is_vip else GROUP_FREE_ID
