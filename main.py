@@ -664,6 +664,16 @@ async def send_next_pack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await _send_pack(pack)
     await reply_with_retry(update.effective_message,("Pack enviado com sucesso"))
 
+
+async def simularvip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.args = ["vip"]
+    await send_next_pack_cmd(update, context)
+
+
+async def simularfree_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.args = ["free"]
+    await send_next_pack_cmd(update, context)
+
 def _parse_hhmm(hhmm: str) -> Optional[dtime]:
     if not re.match(r"^\d{2}:\d{2}$", hhmm):
         return None
@@ -892,7 +902,8 @@ application.add_handler(CommandHandler("set_packvip", set_packvip_cmd))
 application.add_handler(CommandHandler("set_packfree", set_packfree_cmd))
 application.add_handler(CommandHandler("schedule_pack", schedule_pack_cmd))
 application.add_handler(CommandHandler("send_pack", send_pack_cmd))
-application.add_handler(CommandHandler("send_next", send_next_pack_cmd))
+application.add_handler(CommandHandler("simularvip", simularvip_cmd))
+application.add_handler(CommandHandler("simularfree", simularfree_cmd))
 application.add_handler(pack_conv_handler)
 application.add_error_handler(error_handler)
 
