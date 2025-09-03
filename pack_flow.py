@@ -1,6 +1,12 @@
 from __future__ import annotations
+import os
 import re
-from telegram import Update
+from telegram import (
+    Update,
+    InputMediaPhoto,
+    InlineKeyboardMarkup,
+    InlineKeyboardButton,
+)
 from telegram.ext import (
     CommandHandler,
     ConversationHandler,
@@ -10,6 +16,9 @@ from telegram.ext import (
 )
 
 from db import pack_create
+
+GROUP_VIP_ID = int(os.getenv("GROUP_VIP_ID", "0"))
+GROUP_FREE_ID = int(os.getenv("GROUP_FREE_ID", "0"))
 
 TITLE, KIND, PREVIEWS, FILES, CONFIRM = range(5)
 
@@ -79,12 +88,35 @@ async def files_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.effective_message.text.lower()
     if text.startswith("s"):
-        await pack_create(
-            context.user_data.get("title", ""),
-            context.user_data.get("previews", []),
-            context.user_data.get("files", []),
-        )
+        is_vip = context.user_data.get("kind", "free") == "vip"
+        title = context.user_data.get("title", "")
+        previews = context.user_data.get("previews", [])
+        files = context.user_data.get("files", [])
+        is_vip=context.user_data.get("kind", "free") == "vip",
+        await pack_create(title, previews, files, is_vip)
         await update.effective_message.reply_text("Pack salvo!")
+        target_group = GROUP_VIP_ID if is_vip else GROUP_FREE_ID
+        if target_group:
+            if title:
+                await context.bot.send_message(chat_id=target_group, text=title)
+            for fid in files:
+                await context.bot.send_document(chat_id=target_group, document=fid)
+
+        if is_vip and GROUP_FREE_ID:
+            if previews:
+                media = [InputMediaPhoto(p) for p in previews[:10]]
+                await context.bot.send_media_group(chat_id=GROUP_FREE_ID, media=media)
+            bot = await context.bot.get_me()
+            kb = InlineKeyboardMarkup(
+                [[InlineKeyboardButton("Assinar VIP", url=f"https://t.me/{bot.username}?start=checkout")]]
+            )
+            await context.bot.send_message(
+                chat_id=GROUP_FREE_ID,
+                text="Curtiu as previews? Assine VIP para acessar o pack completo!",
+                reply_markup=kb,
+            )
+
+
     else:
         await update.effective_message.reply_text("Operação cancelada.")
     return ConversationHandler.END

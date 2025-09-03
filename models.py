@@ -20,6 +20,8 @@ class User(Base):
     tg_id: Mapped[int] = mapped_column(Integer, unique=True, index=True)
     username: Mapped[str] = mapped_column(String(64), default="", nullable=False)
     is_vip: Mapped[bool] = mapped_column(Boolean, default=False)
+    sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    requeued_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     vip_until: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
 class Payment(Base):
@@ -38,3 +40,4 @@ class Pack(Base):
     previews: Mapped[str] = mapped_column(Text, default="[]")
     files: Mapped[str] = mapped_column(Text, default="[]")
     is_vip: Mapped[bool] = mapped_column(Boolean, default=False)
+    sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)

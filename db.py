@@ -17,6 +17,8 @@ async def init_db() -> None:
         await conn.run_sync(Base.metadata.create_all)
     await migrate_vip_until_timezone()
     await migrate_pack_is_vip()
+    await migrate_pack_sent_at()
+    await migrate_pack_sent_fields()
 
 
 @asynccontextmanager
@@ -112,10 +114,54 @@ async def hash_store(tx_hash: str, tg_id: int) -> None:
             await s.rollback()
 
 
-async def pack_create(title: str, previews: list[str], files: list[str], is_vip: bool) -> None:
+async def pack_create(title: str, previews: list[str], files: list[str], is_vip: bool = False) -> None:
     async with get_session() as s:
-        s.add(Pack(title=title, previews=json.dumps(previews), files=json.dumps(files)))
+         s.add(
+            Pack(
+                title=title,
+                previews=json.dumps(previews),
+                files=json.dumps(files),
+                is_vip=is_vip,
+            )
+        )
+         await s.commit()
+         
+async def pack_mark_pending(pack_id: int) -> bool:
+    async with get_session() as s:
+        res = await s.execute(select(Pack).where(Pack.id == pack_id))
+        pack = res.scalar_one_or_none()
+        if not pack:
+            return False
+        pack.sent_at = None
         await s.commit()
+        return True
+    
+async def pack_get_next_vip() -> Optional[Pack]:
+    async with get_session() as s:
+        res = await s.execute(
+            select(Pack)
+            .where(Pack.is_vip.is_(True), Pack.sent_at.is_(None))
+            .order_by(Pack.id.asc())
+        )
+        return res.scalars().first()
+
+async def pack_mark_sent(pack_id: int) -> None:
+    async with get_session() as s:
+        await s.execute(
+            update(Pack)
+            .where(Pack.id == pack_id)
+            .values(sent_at=datetime.now(timezone.utc))
+        )
+        await s.commit()
+
+async def pack_requeue(pack_id: int) -> None:
+    async with get_session() as s:
+        await s.execute(
+            update(Pack)
+            .where(Pack.id == pack_id)
+            .values(sent_at=None, requeued_at=datetime.now(timezone.utc))
+        )
+    
 async def migrate_pack_is_vip() -> None:
     async with engine.begin() as conn:
         def _migrate(connection):
@@ -126,7 +172,34 @@ async def migrate_pack_is_vip() -> None:
                     text("ALTER TABLE packs ADD COLUMN is_vip BOOLEAN NOT NULL DEFAULT 0")
                 )
         await conn.run_sync(_migrate)
-        
+
+async def migrate_pack_sent_at() -> None:
+    async with engine.begin() as conn:
+        def _migrate(connection):
+            insp = inspect(connection)
+            cols = [c["name"] for c in insp.get_columns("packs")]
+            if "sent_at" not in cols:
+                connection.execute(
+                    text("ALTER TABLE packs ADD COLUMN sent_at DATETIME")
+                )
+        await conn.run_sync(_migrate)
+
+async def migrate_pack_sent_fields() -> None:
+    async with engine.begin() as conn:
+        def _migrate(connection):
+            insp = inspect(connection)
+            cols = [c["name"] for c in insp.get_columns("packs")]
+            if "sent_at" not in cols:
+                connection.execute(
+                    text("ALTER TABLE packs ADD COLUMN sent_at DATETIME")
+                )
+            if "requeued_at" not in cols:
+                connection.execute(
+                    text("ALTER TABLE packs ADD COLUMN requeued_at DATETIME")
+                )
+        await conn.run_sync(_migrate)
+
+
 async def migrate_vip_until_timezone() -> None:
     """Ensure `vip_until` timestamps are timezone-aware.
 

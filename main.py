@@ -1,6 +1,6 @@
 # --- imports no topo ---
-import os, logging, time, asyncio
-from datetime import datetime, timezone
+import os, logging, time, asyncio, json, re
+from datetime import datetime, timezone, timedelta
 from typing import Optional, Tuple, Dict, Any
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request, HTTPException
@@ -15,12 +15,20 @@ from contextlib import suppress
 from db import (
     init_db,
     cfg_get,
+    cfg_set,
     user_get_or_create,
     vip_list,
     vip_add,
     vip_remove,
     hash_exists,
     hash_store,
+    pack_get,
+    pack_list,
+    pack_get_next_vip,
+    pack_mark_sent,
+    pack_mark_pending,
+
+
 )
 
 from payments import (
@@ -53,6 +61,8 @@ GROUP_VIP_ID = int(os.getenv("GROUP_VIP_ID", "0"))
 WEBAPP_URL = os.getenv("WEBAPP_URL", "")  # ex.: https://seu-servico.onrender.com/pay/
 WEBAPP_LINK_SECRET = os.getenv("WEBAPP_LINK_SECRET", "change-me")
 ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()]
+PACK_VIP_TIME_KEY = "pack_vip_time"
+_packvip_event = asyncio.Event()
 
 
 if not BOT_TOKEN:
@@ -176,6 +186,22 @@ async def tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.effective_message.reply_text(msg)
 
 
+async def packs_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    free_packs = await pack_list(False)
+    vip_packs = await pack_list(True)
+
+    sections = []
+    if free_packs:
+        sections.append(
+            "Packs Free:\n" + "\n".join(f"- {p.title}" for p in free_packs)
+        )
+    if vip_packs:
+        sections.append("Packs VIP:\n" + "\n".join(f"- {p.title}" for p in vip_packs))
+
+    text = "\n\n".join(sections) if sections else "Nenhum pack disponível."
+    await update.effective_message.reply_text(text)
+
+
 async def vip_admin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     if uid not in ADMIN_IDS:
@@ -229,6 +255,81 @@ async def vip_admin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.effective_message.reply_text("Uso: /vip <list|add|remove>")
 
+async def pack_pending_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    if uid not in ADMIN_IDS:
+        return
+    if not context.args:
+        await update.effective_message.reply_text("Uso: /pack_pending <id>")
+        return
+    try:
+        pack_id = int(context.args[0])
+    except ValueError:
+        await update.effective_message.reply_text("ID inválido")
+        return
+    ok = await pack_mark_pending(pack_id)
+    msg = f"Pack {pack_id} marcado como pendente" if ok else "Pack não encontrado"
+    await update.effective_message.reply_text(msg)
+
+async def set_packvip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    if uid not in ADMIN_IDS:
+        return
+    if not context.args:
+        await update.effective_message.reply_text("Uso: /set_packvip HH:MM")
+        return
+    hhmm = context.args[0]
+    if not re.match(r"^\d{2}:\d{2}$", hhmm):
+        await update.effective_message.reply_text("Formato inválido. Use HH:MM")
+        return
+    await cfg_set(PACK_VIP_TIME_KEY, hhmm)
+    _packvip_event.set()
+    await update.effective_message.reply_text(f"Horário do pack VIP ajustado para {hhmm}")
+
+
+async def send_pack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    if uid not in ADMIN_IDS:
+        return
+    if len(context.args) < 2:
+        await update.effective_message.reply_text("Uso: /send_pack <id> <chat_id>")
+        return
+    try:
+        pack_id = int(context.args[0])
+        chat_id = int(context.args[1])
+    except ValueError:
+        await update.effective_message.reply_text("IDs inválidos")
+        return
+    pack = await pack_get(pack_id)
+    if not pack:
+        await update.effective_message.reply_text("Pack não encontrado")
+        return
+    previews = json.loads(pack.previews or "[]")
+    files = json.loads(pack.files or "[]")
+    errors = []
+    try:
+        await context.bot.send_message(chat_id=chat_id, text=f"Pack: {pack.title}")
+    except Exception as e:
+        LOG.warning("Failed to send pack title: %s", e)
+        errors.append(str(e))
+    for p in previews:
+        try:
+            await context.bot.send_photo(chat_id=chat_id, photo=p)
+        except Exception as e:
+            LOG.warning("Failed to send preview %s: %s", p, e)
+            errors.append(str(e))
+    for f in files:
+        try:
+            await context.bot.send_document(chat_id=chat_id, document=f)
+        except Exception as e:
+            LOG.warning("Failed to send file %s: %s", f, e)
+            errors.append(str(e))
+    if errors:
+        await update.effective_message.reply_text("Falha ao enviar o pack")
+    else:
+        await update.effective_message.reply_text("Pack enviado com sucesso")
+
+
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
     """Log the exception and notify admins."""
     LOG.exception("Exception while handling update", exc_info=context.error)
@@ -240,7 +341,11 @@ application.add_handler(CommandHandler("start", start_cmd))
 application.add_handler(CommandHandler("comandos", comandos_cmd))
 application.add_handler(CommandHandler("checkout", checkout_cmd))
 application.add_handler(CommandHandler("tx", tx_cmd))
+application.add_handler(CommandHandler("packs", packs_cmd))
 application.add_handler(CommandHandler("vip", vip_admin_cmd))
+application.add_handler(CommandHandler("pack_pending", pack_pending_cmd))
+application.add_handler(CommandHandler("set_packvip", set_packvip_cmd))
+application.add_handler(CommandHandler("send_pack", send_pack_cmd))
 application.add_handler(pack_conv_handler)
 application.add_error_handler(error_handler)
 
@@ -295,6 +400,55 @@ async def telegram_webhook(secret: str, request: Request):
     await application.process_update(update)
     return PlainTextResponse("ok")
 
+async def send_vip_pack():
+    pack = await pack_get_next_vip()
+    if not pack:
+        LOG.info("Nenhum pack VIP pendente para envio.")
+        return
+    previews = json.loads(pack.previews or "[]")
+    files = json.loads(pack.files or "[]")
+    try:
+        if previews:
+            first, *rest = previews
+            await application.bot.send_photo(GROUP_VIP_ID, first, caption=pack.title)
+            for p in rest:
+                await application.bot.send_photo(GROUP_VIP_ID, p)
+        else:
+            await application.bot.send_message(GROUP_VIP_ID, pack.title)
+        for f in files:
+            await application.bot.send_document(GROUP_VIP_ID, f)
+        await pack_mark_sent(pack.id)
+        LOG.info("Pack VIP enviado: id=%s", pack.id)
+    except Exception as e:
+        LOG.error("Falha ao enviar pack VIP %s: %s", pack.id, e)
+
+async def packvip_loop():
+    while True:
+        hhmm = await cfg_get(PACK_VIP_TIME_KEY)
+        if not hhmm:
+            await asyncio.sleep(60)
+            continue
+        try:
+            hour, minute = map(int, hhmm.split(":"))
+        except Exception:
+            LOG.error("Horário packvip inválido: %s", hhmm)
+            await asyncio.sleep(60)
+            continue
+        now = datetime.now(timezone.utc)
+        run_at = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        if run_at <= now:
+            run_at += timedelta(days=1)
+        wait = (run_at - now).total_seconds()
+        try:
+            await asyncio.wait_for(_packvip_event.wait(), timeout=wait)
+            _packvip_event.clear()
+            continue
+        except asyncio.TimeoutError:
+            pass
+        await send_vip_pack()
+
+
+
 # -------- lifecycle --------
 @app.on_event("startup")
 async def on_startup():
@@ -311,6 +465,10 @@ async def on_startup():
             LOG.error("Falha ao setar webhook: %s", e)
     # heartbeat de log (não bloqueante)
     asyncio.create_task(_heartbeat())
+    asyncio.create_task(packvip_loop())
+    _packvip_event.set()
+
+
 
 async def _heartbeat():
     while True:
