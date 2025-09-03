@@ -19,6 +19,7 @@ async def init_db() -> None:
     await migrate_pack_is_vip()
     await migrate_pack_sent_at()
     await migrate_pack_sent_fields()
+    await migrate_pack_scheduled_at()
     await migrate_user_remove_sent_fields()
 
 
@@ -178,7 +179,30 @@ async def pack_requeue(pack_id: int) -> None:
             await s.commit()
         except IntegrityError:
             await s.rollback()
-    
+
+async def pack_schedule(pack_id: int, when: datetime) -> bool:
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=timezone.utc)
+    async with get_session() as s:
+        res = await s.execute(select(Pack).where(Pack.id == pack_id))
+        pack = res.scalar_one_or_none()
+        if not pack:
+            return False
+        pack.scheduled_at = when
+        await s.commit()
+        return True
+
+async def packs_get_due(now: datetime) -> list[Pack]:
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    async with get_session() as s:
+        res = await s.execute(
+            select(Pack)
+            .where(Pack.scheduled_at.is_not(None), Pack.scheduled_at <= now, Pack.sent_at.is_(None))
+            .order_by(Pack.scheduled_at.asc())
+        )
+        return res.scalars().all()
+        
 async def migrate_pack_is_vip() -> None:
     async with engine.begin() as conn:
         def _migrate(connection):
@@ -216,6 +240,17 @@ async def migrate_pack_sent_fields() -> None:
                 )
         await conn.run_sync(_migrate)
 
+async def migrate_pack_scheduled_at() -> None:
+    async with engine.begin() as conn:
+        def _migrate(connection):
+            insp = inspect(connection)
+            cols = [c["name"] for c in insp.get_columns("packs")]
+            if "scheduled_at" not in cols:
+                connection.execute(
+                    text("ALTER TABLE packs ADD COLUMN scheduled_at DATETIME")
+                )
+        await conn.run_sync(_migrate)
+        
 async def migrate_user_remove_sent_fields() -> None:
     async with engine.begin() as conn:
         def _migrate(connection):
@@ -226,7 +261,7 @@ async def migrate_user_remove_sent_fields() -> None:
             if "requeued_at" in cols:
                 connection.execute(text("ALTER TABLE users DROP COLUMN requeued_at"))
         await conn.run_sync(_migrate)
-        
+
 async def migrate_vip_until_timezone() -> None:
     """Ensure `vip_until` timestamps are timezone-aware.
 

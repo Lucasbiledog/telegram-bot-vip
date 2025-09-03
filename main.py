@@ -28,6 +28,8 @@ from db import (
     pack_get_next_vip,
     pack_mark_sent,
     pack_mark_pending,
+    pack_schedule,
+    packs_get_due,
 
 
 )
@@ -284,7 +286,33 @@ async def set_packvip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     _packvip_event.set()
     await update.effective_message.reply_text(f"Horário do pack VIP ajustado para {hhmm}")
 
-
+async def schedule_pack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    if uid not in ADMIN_IDS:
+        return
+    if len(context.args) < 2:
+        await update.effective_message.reply_text("Uso: /schedule_pack <id> <HH:MM>")
+        return
+    try:
+        pack_id = int(context.args[0])
+    except ValueError:
+        await update.effective_message.reply_text("ID inválido")
+        return
+    hhmm = context.args[1]
+    if not re.match(r"^\d{2}:\d{2}$", hhmm):
+        await update.effective_message.reply_text("Formato inválido. Use HH:MM")
+        return
+    hour, minute = map(int, hhmm.split(":"))
+    now = datetime.now(timezone.utc)
+    when = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if when <= now:
+        when += timedelta(days=1)
+    ok = await pack_schedule(pack_id, when)
+    msg = (
+        f"Pack {pack_id} agendado para {when.strftime('%d/%m/%Y %H:%M')}" if ok else "Pack não encontrado"
+    )
+    await update.effective_message.reply_text(msg)
+                                              
 async def send_pack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     if uid not in ADMIN_IDS:
@@ -343,6 +371,7 @@ application.add_handler(CommandHandler("packs", packs_cmd))
 application.add_handler(CommandHandler("vip", vip_admin_cmd))
 application.add_handler(CommandHandler("pack_pending", pack_pending_cmd))
 application.add_handler(CommandHandler("set_packvip", set_packvip_cmd))
+application.add_handler(CommandHandler("schedule_pack", schedule_pack_cmd))
 application.add_handler(CommandHandler("send_pack", send_pack_cmd))
 application.add_handler(pack_conv_handler)
 application.add_error_handler(error_handler)
@@ -398,11 +427,8 @@ async def telegram_webhook(secret: str, request: Request):
     await application.process_update(update)
     return PlainTextResponse("ok")
 
-async def send_vip_pack():
-    pack = await pack_get_next_vip()
-    if not pack:
-        LOG.info("Nenhum pack VIP pendente para envio.")
-        return
+async def _send_pack(pack):
+
     previews = json.loads(pack.previews or "[]")
     files = json.loads(pack.files or "[]")
     try:
@@ -416,9 +442,15 @@ async def send_vip_pack():
         for f in files:
             await application.bot.send_document(GROUP_VIP_ID, f)
         await pack_mark_sent(pack.id)
-        LOG.info("Pack VIP enviado: id=%s", pack.id)
     except Exception as e:
-        LOG.error("Falha ao enviar pack VIP %s: %s", pack.id, e)
+        LOG.error("Falha ao enviar pack %s: %s", pack.id, e)
+
+async def send_vip_pack():
+    pack = await pack_get_next_vip()
+    if not pack:
+        LOG.info("Nenhum pack VIP pendente para envio.")
+        return
+    await _send_pack(pack)
 
 async def packvip_loop():
     while True:
@@ -445,7 +477,13 @@ async def packvip_loop():
             pass
         await send_vip_pack()
 
-
+async def scheduled_pack_loop():
+    while True:
+        now = datetime.now(timezone.utc)
+        packs = await packs_get_due(now)
+        for pack in packs:
+            await _send_pack(pack)
+        await asyncio.sleep(30)
 
 # -------- lifecycle --------
 @app.on_event("startup")
@@ -464,6 +502,8 @@ async def on_startup():
     # heartbeat de log (não bloqueante)
     asyncio.create_task(_heartbeat())
     asyncio.create_task(packvip_loop())
+    asyncio.create_task(scheduled_pack_loop())
+
     _packvip_event.set()
 
 
