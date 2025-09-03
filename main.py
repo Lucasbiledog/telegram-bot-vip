@@ -33,6 +33,7 @@ from db import (
 
 
 )
+from models import Pack
 
 from payments import (
     resolve_payment_usd_autochain,              # já está funcionando
@@ -189,14 +190,18 @@ async def tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def packs_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     free_packs = await pack_list(False)
     vip_packs = await pack_list(True)
-
+    def _format_pack(p: Pack) -> str:
+        line = f"- {p.id}: {p.title}"
+        if p.scheduled_at:
+            line += f" (agendado para {p.scheduled_at.strftime('%d/%m/%Y %H:%M')})"
+        return line
     sections = []
     if free_packs:
-        sections.append(
-            "Packs Free:\n" + "\n".join(f"- {p.title}" for p in free_packs)
-        )
+        sections.append("Packs Free:\n" + "\n".join(_format_pack(p) for p in free_packs))
+
     if vip_packs:
-        sections.append("Packs VIP:\n" + "\n".join(f"- {p.title}" for p in vip_packs))
+        sections.append("Packs VIP:\n" + "\n".join(_format_pack(p) for p in vip_packs))
+
 
     text = "\n\n".join(sections) if sections else "Nenhum pack disponível."
     await update.effective_message.reply_text(text)
