@@ -2,6 +2,8 @@
 import os, logging, time, asyncio, json, re
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Tuple, Dict, Any
+import httpx
+
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import PlainTextResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -601,9 +603,20 @@ async def on_startup():
                 continue
             if i not in ADMIN_IDS:
                 ADMIN_IDS.append(i)
-    await application.initialize()
-    with suppress(Exception):
-        await application.start()
+    max_attempts = 3
+    for attempt in range(1, max_attempts + 1):
+        LOG.info("Inicializando bot (tentativa %d/%d)...", attempt, max_attempts)
+        try:
+            await application.initialize()
+            await application.start()
+            LOG.info("Bot iniciado com sucesso na tentativa %d", attempt)
+            break
+        except (TimedOut, httpx.ConnectTimeout) as e:
+            LOG.warning("Falha na tentativa %d de iniciar o bot: %s", attempt, e)
+            if attempt >= max_attempts:
+                LOG.error("Excedido limite de tentativas de inicialização do bot")
+                raise
+            await asyncio.sleep(2 ** attempt)
     if SELF_URL and WEBHOOK_SECRET:
         try:
             await application.bot.set_webhook(url=f"{SELF_URL}/webhook/{WEBHOOK_SECRET}")
