@@ -9,6 +9,8 @@ from fastapi.responses import PlainTextResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
+from telegram.error import TimedOut
+
 from contextlib import suppress
 
 from config import WEBAPP_URL, SELF_URL, ADMIN_IDS, OWNER_ID
