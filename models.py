@@ -1,7 +1,7 @@
 from __future__ import annotations
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
-from sqlalchemy import String, Integer, Boolean, DateTime, Text
-from datetime import datetime, timezone
+from sqlalchemy import String, Integer, Boolean, DateTime, Text, Time
+from datetime import datetime, timezone, time as dtime
 
 from typing import Optional
 
@@ -41,3 +41,12 @@ class Pack(Base):
     sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     requeued_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     scheduled_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class ScheduledMessage(Base):
+    __tablename__ = "scheduled_messages"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    tier: Mapped[str] = mapped_column(String(10), nullable=False)
+    time: Mapped[dtime] = mapped_column(Time, nullable=False)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)

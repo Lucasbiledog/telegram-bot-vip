@@ -5,8 +5,8 @@ from typing import AsyncIterator, Optional
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlalchemy import select, update, inspect, text
 from sqlalchemy.exc import IntegrityError
-from models import Base, Config, User, Payment, Pack
-from datetime import datetime, timezone
+from models import Base, Config, User, Payment, Pack, ScheduledMessage
+from datetime import datetime, timezone, time as dtime
 
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./app.db")
 engine = create_async_engine(DATABASE_URL, future=True, echo=False)
@@ -202,6 +202,65 @@ async def packs_get_due(now: datetime) -> list[Pack]:
             .order_by(Pack.scheduled_at.asc())
         )
         return res.scalars().all()
+
+
+async def scheduled_msg_create(tier: str, when: dtime, text: str) -> ScheduledMessage:
+    async with get_session() as s:
+        sm = ScheduledMessage(tier=tier, time=when, text=text)
+        s.add(sm)
+        await s.commit()
+        await s.refresh(sm)
+        return sm
+
+
+async def scheduled_msg_list(tier: str) -> list[ScheduledMessage]:
+    async with get_session() as s:
+        res = await s.execute(
+            select(ScheduledMessage).where(ScheduledMessage.tier == tier).order_by(ScheduledMessage.id)
+        )
+        return res.scalars().all()
+
+
+async def scheduled_msg_get(msg_id: int) -> Optional[ScheduledMessage]:
+    async with get_session() as s:
+        res = await s.execute(select(ScheduledMessage).where(ScheduledMessage.id == msg_id))
+        return res.scalar_one_or_none()
+
+
+async def scheduled_msg_update(msg_id: int, when: Optional[dtime] = None, text: Optional[str] = None) -> bool:
+    async with get_session() as s:
+        res = await s.execute(select(ScheduledMessage).where(ScheduledMessage.id == msg_id))
+        sm = res.scalar_one_or_none()
+        if not sm:
+            return False
+        if when is not None:
+            sm.time = when
+        if text is not None:
+            sm.text = text
+        await s.commit()
+        return True
+
+
+async def scheduled_msg_toggle(msg_id: int) -> Optional[bool]:
+    async with get_session() as s:
+        res = await s.execute(select(ScheduledMessage).where(ScheduledMessage.id == msg_id))
+        sm = res.scalar_one_or_none()
+        if not sm:
+            return None
+        sm.enabled = not sm.enabled
+        await s.commit()
+        return sm.enabled
+
+
+async def scheduled_msg_delete(msg_id: int) -> bool:
+    async with get_session() as s:
+        res = await s.execute(select(ScheduledMessage).where(ScheduledMessage.id == msg_id))
+        sm = res.scalar_one_or_none()
+        if not sm:
+            return False
+        await s.delete(sm)
+        await s.commit()
+        return True
         
 async def migrate_pack_is_vip() -> None:
     async with engine.begin() as conn:

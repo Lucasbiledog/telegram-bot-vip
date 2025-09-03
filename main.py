@@ -1,6 +1,6 @@
 # --- imports no topo ---
 import os, logging, time, asyncio, json, re
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone, timedelta, time as dtime
 from typing import Optional, Tuple, Dict, Any
 import httpx
 
@@ -14,6 +14,9 @@ from telegram.error import TimedOut
 from contextlib import suppress
 
 from config import WEBAPP_URL, SELF_URL, ADMIN_IDS, OWNER_ID
+
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.cron import CronTrigger
 
 
 
@@ -35,6 +38,12 @@ from db import (
     pack_mark_pending,
     pack_schedule,
     packs_get_due,
+    scheduled_msg_create,
+    scheduled_msg_list,
+    scheduled_msg_get,
+    scheduled_msg_update,
+    scheduled_msg_toggle,
+    scheduled_msg_delete,
 
 
 )
@@ -68,6 +77,7 @@ LOG = logging.getLogger("main")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "secret")
 GROUP_VIP_ID = int(os.getenv("GROUP_VIP_ID", "0"))
+GROUP_FREE_ID = int(os.getenv("GROUP_FREE_ID", "0"))
 WEBAPP_LINK_SECRET = os.getenv("WEBAPP_LINK_SECRET", "change-me")
 PACK_VIP_TIME_KEY = "pack_vip_time"
 _packvip_event = asyncio.Event()
@@ -89,6 +99,8 @@ application = (
     .write_timeout(30.0)
     .build()
 )
+
+scheduler = AsyncIOScheduler()
 # ---------- helpers ----------
 
 async def prices_table() -> Dict[int, float]:
@@ -437,6 +449,194 @@ async def send_pack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await reply_with_retry(update.effective_message,("Pack enviado com sucesso"))
 
 
+def _parse_hhmm(hhmm: str) -> Optional[dtime]:
+    if not re.match(r"^\d{2}:\d{2}$", hhmm):
+        return None
+    hour, minute = map(int, hhmm.split(":"))
+    if 0 <= hour < 24 and 0 <= minute < 60:
+        return dtime(hour=hour, minute=minute)
+    return None
+
+
+def schedule_sm_job(sm):
+    trigger = CronTrigger(
+        hour=sm.time.hour, minute=sm.time.minute, timezone=timezone.utc
+    )
+    scheduler.add_job(
+        send_scheduled_message,
+        trigger,
+        args=[sm.id],
+        id=f"SM#{sm.id}",
+        replace_existing=True,
+    )
+
+
+async def send_scheduled_message(msg_id: int):
+    sm = await scheduled_msg_get(msg_id)
+    if not sm or not sm.enabled:
+        return
+    chat_id = GROUP_VIP_ID if sm.tier == "vip" else GROUP_FREE_ID
+    if not chat_id:
+        return
+    try:
+        await send_with_retry(
+            application.bot.send_message, chat_id=chat_id, text=sm.text
+        )
+    except Exception as e:
+        LOG.error("Falha ao enviar mensagem %s: %s", msg_id, e)
+
+
+def _format_sm(sm) -> str:
+    status = "ON" if sm.enabled else "OFF"
+    preview = sm.text.replace("\n", " ")
+    if len(preview) > 30:
+        preview = preview[:30] + "..."
+    return f"- {sm.id}: {sm.time.strftime('%H:%M')} [{status}] {preview}"
+
+
+async def load_scheduled_messages():
+    msgs_vip = await scheduled_msg_list("vip")
+    msgs_free = await scheduled_msg_list("free")
+    for sm in msgs_vip + msgs_free:
+        if sm.enabled:
+            schedule_sm_job(sm)
+
+
+async def add_msg_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE, tier: str):
+    if not await _ensure_is_admin(update):
+        return
+    if len(context.args) < 2:
+        await reply_with_retry(
+            update.effective_message,
+            f"Uso: /add_msg_{tier} HH:MM <texto>",
+        )
+        return
+    hhmm = context.args[0]
+    when = _parse_hhmm(hhmm)
+    if not when:
+        await reply_with_retry(update.effective_message, "Hora inválida. Use HH:MM")
+        return
+    text = " ".join(context.args[1:])
+    sm = await scheduled_msg_create(tier, when, text)
+    schedule_sm_job(sm)
+    await reply_with_retry(
+        update.effective_message,
+        f"Mensagem {sm.id} agendada para {hhmm}",
+    )
+
+
+async def list_msgs_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE, tier: str):
+    if not await _ensure_is_admin(update):
+        return
+    msgs = await scheduled_msg_list(tier)
+    if not msgs:
+        await reply_with_retry(update.effective_message, "Nenhuma mensagem.")
+        return
+    lines = [_format_sm(m) for m in msgs]
+    await reply_with_retry(update.effective_message, "\n".join(lines))
+
+
+async def add_msg_vip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await add_msg_cmd(update, context, "vip")
+
+
+async def add_msg_free_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await add_msg_cmd(update, context, "free")
+
+
+async def list_msgs_vip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await list_msgs_cmd(update, context, "vip")
+
+
+async def list_msgs_free_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await list_msgs_cmd(update, context, "free")
+
+
+async def edit_msg_vip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await _ensure_is_admin(update):
+        return
+    if not context.args:
+        await reply_with_retry(
+            update.effective_message, "Uso: /edit_msg_vip <id> [HH:MM] [texto]"
+        )
+        return
+    try:
+        msg_id = int(context.args[0])
+    except ValueError:
+        await reply_with_retry(update.effective_message, "ID inválido")
+        return
+    when = None
+    text = None
+    if len(context.args) >= 2:
+        maybe_time = context.args[1]
+        parsed = _parse_hhmm(maybe_time)
+        if parsed:
+            when = parsed
+            if len(context.args) > 2:
+                text = " ".join(context.args[2:])
+        else:
+            text = " ".join(context.args[1:])
+    if when is None and text is None:
+        await reply_with_retry(update.effective_message, "Nada para editar")
+        return
+    ok = await scheduled_msg_update(msg_id, when, text)
+    if not ok:
+        await reply_with_retry(update.effective_message, "Mensagem não encontrada")
+        return
+    sm = await scheduled_msg_get(msg_id)
+    if sm and sm.enabled:
+        schedule_sm_job(sm)
+    await reply_with_retry(update.effective_message, "Mensagem atualizada")
+
+
+async def toggle_msg_vip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await _ensure_is_admin(update):
+        return
+    if not context.args:
+        await reply_with_retry(update.effective_message, "Uso: /toggle_msg_vip <id>")
+        return
+    try:
+        msg_id = int(context.args[0])
+    except ValueError:
+        await reply_with_retry(update.effective_message, "ID inválido")
+        return
+    state = await scheduled_msg_toggle(msg_id)
+    if state is None:
+        await reply_with_retry(update.effective_message, "Mensagem não encontrada")
+        return
+    if state:
+        sm = await scheduled_msg_get(msg_id)
+        if sm:
+            schedule_sm_job(sm)
+    else:
+        with suppress(Exception):
+            scheduler.remove_job(f"SM#{msg_id}")
+    await reply_with_retry(
+        update.effective_message,
+        "Mensagem ativada" if state else "Mensagem desativada",
+    )
+
+
+async def del_msg_vip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await _ensure_is_admin(update):
+        return
+    if not context.args:
+        await reply_with_retry(update.effective_message, "Uso: /del_msg_vip <id>")
+        return
+    try:
+        msg_id = int(context.args[0])
+    except ValueError:
+        await reply_with_retry(update.effective_message, "ID inválido")
+        return
+    ok = await scheduled_msg_delete(msg_id)
+    if not ok:
+        await reply_with_retry(update.effective_message, "Mensagem não encontrada")
+        return
+    with suppress(Exception):
+        scheduler.remove_job(f"SM#{msg_id}")
+    await reply_with_retry(update.effective_message, "Mensagem removida")
+
+
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
     """Log the exception and notify admins."""
     LOG.exception("Exception while handling update", exc_info=context.error)
@@ -455,6 +655,13 @@ application.add_handler(CommandHandler("tx", tx_cmd))
 application.add_handler(CommandHandler("packs", packs_cmd))
 application.add_handler(CommandHandler("admin", admin_add_cmd))
 application.add_handler(CommandHandler("radmin", radmin_cmd))
+application.add_handler(CommandHandler("add_msg_vip", add_msg_vip_cmd))
+application.add_handler(CommandHandler("add_msg_free", add_msg_free_cmd))
+application.add_handler(CommandHandler("list_msgs_vip", list_msgs_vip_cmd))
+application.add_handler(CommandHandler("list_msgs_free", list_msgs_free_cmd))
+application.add_handler(CommandHandler("edit_msg_vip", edit_msg_vip_cmd))
+application.add_handler(CommandHandler("toggle_msg_vip", toggle_msg_vip_cmd))
+application.add_handler(CommandHandler("del_msg_vip", del_msg_vip_cmd))
 application.add_handler(CommandHandler("vip", vip_admin_cmd))
 application.add_handler(CommandHandler("pack_pending", pack_pending_cmd))
 application.add_handler(CommandHandler("set_packvip", set_packvip_cmd))
@@ -592,6 +799,8 @@ async def on_startup():
     if OWNER_ID and OWNER_ID not in ADMIN_IDS:
         ADMIN_IDS.append(OWNER_ID)
     await init_db()
+    scheduler.start()
+    await load_scheduled_messages()
     db_admins = await cfg_get("admin_ids")
     if db_admins:
         for s in db_admins.split(","):
@@ -645,3 +854,5 @@ async def on_shutdown():
         await application.stop()
     with suppress(Exception):
         await application.shutdown()
+    with suppress(Exception):
+        scheduler.shutdown(wait=False)
