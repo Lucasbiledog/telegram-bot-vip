@@ -31,10 +31,12 @@ from db import (
     pack_get,
     pack_list,
     pack_get_next_vip,
+    pack_get_next_free,
     pack_mark_sent,
     pack_mark_pending,
     pack_schedule,
     packs_get_due,
+    
 
 
 )
@@ -68,9 +70,13 @@ LOG = logging.getLogger("main")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "secret")
 GROUP_VIP_ID = int(os.getenv("GROUP_VIP_ID", "0"))
+GROUP_FREE_ID = int(os.getenv("GROUP_FREE_ID", str(GROUP_VIP_ID)))
 WEBAPP_LINK_SECRET = os.getenv("WEBAPP_LINK_SECRET", "change-me")
 PACK_VIP_TIME_KEY = "pack_vip_time"
+PACK_FREE_TIME_KEY = "pack_free_time"
 _packvip_event = asyncio.Event()
+_packfree_event = asyncio.Event()
+
 
 
 if not BOT_TOKEN:
@@ -84,11 +90,11 @@ app.mount("/pay", StaticFiles(directory="./webapp", html=True), name="pay")
 application = (
     ApplicationBuilder()
     .token(BOT_TOKEN)
-    .connect_timeout(30.0)
-    .read_timeout(30.0)
-    .write_timeout(30.0)
+    .connect_timeout(10.0)
+    .read_timeout(10.0)
+    .write_timeout(10.0
     .build()
-)
+))
 # ---------- helpers ----------
 
 async def prices_table() -> Dict[int, float]:
@@ -167,7 +173,11 @@ async def comandos_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
            "/tx <hash> — validar pagamento pelo hash (ou use o botão no checkout)\n"
            "/pack — criar novo pack\n"
            "/admin <tg_id> — adicionar admin\n"
-           "/radmin <tg_id> — remover admin\n\n"
+           "/radmin <tg_id> — remover admin\n"
+           "/set_pendentevip <id> — marcar pack VIP como pendente\n"
+           "/set_pendentefree <id> — marcar pack free como pendente\n"
+           "/set_enviadovip <id> — marcar pack VIP como enviado\n"
+           "/set_enviadofree <id> — marcar pack free como enviado\n\n"
            "Planos (USD):\n" + tabela)
     await update.effective_message.reply_text(txt)
 
@@ -348,6 +358,91 @@ async def pack_pending_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = f"Pack {pack_id} marcado como pendente" if ok else "Pack não encontrado"
     await reply_with_retry(update.effective_message,(msg))
 
+async def set_pendentevip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await _ensure_is_admin(update):
+        return
+    if not context.args:
+        await reply_with_retry(update.effective_message, "Uso: /set_pendentevip <id>")
+        return
+    try:
+        pack_id = int(context.args[0])
+    except ValueError:
+        await reply_with_retry(update.effective_message, "ID inválido")
+        return
+    pack = await pack_get(pack_id)
+    if not pack:
+        await reply_with_retry(update.effective_message, "Pack não encontrado")
+        return
+    if not pack.is_vip:
+        await reply_with_retry(update.effective_message, "Pack não é VIP")
+        return
+    await pack_mark_pending(pack_id)
+    await reply_with_retry(update.effective_message, f"Pack {pack_id} marcado como pendente (VIP)")
+
+async def set_pendentefree_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await _ensure_is_admin(update):
+        return
+    if not context.args:
+        await reply_with_retry(update.effective_message, "Uso: /set_pendentefree <id>")
+        return
+    try:
+        pack_id = int(context.args[0])
+    except ValueError:
+        await reply_with_retry(update.effective_message, "ID inválido")
+        return
+    pack = await pack_get(pack_id)
+    if not pack:
+        await reply_with_retry(update.effective_message, "Pack não encontrado")
+        return
+    if pack.is_vip:
+        await reply_with_retry(update.effective_message, "Pack não é free")
+        return
+    await pack_mark_pending(pack_id)
+    await reply_with_retry(update.effective_message, f"Pack {pack_id} marcado como pendente (free)")
+
+async def set_enviadovip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await _ensure_is_admin(update):
+        return
+    if not context.args:
+        await reply_with_retry(update.effective_message, "Uso: /set_enviadovip <id>")
+        return
+    try:
+        pack_id = int(context.args[0])
+    except ValueError:
+        await reply_with_retry(update.effective_message, "ID inválido")
+        return
+    pack = await pack_get(pack_id)
+    if not pack:
+        await reply_with_retry(update.effective_message, "Pack não encontrado")
+        return
+    if not pack.is_vip:
+        await reply_with_retry(update.effective_message, "Pack não é VIP")
+        return
+    await pack_mark_sent(pack_id)
+    await reply_with_retry(update.effective_message, f"Pack {pack_id} marcado como enviado (VIP)")
+
+async def set_enviadofree_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await _ensure_is_admin(update):
+        return
+    if not context.args:
+        await reply_with_retry(update.effective_message, "Uso: /set_enviadofree <id>")
+        return
+    try:
+        pack_id = int(context.args[0])
+    except ValueError:
+        await reply_with_retry(update.effective_message, "ID inválido")
+        return
+    pack = await pack_get(pack_id)
+    if not pack:
+        await reply_with_retry(update.effective_message, "Pack não encontrado")
+        return
+    if pack.is_vip:
+        await reply_with_retry(update.effective_message, "Pack não é free")
+        return
+    await pack_mark_sent(pack_id)
+    await reply_with_retry(update.effective_message, f"Pack {pack_id} marcado como enviado (free)")
+
+
 async def set_packvip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     if uid not in ADMIN_IDS:
@@ -362,6 +457,21 @@ async def set_packvip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await cfg_set(PACK_VIP_TIME_KEY, hhmm)
     _packvip_event.set()
     await reply_with_retry(update.effective_message,(f"Horário do pack VIP ajustado para {hhmm}"))
+
+async def set_packfree_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    if uid not in ADMIN_IDS:
+        return
+    if not context.args:
+        await reply_with_retry(update.effective_message,("Uso: /set_packfree HH:MM"))
+        return
+    hhmm = context.args[0]
+    if not re.match(r"^\d{2}:\d{2}$", hhmm):
+        await reply_with_retry(update.effective_message,("Formato inválido. Use HH:MM"))
+        return
+    await cfg_set(PACK_FREE_TIME_KEY, hhmm)
+    _packfree_event.set()
+    await reply_with_retry(update.effective_message,(f"Horário do pack free ajustado para {hhmm}"))
 
 async def schedule_pack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
@@ -457,7 +567,12 @@ application.add_handler(CommandHandler("admin", admin_add_cmd))
 application.add_handler(CommandHandler("radmin", radmin_cmd))
 application.add_handler(CommandHandler("vip", vip_admin_cmd))
 application.add_handler(CommandHandler("pack_pending", pack_pending_cmd))
+application.add_handler(CommandHandler("set_pendentevip", set_pendentevip_cmd))
+application.add_handler(CommandHandler("set_pendentefree", set_pendentefree_cmd))
+application.add_handler(CommandHandler("set_enviadovip", set_enviadovip_cmd))
+application.add_handler(CommandHandler("set_enviadofree", set_enviadofree_cmd))
 application.add_handler(CommandHandler("set_packvip", set_packvip_cmd))
+application.add_handler(CommandHandler("set_packfree", set_packfree_cmd))
 application.add_handler(CommandHandler("schedule_pack", schedule_pack_cmd))
 application.add_handler(CommandHandler("send_pack", send_pack_cmd))
 application.add_handler(pack_conv_handler)
@@ -514,7 +629,8 @@ async def telegram_webhook(secret: str, request: Request):
     await application.process_update(update)
     return PlainTextResponse("ok")
 
-async def _send_pack(pack):
+async def _send_pack(pack, chat_id: int):
+
 
     previews = json.loads(pack.previews or "[]")
     files = json.loads(pack.files or "[]")
@@ -529,7 +645,7 @@ async def _send_pack(pack):
             )
             for p in rest:
                 await send_with_retry(
-                    application.bot.send_photo, chat_id=GROUP_VIP_ID, photo=p
+                    application.bot.send_photo, chat_id=chat_id, photo=p
                 )
         else:
             await send_with_retry(
@@ -539,7 +655,7 @@ async def _send_pack(pack):
             )
         for f in files:
             await send_with_retry(
-                application.bot.send_document, chat_id=GROUP_VIP_ID, document=f
+                application.bot.send_document, chat_id=chat_id, document=f
             )
         await pack_mark_sent(pack.id)
     except Exception as e:
@@ -550,7 +666,14 @@ async def send_vip_pack():
     if not pack:
         LOG.info("Nenhum pack VIP pendente para envio.")
         return
-    await _send_pack(pack)
+    await _send_pack(pack, GROUP_VIP_ID)
+
+async def send_free_pack():
+    pack = await pack_get_next_free()
+    if not pack:
+        LOG.info("Nenhum pack free pendente para envio.")
+        return
+    await _send_pack(pack, GROUP_FREE_ID)
 
 async def packvip_loop():
     while True:
@@ -577,12 +700,38 @@ async def packvip_loop():
             pass
         await send_vip_pack()
 
+async def packfree_loop():
+    while True:
+        hhmm = await cfg_get(PACK_FREE_TIME_KEY)
+        if not hhmm:
+            await asyncio.sleep(60)
+            continue
+        try:
+            hour, minute = map(int, hhmm.split(":"))
+        except Exception:
+            LOG.error("Horário packfree inválido: %s", hhmm)
+            await asyncio.sleep(60)
+            continue
+        now = datetime.now(timezone.utc)
+        run_at = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        if run_at <= now:
+            run_at += timedelta(days=1)
+        wait = (run_at - now).total_seconds()
+        try:
+            await asyncio.wait_for(_packfree_event.wait(), timeout=wait)
+            _packfree_event.clear()
+            continue
+        except asyncio.TimeoutError:
+            pass
+        await send_free_pack()
+
 async def scheduled_pack_loop():
     while True:
         now = datetime.now(timezone.utc)
         packs = await packs_get_due(now)
         for pack in packs:
-            await _send_pack(pack)
+            chat_id = GROUP_VIP_ID if pack.is_vip else GROUP_FREE_ID
+            await _send_pack(pack, chat_id)
         await asyncio.sleep(30)
 
 # -------- lifecycle --------
@@ -628,10 +777,11 @@ async def on_startup():
     # heartbeat de log (não bloqueante)
     asyncio.create_task(_heartbeat())
     asyncio.create_task(packvip_loop())
+    asyncio.create_task(packfree_loop())
     asyncio.create_task(scheduled_pack_loop())
 
     _packvip_event.set()
-
+    _packfree_event.set()
 
 
 async def _heartbeat():
