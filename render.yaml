@@ -5,3 +5,8 @@ services:
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
     pythonVersion: 3.11.9
+envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: telegram-bot-vip-db
+          property: connectionString
