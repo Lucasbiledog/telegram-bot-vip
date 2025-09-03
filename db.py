@@ -118,7 +118,7 @@ async def hash_store(tx_hash: str, tg_id: int) -> None:
 
 async def pack_create(title: str, previews: list[str], files: list[str], is_vip: bool = False) -> None:
     async with get_session() as s:
-         s.add(
+        s.add(
             Pack(
                 title=title,
                 previews=json.dumps(previews),
@@ -126,7 +126,7 @@ async def pack_create(title: str, previews: list[str], files: list[str], is_vip:
                 is_vip=is_vip,
             )
         )
-         await s.commit()
+        await s.commit()
          
 async def pack_mark_pending(pack_id: int) -> bool:
     async with get_session() as s:
@@ -155,15 +155,6 @@ async def pack_get_next_vip() -> Optional[Pack]:
         res = await s.execute(
             select(Pack)
             .where(Pack.is_vip.is_(True), Pack.sent_at.is_(None))
-            .order_by(Pack.id.asc())
-        )
-        return res.scalars().first()
-
-async def pack_get_next_free() -> Optional[Pack]:
-    async with get_session() as s:
-        res = await s.execute(
-            select(Pack)
-            .where(Pack.is_vip.is_(False), Pack.sent_at.is_(None))
             .order_by(Pack.id.asc())
         )
         return res.scalars().first()
