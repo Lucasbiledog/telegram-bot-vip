@@ -139,10 +139,15 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "O bot detecta a chain/moeda automaticamente e libera o VIP."
     )
 
+async def id_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    await update.effective_message.reply_text(f"Seu ID: {uid}")   
+
 async def comandos_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     prices = await prices_table()
     tabela = "\n".join([f"- {d} dias: ${p:.2f}" for d, p in sorted(prices.items())])
     txt = ("Comandos:\n"
+            "/id — mostrar seu ID numérico\n"
            "/checkout — ver carteira e planos\n"
            "/tx <hash> — validar pagamento pelo hash (ou use o botão no checkout)\n"
            "/pack — criar novo pack\n\n"
@@ -206,6 +211,50 @@ async def packs_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = "\n\n".join(sections) if sections else "Nenhum pack disponível."
     await update.effective_message.reply_text(text)
 
+async def admin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    if uid not in ADMIN_IDS:
+        return
+    args = context.args
+    if not args:
+        await update.effective_message.reply_text("Uso: /admin <list|add|remove>")
+        return
+    sub = args[0].lower()
+    if sub == "list":
+        ids = ", ".join(str(i) for i in ADMIN_IDS)
+        await update.effective_message.reply_text(ids or "Nenhum admin")
+    elif sub == "add":
+        if len(args) < 2:
+            await update.effective_message.reply_text("Uso: /admin add <tg_id>")
+            return
+        try:
+            tgt = int(args[1])
+        except ValueError:
+            await update.effective_message.reply_text("tg_id inválido")
+            return
+        if tgt in ADMIN_IDS:
+            await update.effective_message.reply_text("Usuário já é admin")
+            return
+        ADMIN_IDS.append(tgt)
+        await cfg_set("admin_ids", ",".join(str(i) for i in ADMIN_IDS))
+        await update.effective_message.reply_text("Admin adicionado")
+    elif sub == "remove":
+        if len(args) < 2:
+            await update.effective_message.reply_text("Uso: /admin remove <tg_id>")
+            return
+        try:
+            tgt = int(args[1])
+        except ValueError:
+            await update.effective_message.reply_text("tg_id inválido")
+            return
+        if tgt not in ADMIN_IDS:
+            await update.effective_message.reply_text("Usuário não é admin")
+            return
+        ADMIN_IDS.remove(tgt)
+        await cfg_set("admin_ids", ",".join(str(i) for i in ADMIN_IDS))
+        await update.effective_message.reply_text("Admin removido")
+    else:
+        await update.effective_message.reply_text("Uso: /admin <list|add|remove>")
 
 async def vip_admin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
@@ -369,10 +418,12 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_message(chat_id=admin_id, text=f"Erro: {context.error}")
 
 application.add_handler(CommandHandler("start", start_cmd))
+application.add_handler(CommandHandler("id", id_cmd))
 application.add_handler(CommandHandler("comandos", comandos_cmd))
 application.add_handler(CommandHandler("checkout", checkout_cmd))
 application.add_handler(CommandHandler("tx", tx_cmd))
 application.add_handler(CommandHandler("packs", packs_cmd))
+application.add_handler(CommandHandler("admin", admin_cmd))
 application.add_handler(CommandHandler("vip", vip_admin_cmd))
 application.add_handler(CommandHandler("pack_pending", pack_pending_cmd))
 application.add_handler(CommandHandler("set_packvip", set_packvip_cmd))
@@ -495,6 +546,19 @@ async def scheduled_pack_loop():
 async def on_startup():
     LOG.info("Starting up...")
     await init_db()
+    db_admins = await cfg_get("admin_ids")
+    if db_admins:
+        for s in db_admins.split(","):
+            s = s.strip()
+            if not s:
+                continue
+            try:
+                i = int(s)
+            except ValueError:
+                LOG.warning("ID de admin inválido: %s", s)
+                continue
+            if i not in ADMIN_IDS:
+                ADMIN_IDS.append(i)
     await application.initialize()
     with suppress(Exception):
         await application.start()
