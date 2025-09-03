@@ -10,3 +10,5 @@ envVars:
         fromDatabase:
           name: telegram-bot-vip-db
           property: connectionString
+      - key: OWNER_ID
+        value: "7123614866" # substitua pelo ID do seu primeiro administrador

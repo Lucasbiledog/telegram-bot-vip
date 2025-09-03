@@ -9,7 +9,8 @@ from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
 from contextlib import suppress
 
-from config import WEBAPP_URL, SELF_URL, ADMIN_IDS
+from config import WEBAPP_URL, SELF_URL, ADMIN_IDS, OWNER_ID
+
 
 
 # suas dependências locais
@@ -581,6 +582,8 @@ async def scheduled_pack_loop():
 @app.on_event("startup")
 async def on_startup():
     LOG.info("Starting up...")
+    if OWNER_ID and OWNER_ID not in ADMIN_IDS:
+        ADMIN_IDS.append(OWNER_ID)
     await init_db()
     db_admins = await cfg_get("admin_ids")
     if db_admins:
