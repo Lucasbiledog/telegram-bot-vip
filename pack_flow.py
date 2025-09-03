@@ -1,15 +1,6 @@
 from __future__ import annotations
-import os
 import re
-import logging
-from telegram import (
-    Update,
-    InputMediaPhoto,
-    InlineKeyboardMarkup,
-    InlineKeyboardButton,
-)
-from telegram.error import TelegramError
-from telegram.error import BadRequest
+from telegram import Update
 from telegram.ext import (
     CommandHandler,
     ConversationHandler,
@@ -18,14 +9,7 @@ from telegram.ext import (
     filters,
 )
 
-from config import WEBAPP_URL
-
 from db import pack_create
-LOG = logging.getLogger("pack_flow")
-GROUP_VIP_ID = int(os.getenv("GROUP_VIP_ID", "0"))
-GROUP_FREE_ID = int(os.getenv("GROUP_FREE_ID", "0"))
-WEBAPP_URL = os.getenv("WEBAPP_URL") or f"{os.getenv('SELF_URL', '').rstrip('/')}/pay/"
-
 
 TITLE, KIND, PREVIEWS, FILES, CONFIRM = range(5)
 
@@ -100,35 +84,9 @@ async def confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
         previews = context.user_data.get("previews", [])
         files = context.user_data.get("files", [])
         await pack_create(title, previews, files, is_vip)
-        await update.effective_message.reply_text("Pack salvo!")
-        target_group = GROUP_VIP_ID if is_vip else GROUP_FREE_ID
-        if target_group:
-            if title:
-                await context.bot.send_message(chat_id=target_group, text=title)
-            if is_vip and previews:
-                media = [InputMediaPhoto(p) for p in previews[:10]]
-                await context.bot.send_media_group(chat_id=target_group, media=media)
-            for fid in files:
-                await context.bot.send_document(chat_id=target_group, document=fid)
-
-        if is_vip and GROUP_FREE_ID:
-            try:
-                if previews:
-                    media = [InputMediaPhoto(p) for p in previews[:10]]
-                    await context.bot.send_media_group(chat_id=GROUP_FREE_ID, media=media)
-                kb = InlineKeyboardMarkup([
-                    [InlineKeyboardButton("Assinar VIP", web_app=WebAppInfo(url=WEBAPP_URL))]
-                ])
-                await context.bot.send_message(
-                    chat_id=GROUP_FREE_ID,
-                    text="Curtiu as previews? Assine VIP para acessar o pack completo!",
-                    reply_markup=kb,
-                )
-            except TelegramError:
-                LOG.exception("Falha ao notificar grupo free")
-                await update.effective_message.reply_text(
-                    "Falha ao notificar grupo free."
-                )
+        await update.effective_message.reply_text(
+            "Pack salvo para envio futuro."
+        )
 
 
     else:
