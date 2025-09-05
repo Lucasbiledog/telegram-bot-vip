@@ -447,40 +447,81 @@ def normalize_tx_hash(s: str) -> Optional[str]:
         return ("0x" + s.lower()) if len(s) == 64 else None
 
 async def pagar_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Comando /pagar - instruções de pagamento"""
+    """Comando /pagar - redireciona para página de checkout"""
     if not WALLET_ADDRESS:
         return await update.effective_message.reply_text("Método de pagamento não configurado. (WALLET_ADDRESS ausente)")
 
     user = update.effective_user
-    if not user:
-        return
+    chat = update.effective_chat
+    msg = update.effective_message
 
-    # Instruções de pagamento
-    instrucoes = (
-        f"💸 <b>Pagamento via Cripto</b>\n"
-        f"1) Abra seu banco de cripto.\n"
-        f"2) Envie o valor para a carteira:\n<code>{WALLET_ADDRESS}</code>\n"
-        f"3) Depois me mande aqui: <code>/tx &lt;hash_da_transacao&gt;</code>\n\n"
-        f"⚙️ Valido on-chain (mín. {MIN_CONFIRMATIONS} confirmações).\n"
-        f"✅ Aprovando, te envio o convite do VIP no privado."
-    )
-
+    # Import WEBAPP_URL from config
     try:
-        # Tenta enviar no privado primeiro
-        await context.bot.send_message(
-            chat_id=user.id,
-            text=instrucoes,
-            parse_mode="HTML",
-            disable_web_page_preview=True
+        from config import WEBAPP_URL
+    except ImportError:
+        WEBAPP_URL = None
+
+    # Criar botão WebApp para checkout se disponível
+    if WEBAPP_URL:
+        from telegram import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
+        
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton(
+                "💳 Pagar com Crypto - Checkout", 
+                web_app=WebAppInfo(url=WEBAPP_URL)
+            )]
+        ])
+        
+        checkout_msg = (
+            f"💸 <b>Pagamento VIP via Cripto</b>\n\n"
+            f"✅ Clique no botão abaixo para acessar nossa página de checkout segura\n"
+            f"🔒 Pague com qualquer criptomoeda\n"
+            f"⚡ Ativação automática após confirmação\n\n"
+            f"💰 <b>Planos disponíveis:</b>\n"
+            f"• 30 dias: $0.05\n"
+            f"• 60 dias: $1.00\n" 
+            f"• 180 dias: $1.50\n"
+            f"• 365 dias: $2.00"
         )
         
-        # Se chegou até aqui, foi enviado no privado
-        if update.effective_chat and update.effective_chat.type != "private":
-            await update.effective_message.reply_text("📱 Te enviei as instruções no privado!")
+        try:
+            # Tenta enviar no privado com botão
+            await context.bot.send_message(
+                chat_id=user.id,
+                text=checkout_msg,
+                parse_mode="HTML",
+                reply_markup=keyboard
+            )
+            
+            # Se conseguiu enviar no privado e não está em privado, avisa
+            if chat.type != "private":
+                await msg.reply_text("📱 Te enviei o link de pagamento no privado!")
+                
+        except Exception:
+            # Fallback: envia no chat atual
+            await msg.reply_text(checkout_msg, parse_mode="HTML", reply_markup=keyboard)
+    
+    else:
+        # Fallback caso não tenha WEBAPP_URL: instruções manuais
+        instrucoes = (
+            f"💸 <b>Pagamento via Cripto</b>\n"
+            f"1) Abra seu banco de cripto.\n"
+            f"2) Envie o valor para a carteira:\n<code>{WALLET_ADDRESS}</code>\n"
+            f"3) Depois me mande aqui: <code>/tx &lt;hash_da_transacao&gt;</code>\n\n"
+            f"⚙️ Valido on-chain (mín. {MIN_CONFIRMATIONS} confirmações).\n"
+            f"✅ Aprovando, te envio o convite do VIP no privado."
+        )
 
-    except Exception:
-        # Se não conseguiu enviar no privado, envia no chat atual
-        await update.effective_message.reply_text(instrucoes, parse_mode="HTML")
+        try:
+            await context.bot.send_message(
+                chat_id=user.id,
+                text=instrucoes,
+                parse_mode="HTML"
+            )
+            if chat.type != "private":
+                await msg.reply_text("📱 Te enviei as instruções no privado!")
+        except Exception:
+            await msg.reply_text(instrucoes, parse_mode="HTML")
 
 async def tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Comando /tx - verificar transação"""

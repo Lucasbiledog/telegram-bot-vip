@@ -12,7 +12,8 @@ import pytz
 from dotenv import load_dotenv
 
 from fastapi import FastAPI, Request, HTTPException
-from fastapi.responses import PlainTextResponse, JSONResponse
+from fastapi.responses import PlainTextResponse, JSONResponse, HTMLResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 import uvicorn
 import httpx
 
@@ -2275,6 +2276,55 @@ async def root(): return {"status": "online", "message": "Bot ready (crypto + sc
 
 @app.get("/keepalive")
 async def keepalive(): return {"ok": True, "ts": now_utc().isoformat()}
+
+@app.get("/pay/")
+async def checkout_page():
+    """Serve the checkout page"""
+    try:
+        import os
+        webapp_path = os.path.join(os.path.dirname(__file__), "webapp", "index.html")
+        if os.path.exists(webapp_path):
+            return FileResponse(webapp_path, media_type="text/html")
+        else:
+            return HTMLResponse("""
+                <html><head><title>Checkout</title></head>
+                <body><h1>Checkout page not found</h1>
+                <p>Please ensure webapp/index.html exists</p></body></html>
+            """, status_code=404)
+    except Exception as e:
+        return HTMLResponse(f"<html><body><h1>Error: {e}</h1></body></html>", status_code=500)
+
+@app.get("/vip_pricing")
+async def get_vip_pricing():
+    """Endpoint para webapp obter informações de preços VIP"""
+    from utils import get_prices_sync
+    prices = get_prices_sync(os.getenv("VIP_PRICES_USD"))
+    return {
+        "wallet_address": WALLET_ADDRESS,
+        "plans": prices,
+        "min_confirmations": 3  # ou outra constante que você use
+    }
+
+@app.post("/process_payment")
+async def process_payment(request: Request):
+    """API endpoint para processar pagamentos do checkout"""
+    try:
+        data = await request.json()
+        tx_hash = data.get("tx_hash", "").strip()
+        user_id = data.get("user_id")
+        
+        if not tx_hash or not user_id:
+            return JSONResponse({"error": "tx_hash and user_id required"}, status_code=400)
+        
+        # Aqui você pode adicionar a lógica de processamento
+        # Por enquanto, retorna sucesso básico
+        return JSONResponse({
+            "status": "received", 
+            "message": "Transaction hash received and will be processed"
+        })
+        
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
 
 
 async def vip_expiration_warn_job(context: ContextTypes.DEFAULT_TYPE):
