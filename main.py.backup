@@ -16,7 +16,7 @@ from fastapi.responses import PlainTextResponse, JSONResponse
 import uvicorn
 import httpx
 
-from telegram import Update, InputMediaPhoto, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
+from telegram import Update, InputMediaPhoto
 from telegram.error import BadRequest
 from telegram.ext import (
     ApplicationBuilder,
@@ -47,7 +47,6 @@ from sqlalchemy.orm import declarative_base, sessionmaker, relationship
 from sqlalchemy.engine import make_url
 
 from models import Pack
-from config import WEBAPP_URL
 
 from payments import (
     resolve_payment_usd_autochain,              # já está funcionando
@@ -518,17 +517,7 @@ PORT = int(os.getenv("PORT", 8000))
 # FASTAPI + PTB
 # =========================
 app = FastAPI()
-# Configure timeouts para produção
-from telegram.request import HTTPXRequest
-request = HTTPXRequest(
-    connection_pool_size=8,
-    read_timeout=30,
-    write_timeout=30,
-    connect_timeout=10,
-    pool_timeout=10,
-)
-
-application = ApplicationBuilder().token(BOT_TOKEN).request(request).build()
+application = ApplicationBuilder().token(BOT_TOKEN).build()
 bot = None
 BOT_USERNAME = None
 
@@ -1194,22 +1183,7 @@ async def enviar_pack_job(context: ContextTypes.DEFAULT_TYPE, tier: str, target_
         if tier == "vip" and previews:
             try:
                 await _send_preview_media(context, GROUP_FREE_ID, previews)
-                
-                # Criar keyboard inline com botão para checkout
-                keyboard = None
-                if WEBAPP_URL:
-                    keyboard = InlineKeyboardMarkup([
-                        [InlineKeyboardButton(
-                            "💳 Assinar VIP - Pagar com Crypto", 
-                            web_app=WebAppInfo(url=WEBAPP_URL)
-                        )]
-                    ])
-                
-                await context.application.bot.send_message(
-                    chat_id=GROUP_FREE_ID, 
-                    text=FREE_PREVIEW_TEXT,
-                    reply_markup=keyboard
-                )
+                await context.application.bot.send_message(chat_id=GROUP_FREE_ID, text=FREE_PREVIEW_TEXT)
             except Exception as e:
                 logging.warning(f"Falha no crosspost VIP->FREE: {e}")
 
@@ -1677,10 +1651,10 @@ async def novopack_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try: username = BOT_USERNAME or (await application.bot.get_me()).username
         except Exception: username = None
         link = f"https://t.me/{username}?start=novopack" if username else ""
-        await reply_with_retry(update.effective_message, f"Use este comando no privado comigo, por favor.\n{link}")
+        await update.effective_message.reply_text(f"Use este comando no privado comigo, por favor.\n{link}")
         return ConversationHandler.END
     context.user_data.clear()
-    await reply_with_retry(update.effective_message, "Quer cadastrar em qual tier? Responda <b>vip</b> ou <b>free</b>.", parse_mode="HTML")
+    await update.effective_message.reply_text("Quer cadastrar em qual tier? Responda <b>vip</b> ou <b>free</b>.", parse_mode="HTML")
     return CHOOSE_TIER
 
 async def novopack_choose_tier(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1693,14 +1667,14 @@ async def novopack_choose_tier(update: Update, context: ContextTypes.DEFAULT_TYP
     return TITLE
 
 async def novopackvip_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not _require_admin(update): await reply_with_retry(update.effective_message, "Apenas admins."); return ConversationHandler.END
-    if update.effective_chat.type != "private": await reply_with_retry(update.effective_message, "Use este comando no privado comigo, por favor."); return ConversationHandler.END
+    if not _require_admin(update): await update.effective_message.reply_text("Apenas admins."); return ConversationHandler.END
+    if update.effective_chat.type != "private": await update.effective_message.reply_text("Use este comando no privado comigo, por favor."); return ConversationHandler.END
     context.user_data.clear(); context.user_data["tier"] = "vip"
     await update.effective_message.reply_text("🧩 Novo pack VIP — envie o <b>título</b>.", parse_mode="HTML"); return TITLE
 
 async def novopackfree_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not _require_admin(update): await reply_with_retry(update.effective_message, "Apenas admins."); return ConversationHandler.END
-    if update.effective_chat.type != "private": await reply_with_retry(update.effective_message, "Use este comando no privado comigo, por favor."); return ConversationHandler.END
+    if not _require_admin(update): await update.effective_message.reply_text("Apenas admins."); return ConversationHandler.END
+    if update.effective_chat.type != "private": await update.effective_message.reply_text("Use este comando no privado comigo, por favor."); return ConversationHandler.END
     context.user_data.clear(); context.user_data["tier"] = "free"
     await update.effective_message.reply_text("🧩 Novo pack FREE — envie o <b>título</b>.", parse_mode="HTML"); return TITLE
 
@@ -2013,6 +1987,278 @@ async def delete_later(chat_id: int, message_id: int, seconds: int = 5):
     except Exception:
         pass
 
+async def pagar_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not WALLET_ADDRESS:
+        return await update.effective_message.reply_text("Método de pagamento não configurado. (WALLET_ADDRESS ausente)")
+
+    user = update.effective_user
+    chat = update.effective_chat
+    msg  = update.effective_message
+
+    texto = (
+        f"💸 <b>Pagamento via Cripto</b>\n"
+        f"1) Abra seu banco de cripto.</b>.\n"
+        f"2) Envie o valor para a carteira:\n<code>{esc(WALLET_ADDRESS)}</code>\n"
+        f"3) Depois me mande aqui: <code>/tx &lt;hash_da_transacao&gt;</code>\n\n"
+        f"⚙️ Valido on-chain (mín. {MIN_CONFIRMATIONS} confirmações).\n"
+        f"✅ Aprovando, te envio o convite do VIP no privado."
+    )
+
+    plan_lines = [
+          f"- {plan.name.title()}: {PLAN_DAYS[plan]} dias por ${PLAN_PRICE_USD[plan]:.2f} USD"
+        for plan in VipPlan
+    ]
+    texto += "\n\nPlanos:\n" + "\n".join(plan_lines)
+
+    sent = await dm(user.id, texto)
+
+    if chat.type != "private":
+        # apaga a mensagem do usuário
+        try:
+            await msg.delete()
+        except Exception:
+            pass
+
+        bot_msg = None
+        if sent:
+            try:
+                bot_msg = await chat.send_message("Te enviei o passo a passo no privado. 👌")
+            except Exception:
+                pass
+        else:
+            # usuário não iniciou o bot
+            try:
+                username = BOT_USERNAME or (await application.bot.get_me()).username
+            except Exception:
+                username = None
+            link = f"https://t.me/{username}?start=pagamento" if username else ""
+            bot_msg = await chat.send_message(
+                ("⚠️ Não consegui te chamar no privado.\n"
+                 "Toque em <b>Start</b> no meu perfil e tente /pagar de novo.\n"
+                 f"{esc(link) if link else ''}"),
+                parse_mode="HTML"
+            )
+
+        # apaga o aviso depois de 5s (ajuste aqui se quiser outro tempo)
+        if bot_msg:
+            async def _delete_later(mid: int):
+                await asyncio.sleep(20)  # <<< mude 5 para o número de segundos que quiser
+                try:
+                    await application.bot.delete_message(chat_id=chat.id, message_id=mid)
+                except Exception:
+                    pass
+            asyncio.create_task(_delete_later(bot_msg.message_id))
+    else:
+        await msg.reply_text("Qualquer dúvida, me mande a hash com /tx <hash> 😉")
+
+
+async def listar_pendentes_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not (update.effective_user and is_admin(update.effective_user.id)): return await update.effective_message.reply_text("Apenas admins.")
+    with SessionLocal() as s:
+        pend = s.query(Payment).filter(Payment.status == "pending").order_by(Payment.created_at.asc()).all()
+        if not pend:
+            return await update.effective_message.reply_text("Sem pagamentos pendentes.")
+        lines = ["⏳ <b>Pendentes</b>"] + [
+            f"- user_id:{p.user_id} @{p.username or '-'} | {p.tx_hash} | {p.chain} | {p.created_at.strftime('%d/%m %H:%M')}" for p in pend
+        ]
+        await update.effective_message.reply_text("\n".join(lines), parse_mode="HTML")
+    
+async def tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = update.effective_message
+    user = update.effective_user
+    if not context.args:
+        return await msg.reply_text("Uso: /tx <hash_da_transacao> (ex.: 0x… com 66 caracteres)")
+
+    tx_raw = context.args[0]
+    tx_hash = normalize_tx_hash(tx_raw)
+    if not tx_hash:
+        return await msg.reply_text(
+            "Hash inválida. Cole o *hash da transação*, não o endereço.\n"
+            "• Deve começar com `0x` e ter 66 caracteres (0x + 64 hex).",
+            parse_mode="Markdown"
+        )
+
+
+    # Já existe?
+    with SessionLocal() as s:
+        existing = s.query(Payment).filter(Payment.tx_hash == tx_hash).first()
+        if existing and existing.user_id != user.id:
+            return await msg.reply_text("Esse hash já foi usado por outro usuário.")
+
+    if existing and existing.status == "approved":
+        if existing.user_id == user.id:
+            m = vip_get(user.id)
+            try:
+                invite_link = (m.invite_link if m else None) or await create_and_store_personal_invite(user.id)
+                await dm(
+                    user.id,
+                    f"✅ Seu pagamento já estava aprovado!\n"
+                    f"VIP até {m.expires_at:%d/%m/%Y} ({human_left(m.expires_at)}).\n"
+                    f"Entre no VIP: {invite_link}",
+                    parse_mode=None,
+                )
+                return await msg.reply_text("Esse hash já estava aprovado. Reenviei o convite no seu privado. ✅")
+            except Exception as e:
+                return await msg.reply_text(f"Hash aprovado, mas falhou ao reenviar o convite: {e}")
+        else:
+            return await msg.reply_text("Esse hash já foi usado por outro usuário.")
+    elif existing and existing.status == "pending":
+        return await msg.reply_text("Esse hash já foi registrado e está pendente. Aguarde a validação.")
+    elif existing and existing.status == "rejected":
+        return await msg.reply_text("Esse hash já foi rejeitado. Fale com um administrador.")
+
+    # Verificação on-chain
+    try:
+        res = await verify_tx_any(tx_hash)
+    except Exception as e:
+        logging.exception("Erro verificando transação")
+        return await msg.reply_text(f"❌ Erro ao verificar on-chain: {e}")
+
+    # Checagem de plano
+    paid_ok = res.get("ok", False)
+    plan_days = None
+    if paid_ok:
+        plan_days = res.get("plan_days") or infer_plan_days(amount_usd=res.get("amount_usd"))
+        if not plan_days:
+            logging.warning(
+                "Valor da transação não corresponde a nenhum plano: %s",
+                res.get("amount_usd"),
+            )
+            paid_ok = False
+            res["reason"] = res.get("reason") or "Valor não corresponde a nenhum plano"
+
+    status = "approved" if (AUTO_APPROVE_CRYPTO and paid_ok) else "pending"
+
+    with SessionLocal() as s:
+        try:
+            p = Payment(
+                user_id=user.id,
+                username=user.username,
+                tx_hash=tx_hash,
+                chain=CHAIN_NAME,
+                status=status,
+                amount=str(res.get("amount_usd") or ""),
+                decided_at=now_utc() if status == "approved" else None,
+            )
+            s.add(p)
+            s.commit()
+        except Exception:
+            s.rollback()
+            raise
+
+    if status == "approved":
+        try:
+            plan = plan_from_amount(float(res.get("amount_usd") or 0)) or VipPlan.TRIMESTRAL
+            m = vip_upsert_start_or_extend(user.id, user.username, tx_hash, plan)
+            invite_link = await create_and_store_personal_invite(user.id)
+            await dm(
+                user.id,
+                f"✅ Pagamento confirmado na rede {CHAIN_NAME}!\n",
+                f"VIP válido até {m.expires_at:%d/%m/%Y} ({human_left(m.expires_at)}).\n",
+                f"Entre no VIP: {invite_link}",
+                parse_mode=None
+            )
+            return await msg.reply_text("✅ Verifiquei sua transação e já liberei seu acesso. Confira seu privado.")
+        except Exception as e:
+            logging.exception("Erro enviando invite auto-approve")
+            return await msg.reply_text(f"Pagamento OK, mas falhou ao enviar o convite: {e}")
+    else:
+        human = res.get("reason", "Aguardando confirmações.")
+        await msg.reply_text(f"⏳ Hash recebido. Status: {human}")
+        try:
+            for aid in list_admin_ids():
+                txt = f"📥 Pagamento pendente:\nuser_id:{user.id} @{user.username or '-'}\nhash:{tx_hash}\ninfo:{human}"
+                await dm(aid, txt, parse_mode=None)
+        except Exception:
+            pass
+
+
+async def aprovar_tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not (update.effective_user and is_admin(update.effective_user.id)):
+        await update.effective_message.reply_text("Apenas admins.")
+        raise ApplicationHandlerStop
+    if not context.args:
+        return await update.effective_message.reply_text("Uso: /aprovar_tx <user_id>")
+
+    try:
+        uid = int(context.args[0])
+    except:
+        return await update.effective_message.reply_text("user_id inválido.")
+
+    with SessionLocal() as s:
+        try:
+            p = (
+                s.query(Payment)
+                 .filter(Payment.user_id == uid, Payment.status == "pending")
+                 .order_by(Payment.created_at.asc())
+                 .first()
+            )
+            if not p:
+                return await update.effective_message.reply_text("Nenhum pagamento pendente para este usuário.")
+
+            p.status = "approved"
+            p.decided_at = now_utc()
+            s.commit()
+            plan = plan_from_amount(float(p.amount or 0)) or VipPlan.TRIMESTRAL
+            vip_upsert_start_or_extend(uid, None, p.tx_hash, plan)
+            txh = p.tx_hash
+        except Exception as e:
+            s.rollback()
+            return await update.effective_message.reply_text(f"❌ Erro ao aprovar: {e}")
+
+       # cria/renova VIP conforme plano e vincula a hash aprovada
+    try:
+        # tenta pegar username atual via bot (se conseguir)
+        try:
+            u = await application.bot.get_chat(uid)
+            username = u.username
+        except Exception:
+            username = None
+
+        m = vip_upsert_start_or_extend(uid, username, txh, plan)
+
+        invite_link = await create_and_store_personal_invite(uid)
+        await application.bot.send_message(
+    chat_id=uid,
+    text=(f"✅ Pagamento aprovado!\n"
+          f"Seu VIP vai até {m.expires_at:%d/%m/%Y} ({human_left(m.expires_at)}).\n"
+          f"Entre no VIP: {invite_link}")
+)
+
+        await update.effective_message.reply_text(f"Aprovado e convite enviado para {uid}.")
+    except Exception as e:
+        logging.exception("Erro enviando invite")
+        await update.effective_message.reply_text(f"Aprovado, mas falhou ao enviar convite: {e}")
+
+
+async def rejeitar_tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not (update.effective_user and is_admin(update.effective_user.id)): return await update.effective_message.reply_text("Apenas admins.")
+    if not context.args: return await update.effective_message.reply_text("Uso: /rejeitar_tx <user_id> [motivo]")
+    try: uid = int(context.args[0])
+    except: return await update.effective_message.reply_text("user_id inválido.")
+    motivo = " ".join(context.args[1:]).strip() if len(context.args) > 1 else "Não especificado"
+    with SessionLocal() as s:
+        try:
+            p = s.query(Payment).filter(Payment.user_id == uid, Payment.status == "pending").order_by(Payment.created_at.asc()).first()
+            if not p:
+                return await update.effective_message.reply_text("Nenhum pagamento pendente para este usuário.")
+            p.status = "rejected"
+            p.notes = motivo
+            p.decided_at = now_utc()
+            s.commit()
+            try:
+                await application.bot.send_message(chat_id=uid, text=f"❌ Pagamento rejeitado. Motivo: {motivo}")
+            except Exception:
+                pass
+            await update.effective_message.reply_text("Pagamento rejeitado.")
+        except Exception as e:
+            s.rollback()
+            await update.effective_message.reply_text(f"❌ Erro ao rejeitar: {e}")
+
+# =========================
+# Mensagens agendadas / Jobs
+# =========================
+JOB_PREFIX_SM = "schmsg_"
 def _tz(tz_name: str):
     try: return pytz.timezone(tz_name)
     except Exception: return pytz.timezone("America/Sao_Paulo")
@@ -2157,22 +2403,7 @@ async def set_pack_horario_free_cmd(update: Update, context: ContextTypes.DEFAUL
 # Error handler global
 # =========================
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle errors gracefully, especially timeout errors in production"""
-    error = context.error
-    
-    # Handle timeout errors more gracefully
-    if isinstance(error, (httpx.ConnectTimeout, httpx.ReadTimeout, httpx.WriteTimeout)):
-        logging.warning(f"Timeout error (expected in production): {error}")
-        return
-    
-    # Handle Telegram timeout errors
-    from telegram.error import TimedOut, NetworkError
-    if isinstance(error, (TimedOut, NetworkError)):
-        logging.warning(f"Telegram network error (expected in production): {error}")
-        return
-    
-    # For other errors, log with full traceback
-    logging.exception("Erro não tratado", exc_info=error)
+    logging.exception("Erro não tratado", exc_info=context.error)
 
 # =========================
 # Webhooks + Keepalive
