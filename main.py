@@ -515,6 +515,9 @@ GROUP_FREE_ID          = int(os.getenv("GROUP_FREE_ID", "-1002932075976"))
 
 PORT = int(os.getenv("PORT", 8000))
 
+# Job prefixes
+JOB_PREFIX_SM = "scheduled_msg_"
+
 # =========================
 # FASTAPI + PTB
 # =========================
