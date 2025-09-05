@@ -53,6 +53,7 @@ from payments import (
     resolve_payment_usd_autochain,              # já está funcionando
     WALLET_ADDRESS,                             # sua carteira destino
     pagar_cmd, tx_cmd, listar_pendentes_cmd,    # comandos de pagamento
+    aprovar_tx_cmd, rejeitar_tx_cmd,           # comandos admin de pagamento
 )
 from utils import (
     choose_plan_from_usd,                       # mapeia USD -> dias

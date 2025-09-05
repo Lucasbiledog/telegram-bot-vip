@@ -594,4 +594,106 @@ def get_min_confirmations() -> int:
 def get_supported_chains() -> Dict[str, Dict[str, str]]:
     return CHAINS.copy()
 
+async def aprovar_tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Comando admin para aprovar transação manualmente"""
+    from main import is_admin, Payment, SessionLocal
+    from utils import vip_upsert_and_get_until, create_one_time_invite
+    
+    if not (update.effective_user and is_admin(update.effective_user.id)):
+        return await update.effective_message.reply_text("Apenas admins.")
+    if not context.args:
+        return await update.effective_message.reply_text("Uso: /aprovar_tx <hash>")
+
+    tx_hash = normalize_tx_hash(context.args[0])
+    if not tx_hash:
+        return await update.effective_message.reply_text("Hash inválida.")
+
+    with SessionLocal() as s:
+        p = s.query(Payment).filter(Payment.tx_hash == tx_hash).first()
+        if not p:
+            return await update.effective_message.reply_text("Transação não encontrada.")
+        if p.status == "approved":
+            return await update.effective_message.reply_text("Já aprovada.")
+
+        try:
+            # Extend VIP
+            vip_until = await vip_upsert_and_get_until(p.user_id, p.username, p.days)
+            p.status = "approved"
+            p.vip_until = vip_until
+            s.commit()
+
+            valid_str = vip_until.strftime("%d/%m/%Y")
+
+            # Criar convite
+            from main import application, GROUP_VIP_ID
+            invite_link = await create_one_time_invite(
+                application.bot, GROUP_VIP_ID, expire_seconds=7200
+            )
+
+            # Notify user
+            success_msg = (
+                f"✅ **Pagamento aprovado!**\n"
+                f"VIP válido até {valid_str}\n\n"
+            )
+            if invite_link:
+                success_msg += f"🔗 [Entrar no grupo VIP]({invite_link})"
+            else:
+                success_msg += "Entre em contato para receber o convite do grupo VIP."
+
+            try:
+                await application.bot.send_message(
+                    chat_id=p.user_id, text=success_msg, parse_mode="Markdown"
+                )
+            except Exception:
+                pass
+
+            await update.effective_message.reply_text(
+                f"✅ Transação aprovada para user_id:{p.user_id} @{p.username}\n"
+                f"VIP válido até {valid_str}"
+            )
+
+        except Exception as e:
+            s.rollback()
+            import logging
+            logging.exception("Erro ao aprovar transação")
+            await update.effective_message.reply_text(f"❌ Erro: {e}")
+
+async def rejeitar_tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Comando admin para rejeitar transação"""
+    from main import is_admin, Payment, SessionLocal
+    
+    if not (update.effective_user and is_admin(update.effective_user.id)):
+        return await update.effective_message.reply_text("Apenas admins.")
+    if not context.args:
+        return await update.effective_message.reply_text("Uso: /rejeitar_tx <hash>")
+
+    tx_hash = normalize_tx_hash(context.args[0])
+    if not tx_hash:
+        return await update.effective_message.reply_text("Hash inválida.")
+
+    with SessionLocal() as s:
+        p = s.query(Payment).filter(Payment.tx_hash == tx_hash).first()
+        if not p:
+            return await update.effective_message.reply_text("Transação não encontrada.")
+        if p.status == "rejected":
+            return await update.effective_message.reply_text("Já rejeitada.")
+
+        p.status = "rejected"
+        s.commit()
+
+        # Notificar usuário
+        try:
+            from main import application
+            await application.bot.send_message(
+                chat_id=p.user_id,
+                text="❌ **Seu pagamento foi rejeitado.**\nEntre em contato se acha que há um erro.",
+                parse_mode="Markdown"
+            )
+        except Exception:
+            pass
+
+        await update.effective_message.reply_text(
+            f"❌ Transação rejeitada para user_id:{p.user_id} @{p.username}"
+        )
+
 
