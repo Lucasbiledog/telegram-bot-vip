@@ -464,11 +464,22 @@ async def pagar_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Criar botão WebApp para checkout se disponível
     if WEBAPP_URL:
         from telegram import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
+        from utils import make_link_sig
+        import time
+        import os
+        
+        # Gerar parâmetros de segurança para o link
+        uid = user.id
+        ts = int(time.time())
+        sig = make_link_sig(os.getenv("BOT_SECRET", "default"), uid, ts)
+        
+        # URL com parâmetros de segurança
+        secure_url = f"{WEBAPP_URL}?uid={uid}&ts={ts}&sig={sig}"
         
         keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton(
                 "💳 Pagar com Crypto - Checkout", 
-                web_app=WebAppInfo(url=WEBAPP_URL)
+                web_app=WebAppInfo(url=secure_url)
             )]
         ])
         

@@ -42,7 +42,13 @@ function renderPlans(plansObj) {
 // --- carrega carteira + planos do backend ---
 async function loadConfig() {
   if (!uid || !ts || !sig) {
-    showAlert("Link sem parâmetros de segurança (uid/ts/sig). Abra esta página pelo botão /checkout no Telegram.", false);
+    // Verificar se é um link genérico
+    const generic = q.get("generic");
+    if (generic) {
+      showAlert("Para acessar o checkout, use o comando /pagar no bot do Telegram para obter um link personalizado e seguro.", false);
+      return;
+    }
+    showAlert("Link sem parâmetros de segurança (uid/ts/sig). Abra esta página pelo botão /pagar no Telegram.", false);
     return;
   }
   try {

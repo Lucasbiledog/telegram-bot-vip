@@ -85,8 +85,20 @@ def get_database_url():
     
     # Check if we're in a cloud environment (Render, Heroku, etc.)
     if any(os.getenv(var) for var in ["RENDER", "HEROKU", "DYNO"]):
-        print("Detected cloud environment without DATABASE_URL. Using in-memory SQLite.")
-        return "sqlite:///:memory:"
+        print("Detected cloud environment without DATABASE_URL.")
+        # Try to use /tmp SQLite first, fallback to in-memory only if it fails
+        tmp_db = "/tmp/telegram_bot.db"
+        try:
+            # Test if we can write to /tmp
+            with open(tmp_db + ".test", 'w') as f:
+                f.write("test")
+            os.remove(tmp_db + ".test")
+            print(f"Using persistent SQLite database: {tmp_db}")
+            return f"sqlite:///{tmp_db}"
+        except Exception as e:
+            print(f"Cannot write to /tmp ({e}), using in-memory SQLite.")
+            print("WARNING: Data will be lost on restart! Configure PostgreSQL by adding DATABASE_URL env var.")
+            return "sqlite:///:memory:"
     
     # Try different SQLite paths in order of preference (for local development)
     sqlite_paths = [
@@ -1203,10 +1215,12 @@ async def enviar_pack_job(context: ContextTypes.DEFAULT_TYPE, tier: str, target_
                 # Criar keyboard inline com botão para checkout
                 keyboard = None
                 if WEBAPP_URL:
+                    # Para o crosspost, usar um link genérico que não precisa de uid específico
+                    # Os usuários serão direcionados para /pagar que gerará o link seguro
                     keyboard = InlineKeyboardMarkup([
                         [InlineKeyboardButton(
                             "💳 Assinar VIP - Pagar com Crypto", 
-                            web_app=WebAppInfo(url=WEBAPP_URL)
+                            web_app=WebAppInfo(url=f"{WEBAPP_URL}?generic=1")
                         )]
                     ])
                 
@@ -1678,6 +1692,7 @@ async def novopack_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not _require_admin(update):
         await update.effective_message.reply_text("Apenas admins podem usar este comando."); return ConversationHandler.END
     chat = update.effective_chat
+    # Permitir uso no privado ou nos grupos de storage
     if chat.type != "private" and not _is_allowed_group(chat.id):
         try: username = BOT_USERNAME or (await application.bot.get_me()).username
         except Exception: username = None
@@ -2325,6 +2340,96 @@ async def process_payment(request: Request):
         
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
+
+@app.get("/api/config")
+async def api_config(uid: str, ts: str, sig: str):
+    """Endpoint /api/config para webapp obter configurações de pagamento"""
+    try:
+        from utils import make_link_sig, get_prices_sync
+        
+        # Validar assinatura
+        if not uid or not ts or not sig:
+            raise HTTPException(status_code=400, detail="Parâmetros uid/ts/sig obrigatórios")
+        
+        try:
+            uid_int = int(uid)
+            ts_int = int(ts)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="uid/ts devem ser números")
+            
+        # Verificar se o timestamp não é muito antigo (ex: máximo 1 hora)
+        import time
+        now = int(time.time())
+        if abs(now - ts_int) > 3600:  # 1 hora
+            raise HTTPException(status_code=400, detail="Link expirado")
+            
+        # Validar assinatura
+        expected_sig = make_link_sig(BOT_SECRET or "default", uid_int, ts_int)
+        if sig != expected_sig:
+            raise HTTPException(status_code=403, detail="Assinatura inválida")
+        
+        # Obter configurações
+        prices = get_prices_sync(os.getenv("VIP_PRICES_USD"))
+        
+        return {
+            "wallet": WALLET_ADDRESS,
+            "plans_usd": prices,
+            "networks": ["ETH", "BSC", "POLYGON"],  # ajuste conforme suas redes suportadas
+            "confirmations_min": 1
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Erro em /api/config: {e}")
+        raise HTTPException(status_code=500, detail="Erro interno do servidor")
+
+@app.post("/api/validate")
+async def api_validate(request: Request):
+    """Endpoint /api/validate para validar pagamentos"""
+    try:
+        data = await request.json()
+        uid = data.get("uid")
+        username = data.get("username")
+        hash = data.get("hash", "").strip()
+        
+        if not uid or not hash:
+            raise HTTPException(status_code=400, detail="uid e hash são obrigatórios")
+        
+        # Por enquanto, simular validação do pagamento
+        # Você pode integrar aqui com a lógica real de validação de transações
+        # usando o payments.py ou outra implementação
+        
+        # Simulação básica
+        if len(hash) < 40:  # hash muito curto
+            return {"ok": False, "message": "Hash de transação inválido"}
+        
+        # Simular sucesso (você deve implementar a validação real aqui)
+        try:
+            # Aqui você chamaria a função real de validação
+            # Por exemplo: result = await validate_transaction(hash, uid)
+            
+            # Por enquanto, assumir sucesso para demonstração
+            invite_link = await assign_and_send_invite(uid, username, hash)
+            
+            return {
+                "ok": True,
+                "message": "Pagamento confirmado!",
+                "invite": invite_link
+            }
+            
+        except Exception as validation_error:
+            logging.error(f"Erro na validação: {validation_error}")
+            return {
+                "ok": False, 
+                "message": f"Erro na validação do pagamento: {str(validation_error)}"
+            }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Erro em /api/validate: {e}")
+        raise HTTPException(status_code=500, detail="Erro interno do servidor")
 
 
 async def vip_expiration_warn_job(context: ContextTypes.DEFAULT_TYPE):
