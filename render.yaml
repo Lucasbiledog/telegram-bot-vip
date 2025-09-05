@@ -3,8 +3,17 @@ services:
     name: telegram-bot
     env: python
     plan: free
-    buildCommand: ""
+    buildCommand: pip install -r requirements.txt
     startCommand: uvicorn main:app --host=0.0.0.0 --port=$PORT
     pythonVersion: 3.10
     autoDeploy: true
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.10
+
+databases:
+  - name: telegram-bot-db
+    databaseName: telegram_bot
+    user: telegram_user
+    plan: free
 

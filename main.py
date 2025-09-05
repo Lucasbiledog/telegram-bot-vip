@@ -72,7 +72,24 @@ from utils import (
 import tempfile
 
 def get_database_url():
-    """Get database URL with fallback handling for cloud deployments"""
+    """
+    Get database URL with fallback handling for cloud deployments.
+    
+    For production deployments (Render, Heroku, etc.):
+    - ALWAYS configure DATABASE_URL environment variable with PostgreSQL
+    - SQLite in /tmp is TEMPORARY and data will be LOST on redeploy
+    - In-memory database is for emergency fallback only
+    
+    To setup persistent PostgreSQL on Render.com:
+    1. Add database to render.yaml:
+       databases:
+         - name: telegram-bot-db
+           databaseName: telegram_bot
+           user: telegram_user
+           plan: free
+    2. DATABASE_URL will be automatically provided
+    3. Redeploy the application
+    """
     env_db_url = os.getenv("DATABASE_URL")
     
     if env_db_url:
@@ -86,22 +103,40 @@ def get_database_url():
     # Check if we're in a cloud environment (Render, Heroku, etc.)
     if any(os.getenv(var) for var in ["RENDER", "HEROKU", "DYNO"]):
         print("Detected cloud environment without DATABASE_URL.")
-        # Try to use /tmp SQLite first, fallback to in-memory only if it fails
+        print("⚠️  CRITICAL: No DATABASE_URL configured!")
+        print("🔧 To fix this permanently:")
+        print("   1. Create a PostgreSQL database on your cloud platform")
+        print("   2. Set DATABASE_URL environment variable")
+        print("   3. Redeploy the application")
+        print("")
+        print("📋 For Render.com:")
+        print("   - Add a PostgreSQL database to your service")
+        print("   - The DATABASE_URL will be automatically provided")
+        print("")
+        
+        # Try to use /tmp SQLite as temporary fallback
         tmp_db = "/tmp/telegram_bot.db"
         try:
             # Test if we can write to /tmp
             with open(tmp_db + ".test", 'w') as f:
                 f.write("test")
             os.remove(tmp_db + ".test")
-            print(f"Using persistent SQLite database: {tmp_db}")
+            print(f"⚠️  TEMPORARY FALLBACK: Using SQLite database: {tmp_db}")
+            print("⚠️  WARNING: Data will be lost on restart/redeploy!")
+            print("⚠️  Configure PostgreSQL immediately for data persistence!")
             return f"sqlite:///{tmp_db}"
         except Exception as e:
-            print(f"Cannot write to /tmp ({e}), using in-memory SQLite.")
-            print("WARNING: Data will be lost on restart! Configure PostgreSQL by adding DATABASE_URL env var.")
+            print(f"❌ Cannot write to /tmp ({e})")
+            print("❌ FALLING BACK TO IN-MEMORY DATABASE!")
+            print("❌ ALL DATA WILL BE LOST ON RESTART!")
+            print("❌ CONFIGURE PostgreSQL DATABASE IMMEDIATELY!")
             return "sqlite:///:memory:"
     
     # Try different SQLite paths in order of preference (for local development)
+    # Use absolute path based on script location
+    script_dir = os.path.dirname(os.path.abspath(__file__))
     sqlite_paths = [
+        os.path.join(script_dir, "bot.db"),  # Same directory as script
         os.path.join(tempfile.gettempdir(), "bot.db"),  # /tmp/bot.db
         os.path.join(os.getcwd(), "bot.db"),  # ./bot.db
         ":memory:"  # In-memory as last resort
@@ -125,10 +160,31 @@ def get_database_url():
             os.remove(test_path)
             
             print(f"Using SQLite database: {path}")
-            return f"sqlite:///{path}"
+            # Use pathlib for cross-platform path handling
+            from pathlib import Path
+            path_obj = Path(path)
+            return f"sqlite:///{path_obj.as_posix()}"
             
         except (OSError, PermissionError) as e:
             print(f"Warning: Cannot use database path {path}: {e}")
+            # Try to fix permissions if it's the bot.db file
+            if path.endswith("bot.db") and os.path.exists(path):
+                try:
+                    import stat
+                    os.chmod(path, stat.S_IRUSR | stat.S_IWUSR | stat.S_IRGRP | stat.S_IROTH)
+                    print(f"Fixed permissions for {path}, retrying...")
+                    # Test again after fixing permissions
+                    test_path = path + ".test"
+                    with open(test_path, 'w') as f:
+                        f.write("test")
+                    os.remove(test_path)
+                    print(f"Using SQLite database: {path}")
+                    # Use pathlib for cross-platform path handling
+                    from pathlib import Path
+                    path_obj = Path(path)
+                    return f"sqlite:///{path_obj.as_posix()}"
+                except Exception as perm_e:
+                    print(f"Could not fix permissions: {perm_e}")
             continue
     
     # This shouldn't be reached, but just in case
@@ -258,9 +314,27 @@ def ensure_schema():
         # Show appropriate success message based on database type
         db_type = "PostgreSQL" if url.get_backend_name() == "postgresql" else "SQLite"
         if ":memory:" in str(url):
-            print("Database schema initialized successfully (in-memory)")
+            print("🔶 Database schema initialized successfully (IN-MEMORY)")
+            print("🔶 ⚠️  WARNING: All data will be lost on restart!")
+            print("🔶 Configure PostgreSQL for production use!")
+        elif "/tmp/" in str(url):
+            print("🟡 Database schema initialized successfully (TEMPORARY SQLite)")
+            print("🟡 ⚠️  WARNING: Data will be lost on redeploy!")
+            print("🟡 Configure PostgreSQL for production use!")
+            print(f"🟡 Database URL: {DB_URL}")
+        elif db_type == "PostgreSQL":
+            print("✅ Database schema initialized successfully (PostgreSQL)")
+            print("✅ ✨ Data persistence ENABLED - safe for production!")
+            # Don't print the full URL for security (contains password)
+            try:
+                parsed_url = url
+                safe_url = f"postgresql://{parsed_url.username}@{parsed_url.host}:{parsed_url.port}/{parsed_url.database}"
+                print(f"✅ Database: {safe_url}")
+            except:
+                print("✅ Database: PostgreSQL configured")
         else:
-            print(f"Database schema initialized successfully ({db_type})")
+            print(f"🟢 Database schema initialized successfully ({db_type})")
+            print(f"🟢 Database URL: {DB_URL}")
             
     except Exception as e:
         # Only try fallback if we're not already using in-memory
@@ -293,7 +367,7 @@ def ensure_schema():
 # Helpers
 # =========================
 # Quais comandos usuários comuns podem usar
-ALLOWED_FOR_NON_ADM = {"pagar", "tx", "start" }
+ALLOWED_FOR_NON_ADM = {"pagar", "tx", "start", "novopack" }
 
 def esc(s): return html.escape(str(s) if s is not None else "")
 def now_utc(): return dt.datetime.utcnow()
@@ -960,7 +1034,7 @@ async def _block_non_admin_commands(update: Update, context: ContextTypes.DEFAUL
         return  # /pagar e /tx liberados
 
     # Bloqueia o resto
-    await update.effective_message.reply_text("🚫 Comando restrito. Use apenas /pagar ou /tx.")
+    await update.effective_message.reply_text("🚫 Comando restrito. Comandos permitidos: /pagar, /tx, /novopack")
     raise ApplicationHandlerStop
 
 def header_key(chat_id: int, message_id: int) -> int:
@@ -2456,7 +2530,7 @@ async def keepalive_job(context: ContextTypes.DEFAULT_TYPE):
     except Exception as e: logging.warning(f"[keepalive] erro: {e}")
 
 # ===== Guard global: só permite /pagar e /tx para não-admin (em qualquer chat)
-ALLOWED_NON_ADMIN = {"pagar", "tx", "status"}
+ALLOWED_NON_ADMIN = {"pagar", "tx", "status", "novopack"}
 
 async def _block_non_admin_everywhere(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.effective_message
