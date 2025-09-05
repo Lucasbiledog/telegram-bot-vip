@@ -605,6 +605,9 @@ PORT = int(os.getenv("PORT", 8000))
 # Job prefixes
 JOB_PREFIX_SM = "scheduled_msg_"
 
+# Text constants
+FREE_PREVIEW_TEXT = "Curtiu as previews? Assine VIP para acessar o pack completo!"
+
 # =========================
 # FASTAPI + PTB
 # =========================
