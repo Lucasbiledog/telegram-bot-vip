@@ -64,7 +64,10 @@ from utils import (
 
 
 # === Config DB ===
-DB_URL = os.getenv("DATABASE_URL", "sqlite:///./bot.db")
+# Use /tmp for SQLite on cloud platforms where filesystem is read-only
+import tempfile
+default_db_path = os.path.join(tempfile.gettempdir(), "bot.db")
+DB_URL = os.getenv("DATABASE_URL", f"sqlite:///{default_db_path}")
 url = make_url(DB_URL)
 
 # Force synchronous SQLite dialect if using SQLite
@@ -78,6 +81,19 @@ if url.get_backend_name() == "sqlite":
         url = url.set(drivername="sqlite")
     elif url.drivername == "sqlite+aiosqlite":
         url = url.set(drivername="sqlite")
+    
+    # Ensure the directory for SQLite database exists
+    if url.database:
+        db_dir = os.path.dirname(url.database)
+        if db_dir and not os.path.exists(db_dir):
+            try:
+                os.makedirs(db_dir, exist_ok=True)
+            except (OSError, PermissionError) as e:
+                print(f"Warning: Could not create database directory {db_dir}: {e}")
+                # Fallback to current directory if /tmp fails
+                fallback_path = os.path.join(os.getcwd(), "bot.db")
+                DB_URL = f"sqlite:///{fallback_path}"
+                url = make_url(DB_URL)
 
 engine = create_engine(url, pool_pre_ping=True, future=True)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
