@@ -417,9 +417,203 @@ async def resolve_payment_usd_autochain(tx_hash: str) -> Tuple[bool, str, Option
 
 
 # =========================
+# Database Models
+# =========================
+import os
+import sys
+
+# Add the current directory to Python path to import from main
+sys.path.append(os.path.dirname(__file__))
+
+from sqlalchemy import Column, Integer, String, DateTime, BigInteger
+from sqlalchemy.ext.declarative import declarative_base
+
+# Use the same Base from main.py
+try:
+    from main import Base, SessionLocal
+except ImportError:
+    # Fallback if main.py isn't available
+    Base = declarative_base()
+    SessionLocal = None
+
+class Payment(Base):
+    __tablename__ = "payments"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(BigInteger, nullable=False)
+    username = Column(String, nullable=True)
+    tx_hash = Column(String, unique=True, index=True)
+    chain = Column(String, default="Polygon")
+    amount = Column(String, nullable=True)
+    status = Column(String, default="pending")  # pending, approved, rejected
+    created_at = Column(DateTime, nullable=False)
+
+# =========================
+# Telegram Command Handlers
+# =========================
+from telegram import Update
+from telegram.ext import ContextTypes
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from telegram import Bot
+
+import re
+
+TX_RE = re.compile(r'^(0x)?[0-9a-fA-F]+$')
+
+def normalize_tx_hash(s: str) -> Optional[str]:
+    if not s:
+        return None
+    s = s.strip()
+    if not TX_RE.match(s):
+        return None
+    if s.startswith("0x"):
+        # precisa ter 66 chars: 0x + 64 hex
+        return s.lower() if len(s) == 66 else None
+    else:
+        # sem 0x: precisa ter 64 hex; adiciona 0x
+        return ("0x" + s.lower()) if len(s) == 64 else None
+
+async def pagar_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Comando /pagar - instruções de pagamento"""
+    if not WALLET_ADDRESS:
+        return await update.effective_message.reply_text("Método de pagamento não configurado. (WALLET_ADDRESS ausente)")
+
+    user = update.effective_user
+    if not user:
+        return
+
+    # Instruções de pagamento
+    instrucoes = (
+        f"💸 <b>Pagamento via Cripto</b>\n"
+        f"1) Abra seu banco de cripto.\n"
+        f"2) Envie o valor para a carteira:\n<code>{WALLET_ADDRESS}</code>\n"
+        f"3) Depois me mande aqui: <code>/tx &lt;hash_da_transacao&gt;</code>\n\n"
+        f"⚙️ Valido on-chain (mín. {MIN_CONFIRMATIONS} confirmações).\n"
+        f"✅ Aprovando, te envio o convite do VIP no privado."
+    )
+
+    try:
+        # Tenta enviar no privado primeiro
+        await context.bot.send_message(
+            chat_id=user.id,
+            text=instrucoes,
+            parse_mode="HTML",
+            disable_web_page_preview=True
+        )
+        
+        # Se chegou até aqui, foi enviado no privado
+        if update.effective_chat and update.effective_chat.type != "private":
+            await update.effective_message.reply_text("📱 Te enviei as instruções no privado!")
+
+    except Exception:
+        # Se não conseguiu enviar no privado, envia no chat atual
+        await update.effective_message.reply_text(instrucoes, parse_mode="HTML")
+
+async def tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Comando /tx - verificar transação"""
+    msg = update.effective_message
+    user = update.effective_user
+    
+    if not context.args:
+        return await msg.reply_text("Uso: /tx <hash_da_transacao> (ex.: 0x… com 66 caracteres)")
+    
+    tx_raw = context.args[0]
+    tx_hash = normalize_tx_hash(tx_raw)
+    if not tx_hash:
+        return await msg.reply_text(
+            "Hash inválida. Use formato: 0x... (66 caracteres) ou sem 0x (64 caracteres)."
+        )
+    
+    if not SessionLocal:
+        return await msg.reply_text("Erro: Banco de dados não configurado.")
+    
+    # Verificar se já existe
+    with SessionLocal() as s:
+        existing = s.query(Payment).filter(Payment.tx_hash == tx_hash).first()
+        if existing:
+            if existing.status == "approved":
+                return await msg.reply_text(
+                    f"✅ Seu pagamento já estava aprovado!\n"
+                    f"Se ainda não recebeu o convite VIP, entre em contato."
+                )
+            else:
+                return await msg.reply_text(
+                    f"⏳ Pagamento já registrado e está sendo analisado.\n"
+                    f"Status atual: {existing.status}"
+                )
+    
+    # Verificar transação on-chain
+    try:
+        ok, msg_result, usd_paid, details = await resolve_payment_usd_autochain(tx_hash)
+        
+        if ok and usd_paid:
+            # Import necessário para funções do main
+            from utils import choose_plan_from_usd, get_prices_sync
+            
+            # Determinar plano baseado no valor pago
+            prices = get_prices_sync(None)  # Usa preços padrão
+            plan_days = choose_plan_from_usd(usd_paid, prices)
+            
+            if plan_days:
+                # Registrar pagamento
+                with SessionLocal() as s:
+                    p = Payment(
+                        user_id=user.id,
+                        username=user.username,
+                        tx_hash=tx_hash,
+                        chain=details.get("chain_id", "unknown"),
+                        amount=str(usd_paid),
+                        status="approved",
+                        created_at=dt.datetime.now()
+                    )
+                    s.add(p)
+                    s.commit()
+                
+                # Criar/estender VIP
+                from utils import vip_upsert_and_get_until
+                vip_until = await vip_upsert_and_get_until(user.id, user.username, plan_days)
+                
+                return await msg.reply_text(
+                    f"✅ Pagamento confirmado: ${usd_paid:.2f}\n"
+                    f"VIP válido até {vip_until.strftime('%d/%m/%Y')}\n"
+                    f"Aguarde o convite do grupo VIP!"
+                )
+            else:
+                return await msg.reply_text(
+                    f"❌ Valor pago (${usd_paid:.2f}) insuficiente para qualquer plano VIP."
+                )
+        else:
+            return await msg.reply_text(f"❌ {msg_result}")
+            
+    except Exception as e:
+        LOG.error(f"Erro ao verificar transação {tx_hash}: {e}")
+        return await msg.reply_text("❌ Erro interno ao verificar transação.")
+
+async def listar_pendentes_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Comando admin para listar pagamentos pendentes"""
+    if not SessionLocal:
+        return await update.effective_message.reply_text("Erro: Banco de dados não configurado.")
+    
+    with SessionLocal() as s:
+        pend = s.query(Payment).filter(Payment.status == "pending").order_by(Payment.created_at.asc()).all()
+        if not pend:
+            return await update.effective_message.reply_text("Sem pagamentos pendentes.")
+        lines = [
+            f"- user_id:{p.user_id} @{p.username or '-'} | {p.tx_hash} | {p.chain} | {p.created_at.strftime('%d/%m %H:%M')}" 
+            for p in pend
+        ]
+        await update.effective_message.reply_text("Pagamentos pendentes:\n" + "\n".join(lines))
+
+# =========================
 # Helpers para o main.py
 # =========================
 def get_wallet_address() -> str:
     return WALLET_ADDRESS or ""
+
+def get_min_confirmations() -> int:
+    return MIN_CONFIRMATIONS
+
+def get_supported_chains() -> Dict[str, Dict[str, str]]:
+    return CHAINS.copy()
 
 

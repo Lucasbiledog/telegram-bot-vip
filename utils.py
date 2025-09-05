@@ -112,3 +112,70 @@ async def reply_with_retry(message, *args, **kwargs):
 def make_link_sig(secret: str, uid: int, ts: int) -> str:
     raw = f"{uid}:{ts}".encode()
     return hmac.new(secret.encode(), raw, hashlib.sha256).hexdigest()
+
+# =========================
+# VIP Management Functions
+# =========================
+from enum import Enum
+
+class VipPlan(Enum):
+    MENSAL = "mensal"      # 30 dias
+    BIMESTRAL = "bimestral"   # 60 dias
+    TRIMESTRAL = "trimestral" # 180 dias (3 meses + bônus)
+    ANUAL = "anual"        # 365 dias
+
+def plan_to_days(plan: VipPlan) -> int:
+    """Converte plano VIP para número de dias."""
+    mapping = {
+        VipPlan.MENSAL: 30,
+        VipPlan.BIMESTRAL: 60,
+        VipPlan.TRIMESTRAL: 180,
+        VipPlan.ANUAL: 365,
+    }
+    return mapping.get(plan, 30)
+
+def days_to_plan(days: int) -> VipPlan:
+    """Converte número de dias para plano VIP mais adequado."""
+    if days >= 365:
+        return VipPlan.ANUAL
+    elif days >= 180:
+        return VipPlan.TRIMESTRAL
+    elif days >= 60:
+        return VipPlan.BIMESTRAL
+    else:
+        return VipPlan.MENSAL
+
+# =========================
+# Payment Integration Functions  
+# =========================
+async def create_vip_invite_and_notify(bot: Bot, user_id: int, username: Optional[str], days: int) -> Optional[str]:
+    """Cria convite VIP e notifica usuário sobre aprovação."""
+    try:
+        # Extend VIP membership
+        vip_until = await vip_upsert_and_get_until(user_id, username, days)
+        
+        # Create invite link (you'll need to import GROUP_VIP_ID from main or make it configurable)
+        invite_link = await create_one_time_invite(bot, -1002432143718, expire_seconds=7200)  # Placeholder ID
+        
+        if invite_link:
+            # Send notification to user
+            message = (
+                f"✅ Pagamento aprovado!\n"
+                f"VIP válido até {vip_until.strftime('%d/%m/%Y')}\n"
+                f"Entre no grupo VIP: {invite_link}"
+            )
+            await bot.send_message(chat_id=user_id, text=message)
+            return invite_link
+        else:
+            # Send notification without invite
+            message = (
+                f"✅ Pagamento aprovado!\n"
+                f"VIP válido até {vip_until.strftime('%d/%m/%Y')}\n"
+                f"Entre em contato para receber o convite do grupo VIP."
+            )
+            await bot.send_message(chat_id=user_id, text=message)
+            return None
+            
+    except Exception as e:
+        logging.error(f"Erro ao criar convite VIP para user {user_id}: {e}")
+        return None

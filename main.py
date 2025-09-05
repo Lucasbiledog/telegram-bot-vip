@@ -64,10 +64,50 @@ from utils import (
 
 
 # === Config DB ===
-# Use /tmp for SQLite on cloud platforms where filesystem is read-only
+# Use /tmp for SQLite on cloud platforms, fallback to in-memory if filesystem is read-only
 import tempfile
-default_db_path = os.path.join(tempfile.gettempdir(), "bot.db")
-DB_URL = os.getenv("DATABASE_URL", f"sqlite:///{default_db_path}")
+
+def get_database_url():
+    """Get database URL with fallback handling for cloud deployments"""
+    env_db_url = os.getenv("DATABASE_URL")
+    
+    if env_db_url:
+        return env_db_url
+    
+    # Try different SQLite paths in order of preference
+    sqlite_paths = [
+        os.path.join(tempfile.gettempdir(), "bot.db"),  # /tmp/bot.db
+        os.path.join(os.getcwd(), "bot.db"),  # ./bot.db
+        ":memory:"  # In-memory as last resort
+    ]
+    
+    for path in sqlite_paths:
+        if path == ":memory:":
+            print("Warning: Using in-memory SQLite database. Data will not persist between restarts.")
+            return "sqlite:///:memory:"
+        
+        try:
+            # Test if we can create the directory and write to it
+            db_dir = os.path.dirname(path)
+            if db_dir and not os.path.exists(db_dir):
+                os.makedirs(db_dir, exist_ok=True)
+            
+            # Test write permissions by creating a temporary file
+            test_path = path + ".test"
+            with open(test_path, 'w') as f:
+                f.write("test")
+            os.remove(test_path)
+            
+            return f"sqlite:///{path}"
+            
+        except (OSError, PermissionError) as e:
+            print(f"Warning: Cannot use database path {path}: {e}")
+            continue
+    
+    # This shouldn't be reached, but just in case
+    return "sqlite:///:memory:"
+
+DB_URL = get_database_url()
 url = make_url(DB_URL)
 
 # Force synchronous SQLite dialect if using SQLite
@@ -81,19 +121,6 @@ if url.get_backend_name() == "sqlite":
         url = url.set(drivername="sqlite")
     elif url.drivername == "sqlite+aiosqlite":
         url = url.set(drivername="sqlite")
-    
-    # Ensure the directory for SQLite database exists
-    if url.database:
-        db_dir = os.path.dirname(url.database)
-        if db_dir and not os.path.exists(db_dir):
-            try:
-                os.makedirs(db_dir, exist_ok=True)
-            except (OSError, PermissionError) as e:
-                print(f"Warning: Could not create database directory {db_dir}: {e}")
-                # Fallback to current directory if /tmp fails
-                fallback_path = os.path.join(os.getcwd(), "bot.db")
-                DB_URL = f"sqlite:///{fallback_path}"
-                url = make_url(DB_URL)
 
 engine = create_engine(url, pool_pre_ping=True, future=True)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
@@ -191,12 +218,36 @@ def init_db():
     if not cfg_get("daily_pack_free_hhmm"): cfg_set("daily_pack_free_hhmm", "09:30")
 
 def ensure_schema():
-    Base.metadata.create_all(bind=engine)
-    ensure_bigint_columns()
-    ensure_pack_tier_column()
-    ensure_packfile_src_columns()
-    ensure_vip_invite_column()
-    ensure_vip_plan_column()
+    global engine, SessionLocal, url, DB_URL
+    
+    try:
+        Base.metadata.create_all(bind=engine)
+        ensure_bigint_columns()
+        ensure_pack_tier_column()
+        ensure_packfile_src_columns()
+        ensure_vip_invite_column()
+        ensure_vip_plan_column()
+        print("Database schema initialized successfully")
+    except Exception as e:
+        print(f"Warning: Database schema initialization failed: {e}")
+        print("Attempting to use in-memory database as fallback...")
+        # Try to reinitialize with in-memory database
+        DB_URL = "sqlite:///:memory:"
+        url = make_url(DB_URL)
+        engine = create_engine(url, pool_pre_ping=True, future=True)
+        SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+        
+        try:
+            Base.metadata.create_all(bind=engine)
+            ensure_bigint_columns()
+            ensure_pack_tier_column()
+            ensure_packfile_src_columns()
+            ensure_vip_invite_column()
+            ensure_vip_plan_column()
+            print("Successfully initialized with in-memory database")
+        except Exception as fallback_error:
+            print(f"Critical error: Even in-memory database failed: {fallback_error}")
+            raise
 
 
 # =========================
@@ -437,34 +488,6 @@ STORAGE_GROUP_FREE_ID  = int(os.getenv("STORAGE_GROUP_FREE_ID", "-1002509364079"
 GROUP_FREE_ID          = int(os.getenv("GROUP_FREE_ID", "-1002932075976"))
 
 PORT = int(os.getenv("PORT", 8000))
-
-# Pagamento / Cadeia
-WALLET_ADDRESS = (os.getenv("WALLET_ADDRESS", "").strip() or "").lower()
-CHAIN_NAME     = os.getenv("CHAIN_NAME", "Polygon").strip()
-RPC_URL        = os.getenv("RPC_URL", "").strip()
-AUTO_APPROVE_CRYPTO = os.getenv("AUTO_APPROVE_CRYPTO", "1") == "1"
-MIN_CONFIRMATIONS = int(os.getenv("MIN_CONFIRMATIONS", "5"))
-
-# Nativo
-MIN_NATIVE_AMOUNT = float(os.getenv("MIN_NATIVE_AMOUNT", "0"))  # em moeda nativa
-
-# ERC-20 (opcional)
-TOKEN_CONTRACT   = (os.getenv("TOKEN_CONTRACT", "").strip() or "").lower()
-TOKEN_DECIMALS   = int(os.getenv("TOKEN_DECIMALS", "18"))
-TOKEN_SYMBOL    = os.getenv("TOKEN_SYMBOL", "TOKEN").strip()
-COINGECKO_NATIVE_ID = os.getenv("COINGECKO_NATIVE_ID", CHAIN_NAME.lower()).strip().lower()
-COINGECKO_PLATFORM = os.getenv("COINGECKO_PLATFORM", "ethereum").strip().lower()
-
-FREE_PREVIEW_TEXT = os.getenv(
-    "FREE_PREVIEW_TEXT",
-    "🔓 Curtiu o preview? Assine o VIP para receber o pack completo! Digite /pagar para fazer parte do MELHOR grupo da Unreal 🚀"
-).strip()
-
-if not BOT_TOKEN:   raise RuntimeError("BOT_TOKEN não definido no .env")
-if not WEBHOOK_URL: raise RuntimeError("WEBHOOK_URL não definido no .env")
-if not WALLET_ADDRESS: logging.warning("WALLET_ADDRESS não definido — /pagar ficará limitado.")
-if not RPC_URL:
-    logging.warning("RPC_URL não definido — verificação on-chain ficará indisponível.")
 
 # =========================
 # FASTAPI + PTB
