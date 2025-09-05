@@ -66,6 +66,19 @@ from utils import (
 # === Config DB ===
 DB_URL = os.getenv("DATABASE_URL", "sqlite:///./bot.db")
 url = make_url(DB_URL)
+
+# Force synchronous SQLite dialect if using SQLite
+if url.get_backend_name() == "sqlite":
+    # Replace aiosqlite driver with synchronous sqlite driver
+    if "aiosqlite" in str(url):
+        DB_URL = DB_URL.replace("sqlite+aiosqlite://", "sqlite:///")
+        url = make_url(DB_URL)
+    # Ensure we're using synchronous SQLite
+    if not url.drivername:
+        url = url.set(drivername="sqlite")
+    elif url.drivername == "sqlite+aiosqlite":
+        url = url.set(drivername="sqlite")
+
 engine = create_engine(url, pool_pre_ping=True, future=True)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 Base = declarative_base()
