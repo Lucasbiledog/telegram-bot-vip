@@ -560,16 +560,14 @@ class PackFile(Base):
 
 class Payment(Base):
     __tablename__ = "payments"
-    id = Column(Integer, primary_key=True)
-    user_id = Column(BigInteger, index=True)
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(BigInteger, nullable=False)
     username = Column(String, nullable=True)
     tx_hash = Column(String, unique=True, index=True)
-    chain = Column(String, default=CHAIN_NAME)
+    chain = Column(String, default="unknown")
     amount = Column(String, nullable=True)
-    status = Column(String, default="pending")  # pending | approved | rejected
-    notes = Column(Text, nullable=True)
-    created_at = Column(DateTime, default=now_utc)
-    decided_at = Column(DateTime, nullable=True)
+    status = Column(String, default="pending")  # pending, approved, rejected
+    created_at = Column(DateTime, nullable=False)
 
 class VipMembership(Base):
     __tablename__ = "vip_memberships"

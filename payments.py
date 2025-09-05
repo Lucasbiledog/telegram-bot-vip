@@ -417,35 +417,8 @@ async def resolve_payment_usd_autochain(tx_hash: str) -> Tuple[bool, str, Option
 
 
 # =========================
-# Database Models
+# Database Models - importa do main.py
 # =========================
-import os
-import sys
-
-# Add the current directory to Python path to import from main
-sys.path.append(os.path.dirname(__file__))
-
-from sqlalchemy import Column, Integer, String, DateTime, BigInteger
-from sqlalchemy.ext.declarative import declarative_base
-
-# Use the same Base from main.py
-try:
-    from main import Base, SessionLocal
-except ImportError:
-    # Fallback if main.py isn't available
-    Base = declarative_base()
-    SessionLocal = None
-
-class Payment(Base):
-    __tablename__ = "payments"
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(BigInteger, nullable=False)
-    username = Column(String, nullable=True)
-    tx_hash = Column(String, unique=True, index=True)
-    chain = Column(String, default="Polygon")
-    amount = Column(String, nullable=True)
-    status = Column(String, default="pending")  # pending, approved, rejected
-    created_at = Column(DateTime, nullable=False)
 
 # =========================
 # Telegram Command Handlers
@@ -524,7 +497,10 @@ async def tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Hash inválida. Use formato: 0x... (66 caracteres) ou sem 0x (64 caracteres)."
         )
     
-    if not SessionLocal:
+    # Import Payment from main
+    try:
+        from main import Payment, SessionLocal
+    except ImportError:
         return await msg.reply_text("Erro: Banco de dados não configurado.")
     
     # Verificar se já existe
@@ -591,7 +567,9 @@ async def tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def listar_pendentes_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Comando admin para listar pagamentos pendentes"""
-    if not SessionLocal:
+    try:
+        from main import Payment, SessionLocal
+    except ImportError:
         return await update.effective_message.reply_text("Erro: Banco de dados não configurado.")
     
     with SessionLocal() as s:
