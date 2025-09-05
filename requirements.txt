@@ -7,7 +7,7 @@ httpx==0.25.2
 python-dotenv==1.0.1
 web3==6.20.1
 APScheduler==3.10.4
-python-telegram-bot==20.6
+python-telegram-bot==22.3
 pytz
 eth-account>=0.10.0
 psycopg2-binary
