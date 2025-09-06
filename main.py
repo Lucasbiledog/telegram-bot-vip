@@ -53,7 +53,7 @@ from config import WEBAPP_URL
 from payments import (
     resolve_payment_usd_autochain,              # já está funcionando
     WALLET_ADDRESS,                             # sua carteira destino
-    pagar_cmd, tx_cmd, listar_pendentes_cmd,    # comandos de pagamento
+    tx_cmd, listar_pendentes_cmd,               # comandos de pagamento
     aprovar_tx_cmd, rejeitar_tx_cmd,           # comandos admin de pagamento
 )
 from utils import (
@@ -605,13 +605,16 @@ PORT = int(os.getenv("PORT", 8000))
 # Job prefixes
 JOB_PREFIX_SM = "scheduled_msg_"
 
-# Text constants
-FREE_PREVIEW_TEXT = "Curtiu as previews? Assine VIP para acessar o pack completo!"
-
 # =========================
 # FASTAPI + PTB
 # =========================
 app = FastAPI()
+
+# Montar arquivos estáticos da webapp
+import os
+webapp_dir = os.path.join(os.path.dirname(__file__), "webapp")
+if os.path.exists(webapp_dir):
+    app.mount("/webapp", StaticFiles(directory=webapp_dir), name="webapp")
 # Configure timeouts para produção
 from telegram.request import HTTPXRequest
 request = HTTPXRequest(
@@ -1034,10 +1037,10 @@ async def _block_non_admin_commands(update: Update, context: ContextTypes.DEFAUL
     cmd = cmd_raw[1:] if cmd_raw.startswith("/") else cmd_raw
 
     if cmd in ALLOWED_FOR_NON_ADM:
-        return  # /pagar e /tx liberados
+        return  # /tx liberado
 
     # Bloqueia o resto
-    await update.effective_message.reply_text("🚫 Comando restrito. Comandos permitidos: /pagar, /tx, /novopack")
+    await update.effective_message.reply_text("🚫 Comando restrito. Comandos permitidos: /tx, /novopack")
     raise ApplicationHandlerStop
 
 def header_key(chat_id: int, message_id: int) -> int:
@@ -1156,6 +1159,29 @@ async def _try_copy_message(context: ContextTypes.DEFAULT_TYPE, target_chat_id: 
     except Exception as e:
         logging.warning(f"[copy_message] Falhou para item {pf.id}: {e}"); return False
 
+async def _create_checkout_keyboard():
+    """Cria o teclado inline com botão de checkout"""
+    if not WEBAPP_URL or not WALLET_ADDRESS:
+        return None
+    
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
+    import time
+    import os
+    
+    # Gerar parâmetros de segurança genéricos para o grupo FREE
+    ts = int(time.time())
+    sig = make_link_sig(os.getenv("BOT_SECRET", "default"), 0, ts)  # uid=0 para genérico
+    
+    # URL com parâmetros de segurança
+    secure_url = f"{WEBAPP_URL}?uid=0&ts={ts}&sig={sig}"
+    
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(
+            "💳 Assinar VIP - Pagar com Crypto",
+            web_app=WebAppInfo(url=secure_url)
+        )]
+    ])
+
 async def _try_send_photo(context: ContextTypes.DEFAULT_TYPE, target_chat_id: int, pf: PackFile, caption: Optional[str] = None) -> bool:
     try:
         await context.application.bot.send_photo(chat_id=target_chat_id, photo=pf.file_id, caption=caption); return True
@@ -1205,20 +1231,45 @@ async def _send_preview_media(context: ContextTypes.DEFAULT_TYPE, target_chat_id
     counts = {"photos": 0, "videos": 0, "animations": 0}
     photo_items = [pf for pf in previews if pf.file_type == "photo"]
     if photo_items:
+        # Agrupar fotos para uma melhor apresentação visual
         media = []
         for pf in photo_items:
             try: media.append(InputMediaPhoto(media=pf.file_id))
             except Exception: media = []; break
-        if media:
+        
+        if media and len(media) > 1:
+            # Para múltiplas fotos, sempre enviar como media_group para agrupamento
             try:
-                await context.application.bot.send_media_group(chat_id=target_chat_id, media=media)
-                counts["photos"] += len(photo_items)
+                await context.application.bot.send_media_group(chat_id=target_chat_id, media=media[:10])  # Telegram limita a 10
+                counts["photos"] += len(media[:10])
+                # Se houver mais de 10 fotos, enviar o resto em grupos separados
+                if len(media) > 10:
+                    remaining = media[10:]
+                    while remaining:
+                        batch = remaining[:10]
+                        remaining = remaining[10:]
+                        try:
+                            await context.application.bot.send_media_group(chat_id=target_chat_id, media=batch)
+                            counts["photos"] += len(batch)
+                        except Exception as e:
+                            logging.warning(f"[send_preview_media] Falha media_group adicional: {e}")
+                            for item in batch:
+                                try:
+                                    await context.application.bot.send_photo(chat_id=target_chat_id, photo=item.media)
+                                    counts["photos"] += 1
+                                except Exception:
+                                    pass
             except Exception as e:
                 logging.warning(f"[send_preview_media] Falha media_group: {e}. Enviando foto a foto.")
                 for pf in photo_items:
                     if await _try_send_photo(context, target_chat_id, pf, caption=None):
                         counts["photos"] += 1
+        elif media:
+            # Para uma única foto, enviar normalmente
+            if await _try_send_photo(context, target_chat_id, photo_items[0], caption=None):
+                counts["photos"] += 1
         else:
+            # Fallback para envio individual
             for pf in photo_items:
                 if await _try_send_photo(context, target_chat_id, pf, caption=None):
                     counts["photos"] += 1
@@ -1227,6 +1278,31 @@ async def _send_preview_media(context: ContextTypes.DEFAULT_TYPE, target_chat_id
     for pf in other_prev:
         if await _try_send_video_or_animation(context, target_chat_id, pf, caption=None):
             counts["videos" if pf.file_type == "video" else "animations"] += 1
+    
+    # Adicionar botão de checkout automaticamente após as imagens (apenas no grupo FREE)
+    if target_chat_id == GROUP_FREE_ID and (counts["photos"] > 0 or counts["videos"] > 0 or counts["animations"] > 0):
+        keyboard = await _create_checkout_keyboard()
+        if keyboard:
+            checkout_msg = (
+                "💸 <b>Quer ver o conteúdo completo?</b>\n\n"
+                "✅ Clique abaixo para assinar VIP\n"
+                "🔒 Pague com qualquer criptomoeda\n"
+                "⚡ Ativação automática\n\n"
+                "💰 <b>Planos:</b>\n"
+                "• 30 dias: $0.05\n"
+                "• 60 dias: $1.00\n"
+                "• 180 dias: $1.50"
+            )
+            try:
+                await context.application.bot.send_message(
+                    chat_id=target_chat_id,
+                    text=checkout_msg,
+                    reply_markup=keyboard,
+                    parse_mode="HTML"
+                )
+            except Exception as e:
+                logging.warning(f"[send_preview_media] Erro ao enviar checkout: {e}")
+    
     return counts
 
 async def enviar_pack_job(context: ContextTypes.DEFAULT_TYPE, tier: str, target_chat_id: int) -> str:
@@ -1288,24 +1364,6 @@ async def enviar_pack_job(context: ContextTypes.DEFAULT_TYPE, tier: str, target_
         if tier == "vip" and previews:
             try:
                 await _send_preview_media(context, GROUP_FREE_ID, previews)
-                
-                # Criar keyboard inline com botão para checkout
-                keyboard = None
-                if WEBAPP_URL:
-                    # Para o crosspost, usar um link genérico que não precisa de uid específico
-                    # Os usuários serão direcionados para /pagar que gerará o link seguro
-                    keyboard = InlineKeyboardMarkup([
-                        [InlineKeyboardButton(
-                            "💳 Assinar VIP - Pagar com Crypto", 
-                            web_app=WebAppInfo(url=f"{WEBAPP_URL}?generic=1")
-                        )]
-                    ])
-                
-                await context.application.bot.send_message(
-                    chat_id=GROUP_FREE_ID, 
-                    text=FREE_PREVIEW_TEXT,
-                    reply_markup=keyboard
-                )
             except Exception as e:
                 logging.warning(f"Falha no crosspost VIP->FREE: {e}")
 
@@ -1328,7 +1386,7 @@ async def enviar_pack_free_job(context: ContextTypes.DEFAULT_TYPE):
 # =========================
 async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.effective_message
-    text = ("Fala! Eu gerencio packs VIP/FREE, pagamentos via MetaMask e mensagens agendadas.\nUse /pagar para maiores")
+    text = ("Fala! Eu gerencio packs VIP/FREE, pagamentos via MetaMask e mensagens agendadas.\nOs pagamentos são automáticos quando as imagens são enviadas.")
     if msg: await msg.reply_text(text)
 
 async def comandos_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1348,7 +1406,7 @@ async def comandos_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• /say_free <texto> — envia AGORA no FREE",
         "",
         "💸 Pagamento (MetaMask):",
-        "• /pagar — instruções (vai pro seu privado)",
+        "• Pagamentos automáticos junto às imagens",
         "• /tx <hash> — valida e libera o VIP",
         "",
         "🧩 Packs:",
@@ -2473,27 +2531,28 @@ async def api_validate(request: Request):
         if not uid or not hash:
             raise HTTPException(status_code=400, detail="uid e hash são obrigatórios")
         
-        # Por enquanto, simular validação do pagamento
-        # Você pode integrar aqui com a lógica real de validação de transações
-        # usando o payments.py ou outra implementação
-        
-        # Simulação básica
+        # Validação real da transação usando a função do payments.py
         if len(hash) < 40:  # hash muito curto
             return {"ok": False, "message": "Hash de transação inválido"}
         
-        # Simular sucesso (você deve implementar a validação real aqui)
         try:
-            # Aqui você chamaria a função real de validação
-            # Por exemplo: result = await validate_transaction(hash, uid)
+            # Usar a função real de validação de pagamentos
+            result = await resolve_payment_usd_autochain(hash, uid, username)
             
-            # Por enquanto, assumir sucesso para demonstração
-            invite_link = await assign_and_send_invite(uid, username, hash)
-            
-            return {
-                "ok": True,
-                "message": "Pagamento confirmado!",
-                "invite": invite_link
-            }
+            if result and "ok" in result and result["ok"]:
+                # Se a validação foi bem-sucedida, criar convite
+                invite_link = await assign_and_send_invite(uid, username, hash)
+                
+                return {
+                    "ok": True,
+                    "message": result.get("message", "Pagamento confirmado!"),
+                    "invite": invite_link
+                }
+            else:
+                return {
+                    "ok": False,
+                    "message": result.get("message", "Pagamento não encontrado ou inválido")
+                }
             
         except Exception as validation_error:
             logging.error(f"Erro na validação: {validation_error}")
@@ -2520,7 +2579,7 @@ async def vip_expiration_warn_job(context: ContextTypes.DEFAULT_TYPE):
     for m in membros:
         dias = (m.expires_at - now).days
         if dias in (3, 1):
-            texto = f"⚠️ Seu VIP expira em {dias} dia{'s' if dias > 1 else ''}. Use /pagar para renovar."
+            texto = f"⚠️ Seu VIP expira em {dias} dia{'s' if dias > 1 else ''}. Renove através do botão de pagamento que aparece junto às imagens."
             await dm(m.user_id, texto)
 
 
@@ -2532,8 +2591,8 @@ async def keepalive_job(context: ContextTypes.DEFAULT_TYPE):
             r = await client.get(url); logging.info(f"[keepalive] GET {url} -> {r.status_code}")
     except Exception as e: logging.warning(f"[keepalive] erro: {e}")
 
-# ===== Guard global: só permite /pagar e /tx para não-admin (em qualquer chat)
-ALLOWED_NON_ADMIN = {"pagar", "tx", "status", "novopack"}
+# ===== Guard global: só permite /tx para não-admin (em qualquer chat)
+ALLOWED_NON_ADMIN = {"tx", "status", "novopack"}
 
 async def _block_non_admin_everywhere(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.effective_message
@@ -2545,7 +2604,7 @@ async def _block_non_admin_everywhere(update: Update, context: ContextTypes.DEFA
         return
     # extrai comando base sem @bot
     cmd = text.split()[0]
-    base = cmd[1:].split("@", 1)[0]  # ex: "/pagar@MeuBot" -> "pagar"
+    base = cmd[1:].split("@", 1)[0]  # ex: "/tx@MeuBot" -> "tx"
 
     if is_admin(user.id):
         return  # admin passa
@@ -2694,7 +2753,6 @@ async def on_startup():
 
 
 
-    application.add_handler(CommandHandler("pagar", pagar_cmd), group=1)
     application.add_handler(CommandHandler("tx", tx_cmd), group=1)
     application.add_handler(CommandHandler("listar_pendentes", listar_pendentes_cmd), group=1)
     application.add_handler(CommandHandler("aprovar_tx", aprovar_tx_cmd), group=1)

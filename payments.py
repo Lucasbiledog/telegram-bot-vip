@@ -464,25 +464,25 @@ async def pagar_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Criar botão WebApp para checkout se disponível
     if WEBAPP_URL:
         from telegram import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
-        from utils import make_link_sig
+        from utils import send_with_retry, reply_with_retry, make_link_sig
         import time
         import os
-        
+
         # Gerar parâmetros de segurança para o link
         uid = user.id
         ts = int(time.time())
         sig = make_link_sig(os.getenv("BOT_SECRET", "default"), uid, ts)
-        
+
         # URL com parâmetros de segurança
         secure_url = f"{WEBAPP_URL}?uid={uid}&ts={ts}&sig={sig}"
-        
+
         keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton(
-                "💳 Pagar com Crypto - Checkout", 
+                "💳 Pagar com Crypto - Checkout",
                 web_app=WebAppInfo(url=secure_url)
             )]
         ])
-        
+
         checkout_msg = (
             f"💸 <b>Pagamento VIP via Cripto</b>\n\n"
             f"✅ Clique no botão abaixo para acessar nossa página de checkout segura\n"
@@ -490,27 +490,32 @@ async def pagar_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"⚡ Ativação automática após confirmação\n\n"
             f"💰 <b>Planos disponíveis:</b>\n"
             f"• 30 dias: $0.05\n"
-            f"• 60 dias: $1.00\n" 
+            f"• 60 dias: $1.00\n"
             f"• 180 dias: $1.50\n"
             f"• 365 dias: $2.00"
         )
-        
-        try:
-            # Tenta enviar no privado com botão
-            await context.bot.send_message(
-                chat_id=user.id,
-                text=checkout_msg,
-                parse_mode="HTML",
-                reply_markup=keyboard
-            )
-            
-            # Se conseguiu enviar no privado e não está em privado, avisa
+
+        sent = await send_with_retry(
+            context.bot.send_message,
+            chat_id=user.id,
+            text=checkout_msg,
+            parse_mode="HTML",
+            reply_markup=keyboard,
+        )
+
+        if sent is not None:
             if chat.type != "private":
-                await msg.reply_text("📱 Te enviei o link de pagamento no privado!")
-                
-        except Exception:
-            # Fallback: envia no chat atual
-            await msg.reply_text(checkout_msg, parse_mode="HTML", reply_markup=keyboard)
+                await reply_with_retry(
+                    msg,
+                    "📱 Te enviei o link de pagamento no privado!",
+                )
+        else:
+            await reply_with_retry(
+                msg,
+                checkout_msg,
+                parse_mode="HTML",
+                reply_markup=keyboard,
+            )
     
     else:
         # Fallback caso não tenha WEBAPP_URL: instruções manuais
@@ -747,5 +752,4 @@ async def rejeitar_tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.effective_message.reply_text(
             f"❌ Transação rejeitada para user_id:{p.user_id} @{p.username}"
         )
-
 

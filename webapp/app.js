@@ -45,10 +45,10 @@ async function loadConfig() {
     // Verificar se é um link genérico
     const generic = q.get("generic");
     if (generic) {
-      showAlert("Para acessar o checkout, use o comando /pagar no bot do Telegram para obter um link personalizado e seguro.", false);
+      showAlert("Para acessar o checkout, clique no botão que aparece junto às imagens do bot do Telegram.", false);
       return;
     }
-    showAlert("Link sem parâmetros de segurança (uid/ts/sig). Abra esta página pelo botão /pagar no Telegram.", false);
+    showAlert("Link sem parâmetros de segurança (uid/ts/sig). Abra esta página pelo botão de checkout do bot do Telegram.", false);
     return;
   }
   try {
@@ -92,7 +92,7 @@ async function validatePayment() {
     return;
   }
   if (!uid) {
-    showAlert("UID ausente. Abra esta página pelo botão /checkout no Telegram.", false);
+    showAlert("UID ausente. Abra esta página pelo botão de checkout no Telegram.", false);
     return;
   }
 
