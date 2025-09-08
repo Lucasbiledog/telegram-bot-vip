@@ -1287,38 +1287,13 @@ async def _send_preview_media(context: ContextTypes.DEFAULT_TYPE, target_chat_id
         import time
         import os
         
-        # Tentar criar checkout com WebApp se disponível
-        keyboard = None
-        try:
-            if WEBAPP_URL and WALLET_ADDRESS:
-                # Gerar parâmetros de segurança genéricos para o grupo FREE
-                ts = int(time.time())
-                sig = make_link_sig(os.getenv("BOT_SECRET", "default"), 0, ts)  # uid=0 para genérico
-                secure_url = f"{WEBAPP_URL}?uid=0&ts={ts}&sig={sig}"
-                
-                keyboard = InlineKeyboardMarkup([
-                    [InlineKeyboardButton(
-                        "💳 Assinar VIP - Pagar com Crypto",
-                        web_app=WebAppInfo(url=secure_url)
-                    )]
-                ])
-            else:
-                # Fallback: botão que simula o comando /pagar
-                keyboard = InlineKeyboardMarkup([
-                    [InlineKeyboardButton(
-                        "💳 Assinar VIP - Clique Aqui",
-                        callback_data="checkout_callback"
-                    )]
-                ])
-        except Exception as e:
-            logging.warning(f"[send_preview_media] Erro ao criar keyboard: {e}")
-            # Fallback simples
-            keyboard = InlineKeyboardMarkup([
-                [InlineKeyboardButton(
-                    "💳 Assinar VIP - Clique Aqui", 
-                    callback_data="checkout_callback"
-                )]
-            ])
+        # Sempre usar o botão callback que simula o comando /pagar
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton(
+                "💳 Assinar VIP - Clique Aqui",
+                callback_data="checkout_callback"
+            )]
+        ])
         
         if keyboard:
             checkout_msg = (
