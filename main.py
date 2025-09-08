@@ -29,6 +29,7 @@ from telegram.ext import (
     filters,
     ApplicationHandlerStop,
     ChatJoinRequestHandler,
+    CallbackQueryHandler,
 )
 # === Imports ===
 from sqlalchemy import (
@@ -1281,7 +1282,44 @@ async def _send_preview_media(context: ContextTypes.DEFAULT_TYPE, target_chat_id
     
     # Adicionar botão de checkout automaticamente após as imagens (apenas no grupo FREE)
     if target_chat_id == GROUP_FREE_ID and (counts["photos"] > 0 or counts["videos"] > 0 or counts["animations"] > 0):
-        keyboard = await _create_checkout_keyboard()
+        # Sempre enviar o botão de checkout, mesmo sem WEBAPP_URL ou WALLET_ADDRESS configurados
+        from telegram import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
+        import time
+        import os
+        
+        # Tentar criar checkout com WebApp se disponível
+        keyboard = None
+        try:
+            if WEBAPP_URL and WALLET_ADDRESS:
+                # Gerar parâmetros de segurança genéricos para o grupo FREE
+                ts = int(time.time())
+                sig = make_link_sig(os.getenv("BOT_SECRET", "default"), 0, ts)  # uid=0 para genérico
+                secure_url = f"{WEBAPP_URL}?uid=0&ts={ts}&sig={sig}"
+                
+                keyboard = InlineKeyboardMarkup([
+                    [InlineKeyboardButton(
+                        "💳 Assinar VIP - Pagar com Crypto",
+                        web_app=WebAppInfo(url=secure_url)
+                    )]
+                ])
+            else:
+                # Fallback: botão que simula o comando /pagar
+                keyboard = InlineKeyboardMarkup([
+                    [InlineKeyboardButton(
+                        "💳 Assinar VIP - Clique Aqui",
+                        callback_data="checkout_callback"
+                    )]
+                ])
+        except Exception as e:
+            logging.warning(f"[send_preview_media] Erro ao criar keyboard: {e}")
+            # Fallback simples
+            keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton(
+                    "💳 Assinar VIP - Clique Aqui", 
+                    callback_data="checkout_callback"
+                )]
+            ])
+        
         if keyboard:
             checkout_msg = (
                 "💸 <b>Quer ver o conteúdo completo?</b>\n\n"
@@ -1380,6 +1418,43 @@ async def enviar_pack_vip_job(context: ContextTypes.DEFAULT_TYPE):
 
 async def enviar_pack_free_job(context: ContextTypes.DEFAULT_TYPE):
     return await enviar_pack_job(context, tier="free", target_chat_id=GROUP_FREE_ID)
+
+# =========================
+# CALLBACK QUERY HANDLER
+# =========================
+async def checkout_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handler para o botão de checkout"""
+    query = update.callback_query
+    if not query or query.data != "checkout_callback":
+        return
+    
+    await query.answer()  # Responde ao callback
+    
+    user = query.from_user
+    if not user:
+        return
+    
+    # Simula o comando /pagar importando e chamando a função diretamente
+    try:
+        from payments import pagar_cmd
+        
+        # Cria um update simulado para o comando /pagar
+        # Reutiliza o contexto atual mas simula que veio de um comando /pagar
+        fake_update = update
+        fake_update.effective_message = query.message
+        
+        # Chama diretamente a função do comando /pagar
+        await pagar_cmd(fake_update, context)
+        
+    except Exception as e:
+        logging.error(f"Erro no checkout_callback_handler: {e}")
+        try:
+            await query.message.reply_text(
+                "❌ Erro ao processar pagamento. Tente usar o comando /pagar diretamente.",
+                parse_mode="HTML"
+            )
+        except Exception:
+            pass
 
 # =========================
 # COMMANDS & ADMIN
@@ -2771,6 +2846,9 @@ async def on_startup():
 
     application.add_handler(CommandHandler("set_pack_horario_vip", set_pack_horario_vip_cmd), group=1)
     application.add_handler(CommandHandler("set_pack_horario_free", set_pack_horario_free_cmd), group=1)
+
+    # ===== Callback Query Handler
+    application.add_handler(CallbackQueryHandler(checkout_callback_handler, pattern="checkout_callback"), group=1)
 
     # Jobs
     await _reschedule_daily_packs()
