@@ -620,10 +620,10 @@ if os.path.exists(webapp_dir):
 from telegram.request import HTTPXRequest
 request = HTTPXRequest(
     connection_pool_size=8,
-    read_timeout=30,
-    write_timeout=30,
-    connect_timeout=10,
-    pool_timeout=10,
+    read_timeout=60,
+    write_timeout=60,
+    connect_timeout=30,
+    pool_timeout=30,
 )
 
 application = ApplicationBuilder().token(BOT_TOKEN).request(request).build()
@@ -2675,11 +2675,40 @@ async def _block_non_admin_everywhere(update: Update, context: ContextTypes.DEFA
 async def on_startup():
     global bot, BOT_USERNAME
     logging.basicConfig(level=logging.INFO)
-    await application.initialize(); await application.start()
-    bot = application.bot
-    try: await bot.set_webhook(url=WEBHOOK_URL)
-    except Exception as e: logging.warning(f"set_webhook falhou: {e}")
-    me = await bot.get_me(); BOT_USERNAME = me.username
+    
+    # Retry logic for bot initialization (common on cloud platforms)
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            await application.initialize()
+            await application.start()
+            bot = application.bot
+            break
+        except Exception as e:
+            logging.warning(f"Bot initialization attempt {attempt + 1}/{max_retries} failed: {e}")
+            if attempt == max_retries - 1:
+                raise
+            await asyncio.sleep(5)  # Wait 5 seconds before retry
+    
+    # Set webhook with retry
+    try:
+        await bot.set_webhook(url=WEBHOOK_URL)
+    except Exception as e:
+        logging.warning(f"set_webhook falhou: {e}")
+    
+    # Get bot info with retry
+    for attempt in range(3):
+        try:
+            me = await bot.get_me()
+            BOT_USERNAME = me.username
+            break
+        except Exception as e:
+            logging.warning(f"get_me attempt {attempt + 1}/3 failed: {e}")
+            if attempt == 2:
+                BOT_USERNAME = "UnknownBot"  # fallback
+            else:
+                await asyncio.sleep(2)
+    
     logging.info("Bot iniciado (cripto + schedules + VIP/FREE).")
 
     # ==== Error handler
