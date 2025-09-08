@@ -104,13 +104,13 @@ def get_database_url():
     # Check if we're in a cloud environment (Render, Heroku, etc.)
     if any(os.getenv(var) for var in ["RENDER", "HEROKU", "DYNO"]):
         print("Detected cloud environment without DATABASE_URL.")
-        print("⚠️  CRITICAL: No DATABASE_URL configured!")
-        print("🔧 To fix this permanently:")
+        print("CRITICAL: No DATABASE_URL configured!")
+        print("To fix this permanently:")
         print("   1. Create a PostgreSQL database on your cloud platform")
         print("   2. Set DATABASE_URL environment variable")
         print("   3. Redeploy the application")
         print("")
-        print("📋 For Render.com:")
+        print("For Render.com:")
         print("   - Add a PostgreSQL database to your service")
         print("   - The DATABASE_URL will be automatically provided")
         print("")
@@ -122,15 +122,15 @@ def get_database_url():
             with open(tmp_db + ".test", 'w') as f:
                 f.write("test")
             os.remove(tmp_db + ".test")
-            print(f"⚠️  TEMPORARY FALLBACK: Using SQLite database: {tmp_db}")
-            print("⚠️  WARNING: Data will be lost on restart/redeploy!")
-            print("⚠️  Configure PostgreSQL immediately for data persistence!")
+            print(f"TEMPORARY FALLBACK: Using SQLite database: {tmp_db}")
+            print("WARNING: Data will be lost on restart/redeploy!")
+            print("Configure PostgreSQL immediately for data persistence!")
             return f"sqlite:///{tmp_db}"
         except Exception as e:
-            print(f"❌ Cannot write to /tmp ({e})")
-            print("❌ FALLING BACK TO IN-MEMORY DATABASE!")
-            print("❌ ALL DATA WILL BE LOST ON RESTART!")
-            print("❌ CONFIGURE PostgreSQL DATABASE IMMEDIATELY!")
+            print(f"Cannot write to /tmp ({e})")
+            print("FALLING BACK TO IN-MEMORY DATABASE!")
+            print("ALL DATA WILL BE LOST ON RESTART!")
+            print("CONFIGURE PostgreSQL DATABASE IMMEDIATELY!")
             return "sqlite:///:memory:"
     
     # Try different SQLite paths in order of preference (for local development)
@@ -315,27 +315,27 @@ def ensure_schema():
         # Show appropriate success message based on database type
         db_type = "PostgreSQL" if url.get_backend_name() == "postgresql" else "SQLite"
         if ":memory:" in str(url):
-            print("🔶 Database schema initialized successfully (IN-MEMORY)")
-            print("🔶 ⚠️  WARNING: All data will be lost on restart!")
-            print("🔶 Configure PostgreSQL for production use!")
+            print("Database schema initialized successfully (IN-MEMORY)")
+            print("WARNING: All data will be lost on restart!")
+            print("Configure PostgreSQL for production use!")
         elif "/tmp/" in str(url):
-            print("🟡 Database schema initialized successfully (TEMPORARY SQLite)")
-            print("🟡 ⚠️  WARNING: Data will be lost on redeploy!")
-            print("🟡 Configure PostgreSQL for production use!")
-            print(f"🟡 Database URL: {DB_URL}")
+            print("Database schema initialized successfully (TEMPORARY SQLite)")
+            print("WARNING: Data will be lost on redeploy!")
+            print("Configure PostgreSQL for production use!")
+            print(f"Database URL: {DB_URL}")
         elif db_type == "PostgreSQL":
-            print("✅ Database schema initialized successfully (PostgreSQL)")
-            print("✅ ✨ Data persistence ENABLED - safe for production!")
+            print("Database schema initialized successfully (PostgreSQL)")
+            print("Data persistence ENABLED - safe for production!")
             # Don't print the full URL for security (contains password)
             try:
                 parsed_url = url
                 safe_url = f"postgresql://{parsed_url.username}@{parsed_url.host}:{parsed_url.port}/{parsed_url.database}"
-                print(f"✅ Database: {safe_url}")
+                print(f"Database: {safe_url}")
             except:
-                print("✅ Database: PostgreSQL configured")
+                print("Database: PostgreSQL configured")
         else:
-            print(f"🟢 Database schema initialized successfully ({db_type})")
-            print(f"🟢 Database URL: {DB_URL}")
+            print(f"Database schema initialized successfully ({db_type})")
+            print(f"Database URL: {DB_URL}")
             
     except Exception as e:
         # Only try fallback if we're not already using in-memory
