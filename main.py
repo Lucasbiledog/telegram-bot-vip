@@ -240,6 +240,16 @@ def ensure_pack_tier_column():
     except Exception:
         pass
 
+def ensure_pack_scheduled_for_column():
+    try:
+        with engine.begin() as conn:
+            try:
+                conn.execute(text("ALTER TABLE packs ADD COLUMN scheduled_for TIMESTAMP"))
+            except Exception:
+                pass
+    except Exception as e:
+        logging.warning("Falha em ensure_pack_scheduled_for_column: %s", e)
+        
 def ensure_packfile_src_columns():
     try:
         with engine.begin() as conn:
@@ -308,6 +318,7 @@ def ensure_schema():
         Base.metadata.create_all(bind=engine)
         ensure_bigint_columns()
         ensure_pack_tier_column()
+        ensure_pack_scheduled_for_column()
         ensure_packfile_src_columns()
         ensure_vip_invite_column()
         ensure_vip_plan_column()
@@ -668,6 +679,7 @@ class Pack(Base):
     created_at = Column(DateTime, default=now_utc)
     sent = Column(Boolean, default=False)
     tier = Column(String, default="vip")
+    scheduled_for = Column(DateTime, nullable=True)
     files = relationship("PackFile", back_populates="pack", cascade="all, delete-orphan")
 
 class PackFile(Base):
@@ -960,10 +972,20 @@ async def vip_join_request_handler(update: Update, context: ContextTypes.DEFAULT
                 vm.active = False
             s.commit()
 
-def create_pack(title: str, header_message_id: Optional[int] = None, tier: str = "vip") -> 'Pack':
+def create_pack(
+    title: str,
+    header_message_id: Optional[int] = None,
+    tier: str = "vip",
+    scheduled_for: Optional[dt.datetime] = None,
+) -> 'Pack':
     with SessionLocal() as s:
         try:
-            p = Pack(title=title.strip(), header_message_id=header_message_id, tier=tier)
+            p = Pack(
+                title=title.strip(),
+                header_message_id=header_message_id,
+                tier=tier,
+                scheduled_for=scheduled_for,
+            )
             s.add(p)
             s.commit()
             s.refresh(p)
@@ -1715,8 +1737,12 @@ async def listar_packsvip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE
             previews = s.query(PackFile).filter(PackFile.pack_id == p.id, PackFile.role == "preview").count()
             docs    = s.query(PackFile).filter(PackFile.pack_id == p.id, PackFile.role == "file").count()
             status  = "ENVIADO" if p.sent else "PENDENTE"
+            ag = (
+                f" (agendado para {p.scheduled_for.strftime('%d/%m %H:%M')})"
+                if p.scheduled_for else ""
+            )
             lines.append(
-                f"[{p.id}] {esc(p.title)} — {status} — previews:{previews} arquivos:{docs} — {p.created_at.strftime('%d/%m %H:%M')}"
+                f"[{p.id}] {esc(p.title)} — {status} — previews:{previews} arquivos:{docs} — {p.created_at.strftime('%d/%m %H:%M')}{ag}"
             )
 
     await update.effective_message.reply_text("\n".join(lines))
@@ -1736,7 +1762,13 @@ async def listar_packsfree_cmd(update: Update, context: ContextTypes.DEFAULT_TYP
             previews = s.query(PackFile).filter(PackFile.pack_id == p.id, PackFile.role == "preview").count()
             docs    = s.query(PackFile).filter(PackFile.pack_id == p.id, PackFile.role == "file").count()
             status = "ENVIADO" if p.sent else "PENDENTE"
-            lines.append(f"[{p.id}] {esc(p.title)} — {status} — previews:{previews} arquivos:{docs} — {p.created_at.strftime('%d/%m %H:%M')}")
+            ag = (
+                f" (agendado para {p.scheduled_for.strftime('%d/%m %H:%M')})"
+                if p.scheduled_for else ""
+            )
+            lines.append(
+                f"[{p.id}] {esc(p.title)} — {status} — previews:{previews} arquivos:{docs} — {p.created_at.strftime('%d/%m %H:%M')}{ag}"
+            )
         await update.effective_message.reply_text("\n".join(lines))
    
 
@@ -1851,7 +1883,8 @@ async def set_enviadovip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE)
 # =========================
 # NOVOPACK (privado)
 # =========================
-CHOOSE_TIER, TITLE, CONFIRM_TITLE, PREVIEWS, FILES, CONFIRM_SAVE = range(6)
+CHOOSE_TIER, TITLE, CONFIRM_TITLE, PREVIEWS, FILES, SCHEDULE, CONFIRM_SAVE = range(7)
+
 
 def _require_admin(update: Update) -> bool:
     return update.effective_user and is_admin(update.effective_user.id)
@@ -1902,7 +1935,7 @@ async def novopackfree_start(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await update.effective_message.reply_text("🧩 Novo pack FREE — envie o <b>título</b>.", parse_mode="HTML"); return TITLE
 
 def _summary_from_session(user_data: Dict[str, Any]) -> str:
-    title = user_data.get("title", "—"); previews = user_data.get("previews", []); files = user_data.get("files", []); tier = (user_data.get("tier") or "vip").upper()
+    title = user_data.get("title", "—"); previews = user_data.get("previews", []); files = user_data.get("files", []); tier = (user_data.get("tier") or "vip").upper(); scheduled_for = user_data.get("scheduled_for")
     preview_names = []
     p_index = 1
     for it in previews:
