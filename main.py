@@ -1431,10 +1431,91 @@ async def checkout_callback_handler(update: Update, context: ContextTypes.DEFAUL
     if not user:
         return
     
-    # Simula o comando /pagar importando e chamando a função diretamente
+    # Implementa a lógica de checkout diretamente para callback queries
     try:
-        from payments import pagar_cmd
-        await pagar_cmd(update, context)
+        from config import WEBAPP_URL
+        from telegram import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
+        from utils import send_with_retry, make_link_sig
+        import time
+        import os
+        
+        # Verificar se o WALLET_ADDRESS está configurado
+        WALLET_ADDRESS = os.getenv("WALLET_ADDRESS")
+        if not WALLET_ADDRESS:
+            await query.message.reply_text("❌ Método de pagamento não configurado.", parse_mode="HTML")
+            return
+        
+        # Criar botão WebApp para checkout se disponível
+        if WEBAPP_URL:
+            # Gerar parâmetros de segurança para o link
+            uid = user.id
+            ts = int(time.time())
+            sig = make_link_sig(os.getenv("BOT_SECRET", "default"), uid, ts)
+
+            # URL com parâmetros de segurança
+            secure_url = f"{WEBAPP_URL}?uid={uid}&ts={ts}&sig={sig}"
+
+            keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton(
+                    "💳 Pagar com Crypto - Checkout",
+                    web_app=WebAppInfo(url=secure_url)
+                )]
+            ])
+
+            checkout_msg = (
+                f"💸 <b>Pagamento VIP via Cripto</b>\n\n"
+                f"✅ Clique no botão abaixo para acessar nossa página de checkout segura\n"
+                f"🔒 Pague com qualquer criptomoeda\n"
+                f"⚡ Ativação automática após confirmação\n\n"
+                f"💰 <b>Planos disponíveis:</b>\n"
+                f"• 30 dias: $0.05\n"
+                f"• 60 dias: $1.00\n"
+                f"• 180 dias: $1.50\n"
+                f"• 365 dias: $2.00"
+            )
+
+            # Tentar enviar no privado primeiro
+            sent = await send_with_retry(
+                context.bot.send_message,
+                chat_id=user.id,
+                text=checkout_msg,
+                parse_mode="HTML",
+                reply_markup=keyboard,
+            )
+
+            if sent is not None:
+                if query.message.chat.type != "private":
+                    await query.message.reply_text("📱 Te enviei o link de pagamento no privado!")
+            else:
+                # Se não conseguiu enviar no privado, envia no chat atual
+                await query.message.reply_text(
+                    checkout_msg,
+                    parse_mode="HTML",
+                    reply_markup=keyboard,
+                )
+        else:
+            # Fallback caso não tenha WEBAPP_URL: instruções manuais
+            MIN_CONFIRMATIONS = os.getenv("MIN_CONFIRMATIONS", "1")
+            instrucoes = (
+                f"💸 <b>Pagamento via Cripto</b>\n"
+                f"1) Abra seu banco de cripto.\n"
+                f"2) Envie o valor para a carteira:\n<code>{WALLET_ADDRESS}</code>\n"
+                f"3) Depois me mande aqui: <code>/tx &lt;hash_da_transacao&gt;</code>\n\n"
+                f"⚙️ Valido on-chain (mín. {MIN_CONFIRMATIONS} confirmações).\n"
+                f"✅ Aprovando, te envio o convite do VIP no privado."
+            )
+
+            try:
+                await context.bot.send_message(
+                    chat_id=user.id,
+                    text=instrucoes,
+                    parse_mode="HTML"
+                )
+                if query.message.chat.type != "private":
+                    await query.message.reply_text("📱 Te enviei as instruções no privado!")
+            except Exception:
+                await query.message.reply_text(instrucoes, parse_mode="HTML")
+                
     except Exception as e:
         logging.error(f"Erro no checkout_callback_handler: {e}")
         try:
