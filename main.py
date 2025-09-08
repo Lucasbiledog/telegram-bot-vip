@@ -1412,15 +1412,7 @@ async def checkout_callback_handler(update: Update, context: ContextTypes.DEFAUL
     # Simula o comando /pagar importando e chamando a função diretamente
     try:
         from payments import pagar_cmd
-        
-        # Cria um update simulado para o comando /pagar
-        # Reutiliza o contexto atual mas simula que veio de um comando /pagar
-        fake_update = update
-        fake_update.effective_message = query.message
-        
-        # Chama diretamente a função do comando /pagar
-        await pagar_cmd(fake_update, context)
-        
+        await pagar_cmd(update, context)
     except Exception as e:
         logging.error(f"Erro no checkout_callback_handler: {e}")
         try:
