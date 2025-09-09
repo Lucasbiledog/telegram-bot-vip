@@ -1479,11 +1479,22 @@ async def checkout_callback_handler(update: Update, context: ContextTypes.DEFAUL
             f"• 365 dias: $2.00"
         )
 
-        await query.message.reply_text(
-            checkout_msg,
-            parse_mode="HTML",
-            reply_markup=keyboard
-        )
+        # Enviar WebApp direto no grupo
+        try:
+            await context.bot.send_message(
+                chat_id=query.message.chat_id,
+                text=checkout_msg,
+                parse_mode="HTML",
+                reply_markup=keyboard
+            )
+        except Exception as webapp_error:
+            # Fallback: enviar link direto se WebApp falhar
+            logging.warning(f"Falha ao enviar WebApp: {webapp_error}")
+            await context.bot.send_message(
+                chat_id=query.message.chat_id,
+                text=f"{checkout_msg}\n\n🔗 Acesse: {webapp_url}",
+                parse_mode="HTML"
+            )
                 
     except Exception as e:
         logging.error(f"Erro no checkout_callback_handler: {e}")
