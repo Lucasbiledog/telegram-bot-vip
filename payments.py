@@ -970,7 +970,7 @@ async def approve_by_usd_and_invite(tg_id, username: Optional[str], tx_hash: str
     with SessionLocal() as s:
         # Extrair informações do payment para salvar
         token_symbol = details.get("token_symbol", "Unknown")
-        token_amount = details.get("amount", "N/A")
+        token_amount = details.get("amount_human", details.get("amount", "N/A"))
         
         p = Payment(
             tx_hash=tx_hash,

@@ -1744,6 +1744,13 @@ async def listar_hashes_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             payments = s.query(Payment).order_by(Payment.created_at.desc()).all()
             
             if not payments:
+                # Resetar sequence do auto-increment quando não houver payments
+                try:
+                    s.execute("ALTER SEQUENCE payments_id_seq RESTART WITH 1;")
+                    s.commit()
+                except Exception:
+                    pass  # Ignorar se não conseguir resetar
+                
                 return await update.effective_message.reply_text("📋 Nenhuma hash cadastrada.")
             
             # Paginar resultados (máximo 10 por página)
@@ -1813,13 +1820,31 @@ async def listar_hashes_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 }
                 chain_desc = chain_names.get(p.chain, p.chain or "unknown")
                 
-                if p.status == "approved" and p.token_symbol and p.amount and p.usd_value:
+                if p.status == "approved" and p.token_symbol and p.usd_value:
                     # Usar informações salvas durante aprovação
                     try:
                         usd_val = float(p.usd_value)
-                        payment_info = f"\n💰 Pago: {p.amount} {p.token_symbol} (${usd_val:.2f} USD) | {chain_desc}"
+                        # Calcular quantidade baseada no valor USD e símbolo
+                        if p.amount and p.amount != "N/A":
+                            amount_display = p.amount
+                        else:
+                            # Recalcular quantidade aproximada baseada no valor USD
+                            try:
+                                import asyncio
+                                from payments import resolve_payment_usd_autochain
+                                # Para display, usar estimativa baseada no valor salvo
+                                if p.token_symbol == "BTCB":
+                                    # Estimar quantidade BTCB baseada no USD salvo
+                                    btc_price = 110000  # Preço aproximado
+                                    amount_display = f"{usd_val/btc_price:.6f}"
+                                else:
+                                    amount_display = "~"
+                            except:
+                                amount_display = "~"
+                        
+                        payment_info = f"\n💰 Pago: {amount_display} {p.token_symbol} (${usd_val:.2f} USD) | {chain_desc}"
                     except:
-                        payment_info = f"\n💰 {p.amount} {p.token_symbol or 'Token'} | {chain_desc}"
+                        payment_info = f"\n💰 {p.token_symbol or 'Token'} | {chain_desc}"
                 elif p.amount:
                     payment_info = f"\n💰 Valor: {p.amount} | Rede: {chain_desc}"
                 else:
