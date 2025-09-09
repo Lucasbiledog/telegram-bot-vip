@@ -756,10 +756,10 @@ async def rejeitar_tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # =========================
 # Função principal de aprovação
 # =========================
-async def approve_by_usd_and_invite(tg_id: int, username: Optional[str], tx_hash: str, notify_user: bool = True):
-    """Valida transação e gera convite VIP"""
-    from main import SessionLocal, Payment, Group_VIP_ID, application
-    from utils import create_one_time_invite
+async def approve_by_usd_and_invite(tg_id, username: Optional[str], tx_hash: str, notify_user: bool = True):
+    """Valida transação e gera convite VIP - aceita UIDs temporários"""
+    from main import SessionLocal, Payment, GROUP_VIP_ID, application
+    from utils import create_one_time_invite, vip_upsert_and_get_until, choose_plan_from_usd
     import datetime as dt
     
     # Verificar se hash já existe
@@ -775,39 +775,52 @@ async def approve_by_usd_and_invite(tg_id: int, username: Optional[str], tx_hash
 
     # Verificar se valor cobre algum plano
     prices = get_prices_sync(None)
-    from utils import choose_plan_from_usd
     days = choose_plan_from_usd(usd or 0.0, prices)
     if not days:
         return False, f"Valor insuficiente (${usd:.2f})", {"details": details, "usd": usd}
 
-    # Estender VIP
-    from utils import vip_upsert_and_get_until
-    until = await vip_upsert_and_get_until(tg_id, username, days)
-
-    # Gerar convite de 1 uso
-    link = await create_one_time_invite(application.bot, Group_VIP_ID, expire_seconds=7200, member_limit=1)
-    if not link:
-        return False, "Falha ao gerar convite", {"error": "invite_failed"}
+    # Verificar se é UID temporário
+    is_temp_uid = isinstance(tg_id, str) and tg_id.startswith("temp_")
+    actual_tg_id = None
+    until = None
+    link = None
+    
+    if not is_temp_uid:
+        try:
+            actual_tg_id = int(tg_id)
+            # Estender VIP apenas se for ID real
+            until = await vip_upsert_and_get_until(actual_tg_id, username, days)
+            
+            # Gerar convite de 1 uso
+            link = await create_one_time_invite(application.bot, GROUP_VIP_ID, expire_seconds=7200, member_limit=1)
+            if not link:
+                return False, "Falha ao gerar convite", {"error": "invite_failed"}
+        except (ValueError, TypeError):
+            is_temp_uid = True
 
     # Salvar pagamento
     with SessionLocal() as s:
         p = Payment(
             tx_hash=tx_hash,
-            tg_id=tg_id,
+            tg_id=actual_tg_id if actual_tg_id else 0,  # 0 para pagamentos sem ID válido
             validated_at=dt.datetime.now(dt.timezone.utc)
         )
         s.add(p)
         s.commit()
 
-    msg = f"Pagamento confirmado (${usd:.2f}).\nPlano: {days} dias\nConvite VIP: {link}"
+    if is_temp_uid:
+        msg = f"✅ Pagamento confirmado (${usd:.2f})!\nPlano: {days} dias\n\n⚠️ Para receber o convite do grupo VIP, forneça seu ID do Telegram válido."
+        return True, msg, {"usd": usd, "days": days, "temp_uid": True}
+    else:
+        msg = f"✅ Pagamento confirmado (${usd:.2f})!\nPlano: {days} dias\nConvite VIP: {link}"
+        
+        if notify_user and actual_tg_id:
+            try:
+                await application.bot.send_message(chat_id=actual_tg_id, text=msg)
+            except Exception:
+                pass
 
-    if notify_user:
-        try:
-            await application.bot.send_message(chat_id=tg_id, text=msg)
-        except Exception:
-            pass
-
-    return True, msg, {"invite": link, "until": until.isoformat(), "usd": usd}
+        return True, msg, {"invite": link, "until": until.isoformat(), "usd": usd, "days": days}
 
 # =========================
 # Função para verificar se hash já foi usada

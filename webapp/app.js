@@ -16,9 +16,22 @@ function clearAlert() {
 
 // --- pega uid/ts/sig da query ---
 const q = new URLSearchParams(location.search);
-const uid = q.get("uid");
+let uid = q.get("uid");
 const ts  = q.get("ts");
 const sig = q.get("sig");
+
+// --- fallback para obter UID via Telegram WebApp ---
+if (!uid && window.Telegram && window.Telegram.WebApp) {
+  try {
+    const webApp = window.Telegram.WebApp;
+    if (webApp.initDataUnsafe && webApp.initDataUnsafe.user) {
+      uid = webApp.initDataUnsafe.user.id.toString();
+      console.log("[telegram-webapp] UID obtido via WebApp:", uid);
+    }
+  } catch (e) {
+    console.warn("[telegram-webapp] Falha ao obter UID:", e);
+  }
+}
 
 // --- render de planos ---
 function renderPlans(plansObj) {
@@ -93,9 +106,17 @@ async function validatePayment() {
     showAlert("Informe o hash da transação (ex.: 0xabc...)", false);
     return;
   }
-  if (!uid) {
-    showAlert("UID ausente. Abra esta página pelo botão de checkout no Telegram.", false);
-    return;
+  
+  // Usar UID se disponível, caso contrário usar ID fornecido pelo usuário ou valor padrão
+  let userID = uid;
+  if (!userID) {
+    const userInput = $("userid")?.value?.trim();
+    if (userInput && !isNaN(userInput)) {
+      userID = userInput;
+    } else {
+      // Gerar um ID temporário baseado no hash para permitir validação
+      userID = "temp_" + Math.abs(hash.split('').reduce((a,b) => (((a << 5) - a) + b.charCodeAt(0))|0, 0));
+    }
   }
 
   const btn = $("validarBtn");
@@ -108,7 +129,7 @@ async function validatePayment() {
     const r = await fetch("/api/validate", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ uid: Number(uid), username: null, hash }),
+      body: JSON.stringify({ uid: userID, username: null, hash }),
     });
 
     const j = await r.json().catch(() => ({}));
@@ -155,18 +176,35 @@ $("pasteBtn").addEventListener("click", async () => {
 $("validarBtn").addEventListener("click", validatePayment);
 
 // --- heartbeat p/ manter Render ativo + log no console ---
-console.log("[checkout] page loaded", { uid, ts });
+console.log("[checkout] page loaded", { uid, ts, sig });
+console.log("[checkout] Telegram WebApp available:", !!window.Telegram?.WebApp);
+if (window.Telegram?.WebApp) {
+  console.log("[checkout] WebApp user:", window.Telegram.WebApp.initDataUnsafe?.user);
+}
 setInterval(() => {
   console.log("[heartbeat] page alive", new Date().toISOString());
   fetch("/keepalive").catch(() => {});
 }, 60_000);
 
+// --- função para mostrar como descobrir o ID ---
+function showHowToGetId() {
+  showAlert(`
+    <h3>Como descobrir seu ID do Telegram</h3>
+    <ol>
+      <li>Abra o Telegram</li>
+      <li>Procure pelo bot <code>@userinfobot</code></li>
+      <li>Inicie uma conversa com ele</li>
+      <li>Ele enviará seu ID automaticamente</li>
+    </ol>
+    <p><strong>Importante:</strong> Sem o ID correto, você não receberá o convite do grupo VIP automaticamente.</p>
+  `, true);
+}
+
 // --- carrega informações básicas sem autenticação ---
 async function loadBasicInfo() {
   try {
-    // Mostrar informações básicas (carteira e planos padrão)
-    $("addr").value = "Acesso pelo bot do Telegram para ver a carteira";
-    $("addr").disabled = true;
+    // Mostrar carteira padrão (pode ser obtida da API)
+    $("addr").value = "0x40dDBD27F878d07808339F9965f013F1CBc2F812";
     
     // Mostrar planos padrão
     const defaultPlans = {
@@ -177,12 +215,12 @@ async function loadBasicInfo() {
     };
     renderPlans(defaultPlans);
     
-    // Desabilitar botões
-    $("validarBtn").disabled = true;
-    $("validarBtn").textContent = "Acesso pelo Telegram necessário";
-    $("pasteBtn").disabled = true;
-    $("txhash").disabled = true;
-    $("txhash").placeholder = "Acesso pelo bot do Telegram para validar pagamentos";
+    // Página totalmente funcional
+    showAlert(`
+      <h3>✅ Página de pagamento independente</h3>
+      <p>Esta página funciona completamente sem o bot do Telegram.</p>
+      <p>Para receber o convite do grupo VIP, insira seu ID do Telegram no campo acima.</p>
+    `, true);
     
   } catch (err) {
     console.warn("Erro ao carregar info básica:", err);

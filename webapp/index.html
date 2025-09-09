@@ -123,6 +123,12 @@
         <p id="ctxInfo" class="muted"></p>
       </div>
       <div class="field">
+        <label for="userid">Seu ID do Telegram (opcional)</label>
+        <input id="userid" type="text" placeholder="123456789" autocomplete="off" />
+        <div class="muted" style="margin-top: 4px;">Necessário para receber o convite do grupo VIP. <a href="#" onclick="showHowToGetId()" style="color: #22c55e;">Como descobrir meu ID?</a></div>
+      </div>
+
+      <div class="field">
         <label for="txhash">Hash da transação</label>
         <input id="txhash" type="text" placeholder="0x..." autocomplete="off" />
       </div>
@@ -137,6 +143,7 @@
       <div id="alert"></div>
     </div>
 
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <script src="/webapp/app.js"></script>
   </body>
 </html>
