@@ -1744,15 +1744,23 @@ async def listar_hashes_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             for p in page_payments:
                 status_emoji = {"pending": "⏳", "approved": "✅", "rejected": "❌"}.get(p.status, "❓")
                 username_info = f"@{p.username}" if p.username else f"ID:{p.user_id}"
-                created = p.created_at.strftime("%d/%m/%Y %H:%M") if p.created_at else "N/A"
                 
-                # Truncar hash para exibição
-                short_hash = p.tx_hash[:12] + "..." if len(p.tx_hash) > 15 else p.tx_hash
+                # Converter UTC para horário local brasileiro
+                if p.created_at:
+                    # Assumir que created_at está em UTC e converter para BRT (UTC-3)
+                    import pytz
+                    utc_dt = p.created_at.replace(tzinfo=pytz.UTC)
+                    brt_dt = utc_dt.astimezone(pytz.timezone('America/Sao_Paulo'))
+                    created = brt_dt.strftime("%d/%m/%Y %H:%M BRT")
+                else:
+                    created = "N/A"
                 
                 msg_lines.append(
-                    f"{status_emoji} <code>{short_hash}</code>\n"
-                    f"   👤 {username_info} | 📅 {created}\n"
-                    f"   🔗 {p.chain or 'unknown'} | Status: <b>{p.status.upper()}</b>"
+                    f"{status_emoji} <b>Hash #{p.id}</b> | Status: <b>{p.status.upper()}</b>\n"
+                    f"👤 {username_info}\n"
+                    f"📅 {created}\n"
+                    f"🔗 Chain: {p.chain or 'unknown'}\n"
+                    f"💳 <code>{p.tx_hash}</code>"
                 )
             
             if total_pages > 1:
@@ -1772,37 +1780,58 @@ async def excluir_hash_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if not context.args:
         return await update.effective_message.reply_text(
-            "❌ Uso: /excluir_hash <hash_completa>\n"
+            "❌ Uso: /excluir_hash <hash_ou_id>\n"
+            "💡 Exemplos:\n"
+            "   /excluir_hash 0x1a2b3c4d... (hash completa ou parcial)\n"
+            "   /excluir_hash 5 (ID da hash)\n"
             "💡 Use /listar_hashes para ver as hashes disponíveis"
         )
     
-    hash_to_delete = context.args[0].strip()
+    identifier = context.args[0].strip()
     
     with SessionLocal() as s:
         try:
-            # Buscar payment por hash (busca exata ou parcial)
-            payment = s.query(Payment).filter(
-                Payment.tx_hash.ilike(f"%{hash_to_delete}%")
-            ).first()
+            payment = None
+            
+            # Primeiro, tentar como ID numérico
+            if identifier.isdigit():
+                payment_id = int(identifier)
+                payment = s.query(Payment).filter(Payment.id == payment_id).first()
+            
+            # Se não encontrou por ID, tentar por hash
+            if not payment:
+                payment = s.query(Payment).filter(
+                    Payment.tx_hash.ilike(f"%{identifier}%")
+                ).first()
             
             if not payment:
                 return await update.effective_message.reply_text(
-                    f"❌ Hash não encontrada: <code>{hash_to_delete}</code>\n"
+                    f"❌ Hash/ID não encontrado: <code>{identifier}</code>\n"
                     "💡 Use /listar_hashes para ver as hashes disponíveis",
                     parse_mode="HTML"
                 )
             
             # Confirmar exclusão
             username_info = f"@{payment.username}" if payment.username else f"ID:{payment.user_id}"
-            short_hash = payment.tx_hash[:20] + "..." if len(payment.tx_hash) > 20 else payment.tx_hash
+            
+            # Converter horário para BRT
+            if payment.created_at:
+                import pytz
+                utc_dt = payment.created_at.replace(tzinfo=pytz.UTC)
+                brt_dt = utc_dt.astimezone(pytz.timezone('America/Sao_Paulo'))
+                created_time = brt_dt.strftime('%d/%m/%Y %H:%M BRT')
+            else:
+                created_time = 'N/A'
             
             confirm_msg = (
-                f"⚠️ <b>CONFIRMAR EXCLUSÃO</b>\n\n"
-                f"🔗 Hash: <code>{short_hash}</code>\n"
+                f"⚠️ <b>CONFIRMAR EXCLUSÃO DE HASH</b>\n\n"
+                f"🆔 ID: <b>#{payment.id}</b>\n"
                 f"👤 Usuário: {username_info}\n"
-                f"📅 Criado: {payment.created_at.strftime('%d/%m/%Y %H:%M') if payment.created_at else 'N/A'}\n"
-                f"⚡ Status: <b>{payment.status.upper()}</b>\n\n"
-                f"Esta ação é <b>irreversível</b>!\n"
+                f"📅 Criado: {created_time}\n"
+                f"🔗 Chain: {payment.chain or 'unknown'}\n"
+                f"⚡ Status: <b>{payment.status.upper()}</b>\n"
+                f"💳 Hash completa:\n<code>{payment.tx_hash}</code>\n\n"
+                f"⚠️ Esta ação é <b>IRREVERSÍVEL</b>!\n"
                 f"Responda <b>CONFIRMAR</b> para excluir ou <b>CANCELAR</b> para abortar."
             )
             
@@ -1853,8 +1882,23 @@ async def listar_vips_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             for vip in page_vips:
                 username_info = f"@{vip.username}" if vip.username else f"ID:{vip.user_id}"
-                expires_str = vip.expires_at.strftime("%d/%m/%Y %H:%M") if vip.expires_at else "N/A"
-                created_str = vip.created_at.strftime("%d/%m/%Y") if vip.created_at else "N/A"
+                
+                # Converter horários para BRT
+                if vip.expires_at:
+                    import pytz
+                    utc_expires = vip.expires_at.replace(tzinfo=pytz.UTC)
+                    brt_expires = utc_expires.astimezone(pytz.timezone('America/Sao_Paulo'))
+                    expires_str = brt_expires.strftime("%d/%m/%Y %H:%M BRT")
+                else:
+                    expires_str = "N/A"
+                    
+                if vip.created_at:
+                    import pytz
+                    utc_created = vip.created_at.replace(tzinfo=pytz.UTC)
+                    brt_created = utc_created.astimezone(pytz.timezone('America/Sao_Paulo'))
+                    created_str = brt_created.strftime("%d/%m/%Y BRT")
+                else:
+                    created_str = "N/A"
                 
                 # Verificar status
                 is_active = vip.active and vip.expires_at and vip.expires_at > now
@@ -1875,10 +1919,11 @@ async def listar_vips_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     time_info = "⏰ Expirado"
                 
                 msg_lines.append(
-                    f"{status_emoji} <b>{status_text}</b>\n"
+                    f"{status_emoji} <b>VIP #{vip.id}</b> | {status_text}\n"
                     f"👤 {username_info}\n"
                     f"📅 Expira: {expires_str}\n"
-                    f"🎯 Criado: {created_str} | {time_info}"
+                    f"🎯 Criado: {created_str}\n"
+                    f"⏰ {time_info}"
                 )
             
             # Estatísticas
@@ -1919,14 +1964,22 @@ async def processar_confirmacao_exclusao(update: Update, context: ContextTypes.D
                     if not payment:
                         await update.effective_message.reply_text("❌ Payment não encontrado.")
                     else:
+                        # Salvar info antes de excluir
+                        payment_id = payment.id
+                        username = payment.username
+                        user_id = payment.user_id
+                        
                         # Excluir payment
                         s.delete(payment)
                         s.commit()
                         
-                        short_hash = hash_value[:20] + "..." if len(hash_value) > 20 else hash_value
+                        username_info = f"@{username}" if username else f"ID:{user_id}"
                         await update.effective_message.reply_text(
-                            f"✅ <b>HASH EXCLUÍDA</b>\n"
-                            f"🔗 <code>{short_hash}</code> foi removida do sistema.",
+                            f"✅ <b>HASH EXCLUÍDA COM SUCESSO</b>\n\n"
+                            f"🆔 ID: #{payment_id}\n"
+                            f"👤 Usuário: {username_info}\n"
+                            f"💳 Hash: <code>{hash_value}</code>\n\n"
+                            f"A hash foi removida permanentemente do sistema.",
                             parse_mode="HTML"
                         )
                         
