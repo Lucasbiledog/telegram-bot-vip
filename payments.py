@@ -878,8 +878,10 @@ async def approve_by_usd_and_invite(tg_id, username: Optional[str], tx_hash: str
     with SessionLocal() as s:
         p = Payment(
             tx_hash=tx_hash,
-            tg_id=actual_tg_id if actual_tg_id else 0,  # 0 para pagamentos sem ID válido
-            validated_at=dt.datetime.now(dt.timezone.utc)
+            user_id=actual_tg_id if actual_tg_id else 0,  # 0 para pagamentos sem ID válido
+            username=username,
+            status="approved",
+            created_at=dt.datetime.now(dt.timezone.utc)
         )
         s.add(p)
         s.commit()
@@ -918,8 +920,9 @@ async def store_payment_hash(tx_hash: str, tg_id: int):
     with SessionLocal() as s:
         p = Payment(
             tx_hash=tx_hash,
-            tg_id=tg_id,
-            validated_at=dt.datetime.now(dt.timezone.utc)
+            user_id=tg_id,
+            status="approved",
+            created_at=dt.datetime.now(dt.timezone.utc)
         )
         s.add(p)
         s.commit()
