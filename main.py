@@ -1441,8 +1441,11 @@ async def checkout_callback_handler(update: Update, context: ContextTypes.DEFAUL
         
         # Verificar se o WALLET_ADDRESS está configurado
         WALLET_ADDRESS = os.getenv("WALLET_ADDRESS")
-        if not WALLET_ADDRESS:
-            await query.message.reply_text("❌ Método de pagamento não configurado.", parse_mode="HTML")
+        if not WALLET_ADDRESS or WALLET_ADDRESS == "your_crypto_wallet_address_here":
+            await query.message.reply_text(
+                "❌ Sistema de pagamento em configuração. Use o comando /pagar para instruções.",
+                parse_mode="HTML"
+            )
             return
         
         # Criar botão WebApp para checkout se disponível
