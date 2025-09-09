@@ -1390,10 +1390,22 @@ async def enviar_pack_job(context: ContextTypes.DEFAULT_TYPE, tier: str, target_
 
         # Envia previews primeiro
         if previews:
-            await _send_preview_media(context, target_chat_id, previews)
+            try:
+                await _send_preview_media(context, target_chat_id, previews)
+            except Exception as e:
+                if "Chat not found" in str(e):
+                    logging.error(f"Chat {target_chat_id} não encontrado durante envio de previews.")
+                    return f"❌ Erro: Chat {target_chat_id} não encontrado. Bot não está no grupo?"
+                raise
 
         # Envia título
-        await context.application.bot.send_message(chat_id=target_chat_id, text=p.title)
+        try:
+            await context.application.bot.send_message(chat_id=target_chat_id, text=p.title)
+        except Exception as e:
+            if "Chat not found" in str(e):
+                logging.error(f"Chat {target_chat_id} não encontrado. Verifique se o bot está no grupo.")
+                return f"❌ Erro: Chat {target_chat_id} não encontrado. Bot não está no grupo?"
+            raise
 
         # Envia docs (com fallback controlado)
         for f in docs:
@@ -1590,6 +1602,28 @@ async def getid_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user; chat = update.effective_chat; msg = update.effective_message
     if msg:
         await msg.reply_text(f"Seu nome: {esc(user.full_name)}\nSeu ID: {user.id}\nID deste chat: {chat.id}", parse_mode="HTML")
+
+async def debug_grupos_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Comando para debug dos grupos configurados"""
+    user = update.effective_user
+    if not user or not is_admin(user.id):
+        return await update.effective_message.reply_text("Apenas admins.")
+    
+    info = f"""🔧 Debug dos Grupos
+
+Grupos configurados:
+• GROUP_VIP_ID: {GROUP_VIP_ID}
+• GROUP_FREE_ID: {GROUP_FREE_ID}
+• STORAGE_GROUP_ID: {STORAGE_GROUP_ID}
+• STORAGE_GROUP_FREE_ID: {STORAGE_GROUP_FREE_ID}
+
+Chat atual: {update.effective_chat.id}
+
+Variáveis ENV:
+• Group_VIP_ID: {os.getenv('Group_VIP_ID', 'não definido')}
+• GROUP_VIP_ID: {os.getenv('GROUP_VIP_ID', 'não definido')}"""
+    
+    await update.effective_message.reply_text(info)
 
 async def say_vip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not (update.effective_user and is_admin(update.effective_user.id)): return await update.effective_message.reply_text("Apenas admins.")
@@ -2958,6 +2992,7 @@ async def on_startup():
     application.add_handler(CommandHandler("comandos", comandos_cmd), group=5)
     application.add_handler(CommandHandler("listar_comandos", comandos_cmd), group=5)
     application.add_handler(CommandHandler("getid", getid_cmd), group=1)
+    application.add_handler(CommandHandler("debug_grupos", debug_grupos_cmd), group=1)
 
     application.add_handler(CommandHandler("say_vip", say_vip_cmd), group=1)
     application.add_handler(CommandHandler("say_free", say_free_cmd), group=1)
