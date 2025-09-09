@@ -631,14 +631,14 @@ import os
 webapp_dir = os.path.join(os.path.dirname(__file__), "webapp")
 if os.path.exists(webapp_dir):
     app.mount("/webapp", StaticFiles(directory=webapp_dir), name="webapp")
-# Configure timeouts para produção
+# Configure timeouts para produção (mais tolerantes para cloud)
 from telegram.request import HTTPXRequest
 request = HTTPXRequest(
     connection_pool_size=8,
-    read_timeout=60,
-    write_timeout=60,
-    connect_timeout=30,
-    pool_timeout=30,
+    read_timeout=120,  # Increased from 60
+    write_timeout=120, # Increased from 60  
+    connect_timeout=60, # Increased from 30
+    pool_timeout=60,   # Increased from 30
 )
 
 application = ApplicationBuilder().token(BOT_TOKEN).request(request).build()
@@ -2909,29 +2909,53 @@ async def on_startup():
     global bot, BOT_USERNAME
     logging.basicConfig(level=logging.INFO)
     
+    # Debug das variáveis de ambiente críticas
+    logging.info(f"🔧 Environment Debug:")
+    logging.info(f"   BOT_TOKEN: {'✅ Set' if BOT_TOKEN and BOT_TOKEN != 'test_token' else '❌ Missing/Invalid'}")
+    logging.info(f"   WEBHOOK_URL: {'✅ Set' if WEBHOOK_URL else '❌ Missing'}")
+    logging.info(f"   DATABASE_URL: {'✅ Set' if os.getenv('DATABASE_URL') else '❌ Missing'}")
+    logging.info(f"   WALLET_ADDRESS: {'✅ Set' if WALLET_ADDRESS else '❌ Missing'}")
+    
     # Verificar se BOT_TOKEN está configurado
     if not BOT_TOKEN or BOT_TOKEN == "test_token":
-        logging.error("BOT_TOKEN não está configurado corretamente!")
+        logging.error("❌ BOT_TOKEN não está configurado corretamente!")
+        logging.error("   Configure BOT_TOKEN no Render com o token do seu bot do Telegram")
         return
     
     # Retry logic for bot initialization (common on cloud platforms)
     max_retries = 3
     for attempt in range(max_retries):
         try:
-            # Inicializar o application primeiro
-            await application.initialize()
+            logging.info(f"Tentativa {attempt + 1}/{max_retries} de inicializar o bot...")
+            logging.info(f"Token configurado: {'Sim' if BOT_TOKEN else 'Não'} (primeiros 10 chars: {BOT_TOKEN[:10] if BOT_TOKEN else 'N/A'}...)")
+            
+            # Inicializar o application primeiro com timeout estendido
+            logging.info("Inicializando application...")
+            await asyncio.wait_for(application.initialize(), timeout=60.0)
+            
             # Depois inicializar o bot
+            logging.info("Obtendo bot instance...")
             bot = application.bot
+            
             # Por último, iniciar o application
-            await application.start()
+            logging.info("Iniciando application...")
+            await asyncio.wait_for(application.start(), timeout=60.0)
+            
+            logging.info("✅ Bot inicializado com sucesso!")
             break
+            
+        except asyncio.TimeoutError:
+            logging.warning(f"Bot initialization attempt {attempt + 1}/{max_retries} timed out after 60 seconds")
         except Exception as e:
             logging.warning(f"Bot initialization attempt {attempt + 1}/{max_retries} failed: {e}")
-            if attempt == max_retries - 1:
-                logging.error("Falha na inicialização do bot após todas as tentativas.")
-                # Não fazer raise para não quebrar o servidor
-                return
-            await asyncio.sleep(5)  # Wait 5 seconds before retry
+            
+        if attempt == max_retries - 1:
+            logging.error("Falha na inicialização do bot após todas as tentativas.")
+            # Não fazer raise para não quebrar o servidor
+            return
+        
+        logging.info(f"Aguardando 10 segundos antes da próxima tentativa...")
+        await asyncio.sleep(10)  # Wait longer between retries
     
     # Só configurar webhook se bot foi inicializado com sucesso
     if bot:
