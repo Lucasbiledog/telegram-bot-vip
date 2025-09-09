@@ -1387,28 +1387,42 @@ async def enviar_pack_job(context: ContextTypes.DEFAULT_TYPE, tier: str, target_
             seen.add(key)
             (previews if f.role == "preview" else docs).append(f)
 
-        # Envia previews primeiro
-        if previews:
+        if tier == "free":
+            # GRUPO FREE: Apenas previews + botão de pagamento (sem título, sem docs)
+            if previews:
+                try:
+                    await _send_preview_media(context, target_chat_id, previews)
+                except Exception as e:
+                    if "Chat not found" in str(e):
+                        logging.error(f"Chat {target_chat_id} não encontrado durante envio de previews.")
+                        return f"❌ Erro: Chat {target_chat_id} não encontrado. Bot não está no grupo?"
+                    raise
+            
+        elif tier == "vip":
+            # GRUPO VIP: Tudo (previews + título + docs)
+            
+            # Envia previews primeiro
+            if previews:
+                try:
+                    await _send_preview_media(context, target_chat_id, previews)
+                except Exception as e:
+                    if "Chat not found" in str(e):
+                        logging.error(f"Chat {target_chat_id} não encontrado durante envio de previews.")
+                        return f"❌ Erro: Chat {target_chat_id} não encontrado. Bot não está no grupo?"
+                    raise
+
+            # Envia título
             try:
-                await _send_preview_media(context, target_chat_id, previews)
+                await context.application.bot.send_message(chat_id=target_chat_id, text=p.title)
             except Exception as e:
                 if "Chat not found" in str(e):
-                    logging.error(f"Chat {target_chat_id} não encontrado durante envio de previews.")
+                    logging.error(f"Chat {target_chat_id} não encontrado. Verifique se o bot está no grupo.")
                     return f"❌ Erro: Chat {target_chat_id} não encontrado. Bot não está no grupo?"
                 raise
 
-        # Envia título
-        try:
-            await context.application.bot.send_message(chat_id=target_chat_id, text=p.title)
-        except Exception as e:
-            if "Chat not found" in str(e):
-                logging.error(f"Chat {target_chat_id} não encontrado. Verifique se o bot está no grupo.")
-                return f"❌ Erro: Chat {target_chat_id} não encontrado. Bot não está no grupo?"
-            raise
-
-        # Envia docs (com fallback controlado)
-        for f in docs:
-            await _try_send_document_like(context, target_chat_id, f, caption=None)
+            # Envia docs (com fallback controlado)
+            for f in docs:
+                await _try_send_document_like(context, target_chat_id, f, caption=None)
 
         # Crosspost removido - FREE recebe packs independentemente
         # if tier == "vip" and previews:
@@ -1810,12 +1824,27 @@ async def vip_remove_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def simularvip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not (update.effective_user and is_admin(update.effective_user.id)): return await update.effective_message.reply_text("Apenas admins.")
-    status = await enviar_pack_vip_job(context); await update.effective_message.reply_text(status)
+    """Simulação REAL: Envia pack completo para VIP + preview para FREE"""
+    if not (update.effective_user and is_admin(update.effective_user.id)): 
+        return await update.effective_message.reply_text("Apenas admins.")
+    
+    # Enviar pack completo para VIP
+    status_vip = await enviar_pack_vip_job(context)
+    
+    # Enviar preview + botão para FREE
+    status_free = await enviar_pack_free_job(context)
+    
+    # Resposta combinada
+    resultado = f"🎯 **Simulação Real Concluída**\n\n**VIP:** {status_vip}\n**FREE:** {status_free}"
+    await update.effective_message.reply_text(resultado, parse_mode="Markdown")
 
 async def simularfree_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not (update.effective_user and is_admin(update.effective_user.id)): return await update.effective_message.reply_text("Apenas admins.")
-    status = await enviar_pack_free_job(context); await update.effective_message.reply_text(status)
+    """Envia apenas preview + botão para grupo FREE"""
+    if not (update.effective_user and is_admin(update.effective_user.id)): 
+        return await update.effective_message.reply_text("Apenas admins.")
+    
+    status = await enviar_pack_free_job(context)
+    await update.effective_message.reply_text(f"📱 **Free:** {status}", parse_mode="Markdown")
 
 async def listar_packsvip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not (update.effective_user and is_admin(update.effective_user.id)):
@@ -3000,6 +3029,7 @@ async def on_startup():
     application.add_handler(CommandHandler("say_free", say_free_cmd), group=1)
 
     application.add_handler(CommandHandler("simularvip", simularvip_cmd), group=1)
+    application.add_handler(CommandHandler("simularfree", simularfree_cmd), group=1)
     application.add_handler(
         CommandHandler(
             [
