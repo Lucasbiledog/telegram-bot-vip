@@ -34,17 +34,36 @@ _PRICE_CACHE: Dict[str, Tuple[float, float]] = {}
 
 # Preços de fallback: atualizados dinamicamente no startup para tokens principais
 FALLBACK_PRICES = {
-    # Nativos
+    # Tokens nativos principais - atualizados automaticamente
     "ethereum": 2500.0,
     "binancecoin": 300.0,
     "polygon-pos": 0.9,
     "avalanche-2": 25.0,
-    "bitcoin": 110881.0,  # Atualizado 09/09/2025
-
-    # Tokens populares por endereço (chain:address -> preço)
-    "0x38:0x7130d2a12b9bcbfae4f2634d864a1ee1ce3ead9c": 110881.0,  # BTCB na BSC - Atualizado 09/09/2025
+    "fantom": 0.35,
+    "crypto-com-chain": 0.08,  # CRO
+    "celo": 0.50,
+    "moonbeam": 0.15,  # GLMR
+    "moonriver": 4.50,  # MOVR
+    "mantle": 0.75,  # MNT
+    "apecoin": 1.20,  # APE
+    "xdai": 1.0,  # xDAI
+    
+    # Bitcoin e variantes
+    "bitcoin": 110881.0,  # Atualizado automaticamente
+    "0x38:0x7130d2a12b9bcbfae4f2634d864a1ee1ce3ead9c": 110881.0,  # BTCB na BSC
+    
+    # Stablecoins principais (USD = 1.0)
     "0x1:0xa0b86991c31cc170c8b9e71b51e1a53af4e9b8c9e": 1.0,     # USDC na Ethereum
     "0x38:0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d": 1.0,     # USDC na BSC
+    "0x89:0x2791bca1f2de4661ed88a30c99a7a9449aa84174": 1.0,     # USDC na Polygon
+    "0xa4b1:0xaf88d065e77c8cc2239327c5edb3a432268e5831": 1.0,   # USDC na Arbitrum
+    "0xa:0x0b2c639c533813f4aa9d7837caf62653d097ff85": 1.0,      # USDC na Optimism
+    "0x2105:0x833589fcd6edb6e08f4c7c32d4f71b54bda02913": 1.0,   # USDC na Base
+    
+    # USDT variants
+    "0x1:0xdac17f958d2ee523a2206206994597c13d831ec7": 1.0,      # USDT na Ethereum
+    "0x38:0x55d398326f99059ff775485246999027b3197955": 1.0,     # USDT na BSC
+    "0x89:0xc2132d05d31c914a87c6611c10748aeb04b58e8f": 1.0,     # USDT na Polygon
 }
 
 # Metadados para auditoria dos preços de fallback
@@ -72,6 +91,51 @@ def _update_fallback_prices() -> None:
             "cg_id": "binancecoin", 
             "keys": ["binancecoin"],
             "name": "BNB"
+        },
+        {
+            "cg_id": "polygon-pos",
+            "keys": ["polygon-pos"],
+            "name": "Polygon"
+        },
+        {
+            "cg_id": "avalanche-2",
+            "keys": ["avalanche-2"],
+            "name": "Avalanche"
+        },
+        {
+            "cg_id": "fantom",
+            "keys": ["fantom"],
+            "name": "Fantom"
+        },
+        {
+            "cg_id": "crypto-com-chain",
+            "keys": ["crypto-com-chain"],
+            "name": "Cronos"
+        },
+        {
+            "cg_id": "celo",
+            "keys": ["celo"],
+            "name": "Celo"
+        },
+        {
+            "cg_id": "moonbeam",
+            "keys": ["moonbeam"],
+            "name": "Moonbeam"
+        },
+        {
+            "cg_id": "moonriver",
+            "keys": ["moonriver"],
+            "name": "Moonriver"
+        },
+        {
+            "cg_id": "mantle",
+            "keys": ["mantle"],
+            "name": "Mantle"
+        },
+        {
+            "cg_id": "apecoin",
+            "keys": ["apecoin"],
+            "name": "ApeCoin"
         }
     ]
     
@@ -162,7 +226,7 @@ def _price_cache_put(key: str, price: float) -> None:
 # =========================
 # Adicione mais entradas conforme precisar.
 CHAINS: Dict[str, Dict[str, str]] = {
-    # Ethereum / EVMs
+    # Principais EVMs
     "0x1": {"rpc": "https://rpc.ankr.com/eth", "sym": "ETH", "cg_native": "ethereum", "cg_platform": "ethereum"},
     "0x38": {"rpc": "https://bsc-dataseed.binance.org", "sym": "BNB", "cg_native": "binancecoin", "cg_platform": "binance-smart-chain"},
     "0x89": {"rpc": "https://polygon-rpc.com", "sym": "MATIC", "cg_native": "polygon-pos", "cg_platform": "polygon-pos"},
@@ -172,6 +236,31 @@ CHAINS: Dict[str, Dict[str, str]] = {
     "0xa86a": {"rpc": "https://api.avax.network/ext/bc/C/rpc", "sym": "AVAX", "cg_native": "avalanche-2", "cg_platform": "avalanche"},
     "0x144": {"rpc": "https://mainnet.era.zksync.io", "sym": "ETH", "cg_native": "ethereum", "cg_platform": "zksync"},
     "0xe708": {"rpc": "https://rpc.linea.build", "sym": "ETH", "cg_native": "ethereum", "cg_platform": "linea"},
+    
+    # Expansão completa - Layer 2s e sidechains
+    "0x13e31": {"rpc": "https://rpc.blast.io", "sym": "ETH", "cg_native": "ethereum", "cg_platform": "blast"},
+    "0xa4ec": {"rpc": "https://forno.celo.org", "sym": "CELO", "cg_native": "celo", "cg_platform": "celo"},
+    "0x1388": {"rpc": "https://rpc.mantle.xyz", "sym": "MNT", "cg_native": "mantle", "cg_platform": "mantle"},
+    "0xcc": {"rpc": "https://opbnb-mainnet-rpc.bnbchain.org", "sym": "BNB", "cg_native": "binancecoin", "cg_platform": "opbnb"},
+    "0x2a15c308d": {"rpc": "https://palm-mainnet.public.blastapi.io", "sym": "PALM", "cg_native": "palm", "cg_platform": "palm"},
+    "0x82750": {"rpc": "https://rpc.scroll.io", "sym": "ETH", "cg_native": "ethereum", "cg_platform": "scroll"},
+    "0x783": {"rpc": "https://mainnet-swell.alt.technology", "sym": "ETH", "cg_native": "ethereum", "cg_platform": "swellchain"},
+    "0x82": {"rpc": "https://unichain-mainnet.alt.technology", "sym": "ETH", "cg_native": "ethereum", "cg_platform": "unichain"},
+    
+    # Outros EVMs importantes
+    "0xfa": {"rpc": "https://rpc.ftm.tools", "sym": "FTM", "cg_native": "fantom", "cg_platform": "fantom"},
+    "0x64": {"rpc": "https://rpc.gnosischain.com", "sym": "xDAI", "cg_native": "xdai", "cg_platform": "gnosis"},
+    "0x507": {"rpc": "https://mainnet.moonbeam.network", "sym": "GLMR", "cg_native": "moonbeam", "cg_platform": "moonbeam"},
+    "0x505": {"rpc": "https://rpc.api.moonriver.moonbeam.network", "sym": "MOVR", "cg_native": "moonriver", "cg_platform": "moonriver"},
+    "0x19": {"rpc": "https://evm.cronos.org", "sym": "CRO", "cg_native": "crypto-com-chain", "cg_platform": "cronos"},
+    "0x7a69": {"rpc": "https://rpc.zora.energy", "sym": "ETH", "cg_native": "ethereum", "cg_platform": "zora"},
+    "0x8453": {"rpc": "https://rpc.zora.energy", "sym": "ETH", "cg_native": "ethereum", "cg_platform": "zora"},
+    
+    # Redes emergentes e especializadas
+    "0x1b3": {"rpc": "https://rpc.apechain.com/http", "sym": "APE", "cg_native": "apecoin", "cg_platform": "apechain"},
+    "0x2710": {"rpc": "https://rpc.morphl2.io", "sym": "ETH", "cg_native": "ethereum", "cg_platform": "morph"},
+    "0x8274f": {"rpc": "https://rpc.scroll.io", "sym": "ETH", "cg_native": "ethereum", "cg_platform": "scroll"},
+    "0xa4b1": {"rpc": "https://nova.arbitrum.io/rpc", "sym": "ETH", "cg_native": "ethereum", "cg_platform": "arbitrum-nova"},
 }
 
 # =========================
@@ -608,10 +697,32 @@ async def _resolve_on_chain(
 
 
 def human_chain(chain_id: str) -> str:
-    # nomes mais amigáveis em alguns casos
-    if chain_id == "0x38":
-        return "BNB Smart Chain"
-    return chain_id
+    """Converte chain_id para nome legível"""
+    chain_names = {
+        "0x1": "Ethereum",
+        "0x38": "BNB Smart Chain", 
+        "0x89": "Polygon",
+        "0xa4b1": "Arbitrum One",
+        "0xa": "OP Mainnet",
+        "0x2105": "Base",
+        "0xa86a": "Avalanche",
+        "0x144": "zkSync Era",
+        "0xe708": "Linea",
+        "0x13e31": "Blast",
+        "0xa4ec": "Celo",
+        "0x1388": "Mantle",
+        "0xcc": "opBNB",
+        "0x82750": "Scroll",
+        "0xfa": "Fantom",
+        "0x64": "Gnosis",
+        "0x507": "Moonbeam", 
+        "0x505": "Moonriver",
+        "0x19": "Cronos",
+        "0x7a69": "Zora",
+        "0x1b3": "Ape Chain",
+        "0x2710": "Morph"
+    }
+    return chain_names.get(chain_id, chain_id)
 
 
 async def resolve_payment_usd_autochain(
