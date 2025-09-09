@@ -280,6 +280,25 @@ def ensure_vip_plan_column():
     except Exception as e:
         logging.warning("Falha ensure_vip_plan_column: %s", e)
 
+def ensure_payment_fields():
+    """Garantir que a tabela payments possua os novos campos utilizados pelo bot"""
+    try:
+        with engine.begin() as conn:
+            try:
+                conn.execute(text("ALTER TABLE payments ADD COLUMN token_symbol VARCHAR"))
+            except Exception:
+                pass
+            try:
+                conn.execute(text("ALTER TABLE payments ADD COLUMN usd_value VARCHAR"))
+            except Exception:
+                pass
+            try:
+                conn.execute(text("ALTER TABLE payments ADD COLUMN vip_days INTEGER"))
+            except Exception:
+                pass
+    except Exception as e:
+        logging.warning("Falha ensure_payment_fields: %s", e)
+
 class VipPlan(str, Enum):
     TRIMESTRAL = "TRIMESTRAL"
     SEMESTRAL = "SEMESTRAL"
@@ -321,6 +340,7 @@ def ensure_schema():
         ensure_packfile_src_columns()
         ensure_vip_invite_column()
         ensure_vip_plan_column()
+        ensure_payment_fields()
         
         # Show appropriate success message based on database type
         db_type = "PostgreSQL" if url.get_backend_name() == "postgresql" else "SQLite"
