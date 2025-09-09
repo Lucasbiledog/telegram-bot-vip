@@ -32,20 +32,49 @@ PRICE_RETRY_BASE_DELAY = float(os.getenv("PRICE_RETRY_BASE_DELAY", "2.0"))  # Au
 # Cache simples em memória: key -> (price, ts)
 _PRICE_CACHE: Dict[str, Tuple[float, float]] = {}
 
-# Preços estáticos como fallback quando CoinGecko está indisponível (atualize manualmente)
+# Preços de fallback: atualizados dinamicamente no startup para tokens principais
 FALLBACK_PRICES = {
     # Nativos
     "ethereum": 2500.0,
     "binancecoin": 300.0,
     "polygon-pos": 0.9,
     "avalanche-2": 25.0,
-    "bitcoin": 43000.0,
-    
+    "bitcoin": 68000.0,
+
     # Tokens populares por endereço (chain:address -> preço)
-    "0x38:0x7130d2a12b9bcbfae4f2634d864a1ee1ce3ead9c": 43000.0,  # BTCB na BSC
+    "0x38:0x7130d2a12b9bcbfae4f2634d864a1ee1ce3ead9c": 68000.0,  # BTCB na BSC
     "0x1:0xa0b86991c31cc170c8b9e71b51e1a53af4e9b8c9e": 1.0,     # USDC na Ethereum
     "0x38:0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d": 1.0,     # USDC na BSC
 }
+
+# Metadados para auditoria dos preços de fallback
+FALLBACK_PRICE_META: Dict[str, Dict[str, Any]] = {
+    k: {"source": "manual", "ts": time.time()} for k in FALLBACK_PRICES
+}
+
+
+def _update_btc_fallback_price() -> None:
+    """Atualiza preços de fallback do BTC a partir do CoinGecko no startup."""
+    url = "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd"
+    try:
+        r = httpx.get(url, timeout=10)
+        if r.status_code == 200:
+            data = r.json()
+            if "bitcoin" in data and "usd" in data["bitcoin"]:
+                px = float(data["bitcoin"]["usd"])
+                for key in ["bitcoin", "0x38:0x7130d2a12b9bcbfae4f2634d864a1ee1ce3ead9c"]:
+                    FALLBACK_PRICES[key] = px
+                    FALLBACK_PRICE_META[key] = {"source": "coingecko", "ts": time.time()}
+                LOG.info(
+                    "Atualizado preço de fallback do BTC para %f (fonte=CoinGecko) em %s",
+                    px,
+                    time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()),
+                )
+    except Exception as exc:
+        LOG.warning("Falha ao atualizar preço de fallback do BTC: %s", exc)
+
+
+_update_btc_fallback_price()
 
 
 def _price_cache_get(key: str, force_refresh: bool = False) -> Optional[float]:
@@ -184,7 +213,16 @@ async def _usd_native(chain_id: str, amount_native: float, force_refresh: bool =
             fallback_price = FALLBACK_PRICES.get(cg_id)
             if fallback_price:
                 px = float(fallback_price)
-                LOG.warning("[price-static-fallback] CoinGecko indisponível, usando preço estático p/ %s: %f", cg_id, px)
+                meta = FALLBACK_PRICE_META.get(cg_id, {})
+                ts = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(meta.get("ts", 0)))
+                src = meta.get("source", "manual")
+                LOG.warning(
+                    "[price-static-fallback] CoinGecko indisponível, usando preço estático p/ %s: %f (source=%s ts=%s)",
+                    cg_id,
+                    px,
+                    src,
+                    ts,
+                )
                 _price_cache_put(cache_key, px)  # Cache o preço estático
                 return px, amount_native * px
         
@@ -225,7 +263,16 @@ async def _usd_token(
             fallback_price = FALLBACK_PRICES.get(alt_cgid)
             if fallback_price:
                 px = float(fallback_price)
-                LOG.warning("[price-static-fallback] usando preço estático p/ alt_cgid %s: %f", alt_cgid, px)
+                meta = FALLBACK_PRICE_META.get(alt_cgid, {})
+                ts = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(meta.get("ts", 0)))
+                src = meta.get("source", "manual")
+                LOG.warning(
+                    "[price-static-fallback] usando preço estático p/ alt_cgid %s: %f (source=%s ts=%s)",
+                    alt_cgid,
+                    px,
+                    src,
+                    ts,
+                )
                 _price_cache_put(cache_key, px)
                 return px, amount * px
             
@@ -263,7 +310,16 @@ async def _usd_token(
         fallback_price = FALLBACK_PRICES.get(token_key)
         if fallback_price:
             px = float(fallback_price)
-            LOG.warning("[price-static-fallback] usando preço estático p/ token %s: %f", token_key, px)
+            meta = FALLBACK_PRICE_META.get(token_key, {})
+            ts = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(meta.get("ts", 0)))
+            src = meta.get("source", "manual")
+            LOG.warning(
+                "[price-static-fallback] usando preço estático p/ token %s: %f (source=%s ts=%s)",
+                token_key,
+                px,
+                src,
+                ts,
+            )
             _price_cache_put(cache_key, px)
             return px, amount * px
 
