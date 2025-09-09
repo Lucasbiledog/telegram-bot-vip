@@ -1410,12 +1410,12 @@ async def enviar_pack_job(context: ContextTypes.DEFAULT_TYPE, tier: str, target_
         for f in docs:
             await _try_send_document_like(context, target_chat_id, f, caption=None)
 
-        # Crosspost de previews pro FREE (somente se VIP)
-        if tier == "vip" and previews:
-            try:
-                await _send_preview_media(context, GROUP_FREE_ID, previews)
-            except Exception as e:
-                logging.warning(f"Falha no crosspost VIP->FREE: {e}")
+        # Crosspost removido - FREE recebe packs independentemente
+        # if tier == "vip" and previews:
+        #     try:
+        #         await _send_preview_media(context, GROUP_FREE_ID, previews)
+        #     except Exception as e:
+        #         logging.warning(f"Falha no crosspost VIP->FREE: {e}")
 
         return f"✅ Enviado pack '{p.title}' ({tier})."
     except Exception as e:
@@ -2731,39 +2731,38 @@ async def process_payment(request: Request):
         return JSONResponse({"error": str(e)}, status_code=500)
 
 @app.get("/api/config")
-async def api_config(uid: str, ts: str, sig: str):
+async def api_config(uid: str = None, ts: str = None, sig: str = None):
     """Endpoint /api/config para webapp obter configurações de pagamento"""
     try:
         from utils import make_link_sig, get_prices_sync
         
-        # Validar assinatura
-        if not uid or not ts or not sig:
-            raise HTTPException(status_code=400, detail="Parâmetros uid/ts/sig obrigatórios")
+        # Permitir acesso sem autenticação
+        if uid and ts and sig:
+            # Se parâmetros fornecidos, validar
+            try:
+                uid_int = int(uid)
+                ts_int = int(ts)
+            except ValueError:
+                raise HTTPException(status_code=400, detail="uid/ts devem ser números")
+                
+            # Verificar se o timestamp não é muito antigo (ex: máximo 1 hora)
+            import time
+            now = int(time.time())
+            if abs(now - ts_int) > 3600:  # 1 hora
+                raise HTTPException(status_code=400, detail="Link expirado")
+                
+            # Validar assinatura
+            expected_sig = make_link_sig(BOT_SECRET or "default", uid_int, ts_int)
+            if sig != expected_sig:
+                raise HTTPException(status_code=403, detail="Assinatura inválida")
         
-        try:
-            uid_int = int(uid)
-            ts_int = int(ts)
-        except ValueError:
-            raise HTTPException(status_code=400, detail="uid/ts devem ser números")
-            
-        # Verificar se o timestamp não é muito antigo (ex: máximo 1 hora)
-        import time
-        now = int(time.time())
-        if abs(now - ts_int) > 3600:  # 1 hora
-            raise HTTPException(status_code=400, detail="Link expirado")
-            
-        # Validar assinatura
-        expected_sig = make_link_sig(BOT_SECRET or "default", uid_int, ts_int)
-        if sig != expected_sig:
-            raise HTTPException(status_code=403, detail="Assinatura inválida")
-        
-        # Obter configurações
+        # Obter configurações (sempre disponível)
         prices = get_prices_sync(os.getenv("VIP_PRICES_USD"))
         
         return {
             "wallet": WALLET_ADDRESS,
             "plans_usd": prices,
-            "networks": ["ETH", "BSC", "POLYGON"],  # ajuste conforme suas redes suportadas
+            "networks": ["ETH", "BSC", "POLYGON", "ARBITRUM", "BASE"],
             "confirmations_min": 1
         }
         

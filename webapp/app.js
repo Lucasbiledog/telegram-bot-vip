@@ -41,36 +41,23 @@ function renderPlans(plansObj) {
 
 // --- carrega carteira + planos do backend ---
 async function loadConfig() {
-  if (!uid || !ts || !sig) {
-    // Verificar se é um link genérico
-    const generic = q.get("generic");
-    if (generic) {
-      showAlert("Para acessar o checkout, clique no botão que aparece junto às imagens do bot do Telegram.", false);
-      return;
-    }
-    showAlert(`
-      <div style="text-align: left;">
-        <h3>🔒 Acesso Seguro Necessário</h3>
-        <p>Esta página de pagamento requer acesso pelo bot do Telegram.</p>
-        <p><strong>Como acessar corretamente:</strong></p>
-        <ol>
-          <li>Abra o bot no Telegram</li>
-          <li>Digite o comando <code>/pagar</code> ou <code>/checkout</code></li>
-          <li>Clique no botão "💳 Abrir Página de Pagamento"</li>
-        </ol>
-        <p>Isso garante a segurança da sua transação! 🛡️</p>
-      </div>
-    `, false);
-    
-    // Carregar informações básicas mesmo sem autenticação (só para mostrar)
-    loadBasicInfo();
-    return;
-  }
+  // Remover verificação de segurança - acesso direto permitido
+  // if (!uid || !ts || !sig) {
+  //   loadBasicInfo();
+  //   return;
+  // }
   try {
-    const r = await fetch(`/api/config?uid=${encodeURIComponent(uid)}&ts=${encodeURIComponent(ts)}&sig=${encodeURIComponent(sig)}`);
+    // Carregar configurações sem autenticação
+    let configUrl = "/api/config";
+    if (uid && ts && sig) {
+      configUrl = `/api/config?uid=${encodeURIComponent(uid)}&ts=${encodeURIComponent(ts)}&sig=${encodeURIComponent(sig)}`;
+    }
+    
+    const r = await fetch(configUrl);
     if (!r.ok) {
-      const t = await r.text().catch(() => "");
-      throw new Error(`Falha ao carregar config (${r.status}) ${t || ""}`);
+      // Fallback para configurações padrão se a API falhar
+      loadBasicInfo();
+      return;
     }
     const j = await r.json();
     $("addr").value = j.wallet || "";
