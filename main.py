@@ -1424,12 +1424,14 @@ async def enviar_pack_job(context: ContextTypes.DEFAULT_TYPE, tier: str, target_
             for f in docs:
                 await _try_send_document_like(context, target_chat_id, f, caption=None)
 
-        # Crosspost removido - FREE recebe packs independentemente
-        # if tier == "vip" and previews:
-        #     try:
-        #         await _send_preview_media(context, GROUP_FREE_ID, previews)
-        #     except Exception as e:
-        #         logging.warning(f"Falha no crosspost VIP->FREE: {e}")
+        # Crosspost: Enviar previews do VIP também para o grupo FREE
+        if tier == "vip" and previews:
+            try:
+                logging.info(f"Enviando previews do pack VIP '{p.title}' também para o grupo FREE")
+                await _send_preview_media(context, GROUP_FREE_ID, previews)
+                logging.info(f"✅ Previews enviadas com sucesso para o grupo FREE")
+            except Exception as e:
+                logging.warning(f"Falha no crosspost VIP->FREE: {e}")
 
         return f"✅ Enviado pack '{p.title}' ({tier})."
     except Exception as e:
