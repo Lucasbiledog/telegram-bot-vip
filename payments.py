@@ -25,7 +25,7 @@ DEBUG_PAYMENTS = os.getenv("DEBUG_PAYMENTS", "0") == "1"
 ALLOW_ANY_TO = os.getenv("ALLOW_ANY_TO", "0") == "1"  # aceita destino diferente (somente testes)
 
 COINGECKO_API_KEY = os.getenv("COINGECKO_API_KEY", "").strip()
-PRICE_TTL_SECONDS = int(os.getenv("PRICE_TTL_SECONDS", "1800"))  # 30min (aumentado de 10min)
+PRICE_TTL_SECONDS = int(os.getenv("PRICE_TTL_SECONDS", "60"))  # 30min (aumentado de 10min)
 PRICE_MAX_RETRIES = int(os.getenv("PRICE_MAX_RETRIES", "2"))    # Reduzido de 3 para 2
 PRICE_RETRY_BASE_DELAY = float(os.getenv("PRICE_RETRY_BASE_DELAY", "2.0"))  # Aumentado de 0.6 para 2.0
 
@@ -48,7 +48,9 @@ FALLBACK_PRICES = {
 }
 
 
-def _price_cache_get(key: str) -> Optional[float]:
+def _price_cache_get(key: str, force_refresh: bool = False) -> Optional[float]:
+    if force_refresh:
+        return None
     item = _PRICE_CACHE.get(key)
     if not item:
         return None
@@ -160,10 +162,10 @@ async def _cg_get(url: str) -> Optional[dict]:
     return None
 
 
-async def _usd_native(chain_id: str, amount_native: float) -> Optional[Tuple[float, float]]:
+async def _usd_native(chain_id: str, amount_native: float, force_refresh: bool = False) -> Optional[Tuple[float, float]]:
     cg_id = CHAINS[chain_id]["cg_native"]
     cache_key = f"native:{cg_id}"
-    cached = _price_cache_get(cache_key)
+    cached = _price_cache_get(cache_key, force_refresh)
     if cached is not None:
         px = float(cached)
         return px, amount_native * px
@@ -194,7 +196,13 @@ async def _usd_native(chain_id: str, amount_native: float) -> Optional[Tuple[flo
     return px, amount_native * px
 
 
-async def _usd_token(chain_id: str, token_addr: str, amount_raw: int, decimals: int) -> Optional[Tuple[float, float]]:
+async def _usd_token(
+    chain_id: str,
+    token_addr: str,
+    amount_raw: int,
+    decimals: int,
+    force_refresh: bool = False,
+) -> Optional[Tuple[float, float]]:
     token_addr_lc = token_addr.lower()
     amount = float(amount_raw) / float(10 ** decimals)
 
@@ -202,7 +210,7 @@ async def _usd_token(chain_id: str, token_addr: str, amount_raw: int, decimals: 
     alt_cgid = KNOWN_TOKEN_TO_CGID.get(f"{chain_id}:{token_addr_lc}")
     if alt_cgid:
         cache_key = f"native:{alt_cgid}"
-        cached = _price_cache_get(cache_key)
+        cached = _price_cache_get(cache_key, force_refresh)
         if cached is not None:
             px = float(cached)
             return px, amount * px
@@ -226,7 +234,7 @@ async def _usd_token(chain_id: str, token_addr: str, amount_raw: int, decimals: 
     # 2) fluxo padrão por plataforma/contrato
     platform = CHAINS[chain_id]["cg_platform"]
     cache_key = f"token:{platform}:{token_addr_lc}"
-    cached = _price_cache_get(cache_key)
+    cached = _price_cache_get(cache_key, force_refresh)
     if cached is not None:
         px = float(cached)
         return px, amount * px
@@ -337,7 +345,9 @@ def _parse_log_value_data(data_field: Any) -> Optional[int]:
 # =========================
 # Resolver pagamento
 # =========================
-async def _resolve_on_chain(w3: Web3, chain_id: str, tx_hash: str) -> Tuple[bool, str, Optional[float], Dict[str, Any]]:
+async def _resolve_on_chain(
+    w3: Web3, chain_id: str, tx_hash: str, force_refresh: bool = False
+) -> Tuple[bool, str, Optional[float], Dict[str, Any]]:
     # 1) get_transaction
     try:
         tx = w3.eth.get_transaction(tx_hash)
@@ -366,7 +376,7 @@ async def _resolve_on_chain(w3: Web3, chain_id: str, tx_hash: str) -> Tuple[bool
     if WALLET_ADDRESS and tx_to == WALLET_ADDRESS.lower() and int(tx.get("value", 0)) > 0:
         value_wei = int(tx["value"])
         amount_native = float(value_wei) / float(10 ** 18)
-        px = await _usd_native(chain_id, amount_native)
+        px = await _usd_native(chain_id, amount_native, force_refresh=force_refresh)
         if not px:
             return False, "Preço USD indisponível (nativo).", None, details
         price_usd, paid_usd = px
@@ -400,7 +410,9 @@ async def _resolve_on_chain(w3: Web3, chain_id: str, tx_hash: str) -> Tuple[bool
                 decimals = _erc20_decimals(w3, token_addr)
                 symbol = _erc20_symbol(w3, token_addr) or "TOKEN"
 
-                px = await _usd_token(chain_id, token_addr, value_raw, decimals)
+                px = await _usd_token(
+                    chain_id, token_addr, value_raw, decimals, force_refresh=force_refresh
+                )
                 if not px:
                     return False, "Preço USD indisponível (token).", None, details
                 price_usd, paid_usd = px
@@ -435,7 +447,9 @@ async def _resolve_on_chain(w3: Web3, chain_id: str, tx_hash: str) -> Tuple[bool
                     if token_addr:
                         decimals = _erc20_decimals(w3, token_addr)
                         symbol = _erc20_symbol(w3, token_addr) or "TOKEN"
-                        px = await _usd_token(chain_id, token_addr, value_raw, decimals)
+                        px = await _usd_token(
+                            chain_id, token_addr, value_raw, decimals, force_refresh=force_refresh
+                        )
                         if not px:
                             return False, "Preço USD indisponível (token).", None, details
                         price_usd, paid_usd = px
@@ -480,7 +494,9 @@ def human_chain(chain_id: str) -> str:
     return chain_id
 
 
-async def resolve_payment_usd_autochain(tx_hash: str) -> Tuple[bool, str, Optional[float], Dict[str, Any]]:
+async def resolve_payment_usd_autochain(
+    tx_hash: str, force_refresh: bool = False
+) -> Tuple[bool, str, Optional[float], Dict[str, Any]]:
     """
     Percorre as chains configuradas. Ao achar a tx em alguma delas,
     resolve nela e retorna (ok, mensagem, usd, detalhes).
@@ -490,7 +506,9 @@ async def resolve_payment_usd_autochain(tx_hash: str) -> Tuple[bool, str, Option
         with suppress(Exception):
             tx = w3.eth.get_transaction(tx_hash)
             if tx:
-                ok, msg, usd, details = await _resolve_on_chain(w3, chain_id, tx_hash)
+                ok, msg, usd, details = await _resolve_on_chain(
+                    w3, chain_id, tx_hash, force_refresh=force_refresh
+                )
                 LOG.info("[result %s] ok=%s msg=%s usd=%s details=%s", human_chain(chain_id), ok, msg, usd, details)
                 return ok, msg, usd, details
     return False, "Transação não encontrada nas chains suportadas.", None, {}
@@ -657,7 +675,9 @@ async def tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Verificar transação on-chain
     try:
-        ok, msg_result, usd_paid, details = await resolve_payment_usd_autochain(tx_hash)
+        ok, msg_result, usd_paid, details = await resolve_payment_usd_autochain(
+            tx_hash, force_refresh=True
+        )
         
         if ok and usd_paid:
             # Import necessário para funções do main
@@ -855,7 +875,9 @@ async def approve_by_usd_and_invite(tg_id, username: Optional[str], tx_hash: str
             return False, "Hash já usada", {"error": "hash_used"}
 
     # Resolver pagamento
-    ok, info, usd, details = await resolve_payment_usd_autochain(tx_hash)
+    ok, info, usd, details = await resolve_payment_usd_autochain(
+        tx_hash, force_refresh=True
+    )
     if not ok:
         return False, info, {"details": details}
 
