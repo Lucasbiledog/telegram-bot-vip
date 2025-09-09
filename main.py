@@ -2048,6 +2048,41 @@ async def processar_confirmacao_exclusao(update: Update, context: ContextTypes.D
         context.user_data.pop("awaiting_delete_confirm", None)
         await update.effective_message.reply_text("❌ Exclusão cancelada.")
 
+async def chat_info_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Mostra informações do chat atual para diagnóstico"""
+    if not (update.effective_user and is_admin(update.effective_user.id)):
+        return await update.effective_message.reply_text("❌ Apenas admins podem usar este comando.")
+    
+    chat = update.effective_chat
+    if not chat:
+        return await update.effective_message.reply_text("❌ Não foi possível obter informações do chat.")
+    
+    # Verificar se é grupo permitido
+    is_allowed = _is_allowed_group(chat.id)
+    
+    # Obter configurações dos grupos
+    storage_vip = STORAGE_GROUP_ID
+    storage_free = STORAGE_GROUP_FREE_ID
+    
+    info_msg = (
+        f"📊 <b>INFORMAÇÕES DO CHAT</b>\n\n"
+        f"🆔 ID do Chat: <code>{chat.id}</code>\n"
+        f"📝 Tipo: {chat.type}\n"
+        f"🏷️ Título: {chat.title or 'N/A'}\n\n"
+        f"⚙️ <b>CONFIGURAÇÕES DOS GRUPOS:</b>\n"
+        f"📦 Storage VIP: <code>{storage_vip}</code>\n"
+        f"📦 Storage FREE: <code>{storage_free}</code>\n\n"
+        f"✅ <b>STATUS:</b>\n"
+        f"{'✅ Permitido para /novopack' if is_allowed else '❌ NÃO permitido para /novopack'}\n\n"
+        f"💡 <b>DIAGNÓSTICO:</b>\n"
+        f"Para permitir /novopack neste grupo, configure:\n"
+        f"<code>STORAGE_GROUP_ID={chat.id}</code>\n"
+        f"ou\n"
+        f"<code>STORAGE_GROUP_FREE_ID={chat.id}</code>"
+    )
+    
+    await update.effective_message.reply_text(info_msg, parse_mode="HTML")
+
 async def valor_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not (update.effective_user and is_admin(update.effective_user.id)):
         return await update.effective_message.reply_text("Apenas admins.")
@@ -3455,6 +3490,7 @@ async def on_startup():
         application.add_handler(CommandHandler("listar_hashes", listar_hashes_cmd), group=1)
         application.add_handler(CommandHandler("excluir_hash", excluir_hash_cmd), group=1)
         application.add_handler(CommandHandler("listar_vips", listar_vips_cmd), group=1)
+        application.add_handler(CommandHandler("chat_info", chat_info_cmd), group=1)
         
         # Handler para confirmações de exclusão de hash
         application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, processar_confirmacao_exclusao), group=2)
