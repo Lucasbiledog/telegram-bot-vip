@@ -177,14 +177,16 @@ async def _usd_native(chain_id: str, amount_native: float) -> Optional[Tuple[flo
             LOG.info("[price-fallback] usando cache expirado p/ %s: %f", cache_key, px)
             return px, amount_native * px
         
-        # Usar preço estático como último recurso
-        fallback_price = FALLBACK_PRICES.get(cg_id)
-        if fallback_price:
-            px = float(fallback_price)
-            LOG.info("[price-static-fallback] usando preço estático p/ %s: %f", cg_id, px)
-            _price_cache_put(cache_key, px)  # Cache o preço estático
-            return px, amount_native * px
+        # Usar preço estático apenas se COINGECKO_API_KEY não estiver configurado
+        if not COINGECKO_API_KEY or COINGECKO_API_KEY == "CG-DEMO-API-KEY":
+            fallback_price = FALLBACK_PRICES.get(cg_id)
+            if fallback_price:
+                px = float(fallback_price)
+                LOG.warning("[price-static-fallback] CoinGecko indisponível, usando preço estático p/ %s: %f", cg_id, px)
+                _price_cache_put(cache_key, px)  # Cache o preço estático
+                return px, amount_native * px
         
+        LOG.error("[price-fail] Falha ao obter preço para %s - configure COINGECKO_API_KEY", cg_id)
         return None
 
     px = float(data[cg_id]["usd"])
@@ -210,13 +212,14 @@ async def _usd_token(chain_id: str, token_addr: str, amount_raw: int, decimals: 
             _price_cache_put(cache_key, px)
             return px, amount * px
         
-        # Fallback estático para alt_cgid
-        fallback_price = FALLBACK_PRICES.get(alt_cgid)
-        if fallback_price:
-            px = float(fallback_price)
-            LOG.info("[price-static-fallback] usando preço estático p/ alt_cgid %s: %f", alt_cgid, px)
-            _price_cache_put(cache_key, px)
-            return px, amount * px
+        # Fallback estático apenas sem API key
+        if not COINGECKO_API_KEY or COINGECKO_API_KEY == "CG-DEMO-API-KEY":
+            fallback_price = FALLBACK_PRICES.get(alt_cgid)
+            if fallback_price:
+                px = float(fallback_price)
+                LOG.warning("[price-static-fallback] usando preço estático p/ alt_cgid %s: %f", alt_cgid, px)
+                _price_cache_put(cache_key, px)
+                return px, amount * px
             
         LOG.info("[price] falhou alt_cgid=%s p/ token %s; tentando plataforma CG...", alt_cgid, token_addr_lc)
 
@@ -246,15 +249,17 @@ async def _usd_token(chain_id: str, token_addr: str, amount_raw: int, decimals: 
         LOG.info("[price-fallback] usando cache expirado p/ %s: %f", cache_key, px)
         return px, amount * px
 
-    # 4) Fallback estático por endereço do token
-    token_key = f"{chain_id}:{token_addr_lc}"
-    fallback_price = FALLBACK_PRICES.get(token_key)
-    if fallback_price:
-        px = float(fallback_price)
-        LOG.info("[price-static-fallback] usando preço estático p/ token %s: %f", token_key, px)
-        _price_cache_put(cache_key, px)
-        return px, amount * px
+    # 4) Fallback estático apenas sem API key
+    if not COINGECKO_API_KEY or COINGECKO_API_KEY == "CG-DEMO-API-KEY":
+        token_key = f"{chain_id}:{token_addr_lc}"
+        fallback_price = FALLBACK_PRICES.get(token_key)
+        if fallback_price:
+            px = float(fallback_price)
+            LOG.warning("[price-static-fallback] usando preço estático p/ token %s: %f", token_key, px)
+            _price_cache_put(cache_key, px)
+            return px, amount * px
 
+    LOG.error("[price-fail] Falha ao obter preço para token %s:%s - configure COINGECKO_API_KEY", chain_id, token_addr_lc)
     return None
 
 
@@ -656,11 +661,10 @@ async def tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         if ok and usd_paid:
             # Import necessário para funções do main
-            from utils import choose_plan_from_usd, get_prices_sync
+            from utils import choose_plan_from_usd
             
-            # Determinar plano baseado no valor pago
-            prices = get_prices_sync(None)  # Usa preços padrão
-            plan_days = choose_plan_from_usd(usd_paid, prices)
+            # Determinar plano baseado no valor real pago (sem preços estáticos)
+            plan_days = choose_plan_from_usd(usd_paid)
             
             if plan_days:
                 # Registrar pagamento
@@ -848,10 +852,8 @@ async def approve_by_usd_and_invite(tg_id, username: Optional[str], tx_hash: str
     if not ok:
         return False, info, {"details": details}
 
-    # Verificar se valor cobre algum plano
-    from utils import get_prices_sync
-    prices = get_prices_sync(None)
-    days = choose_plan_from_usd(usd or 0.0, prices)
+    # Verificar se valor cobre algum plano baseado no valor real (sem preços estáticos)
+    days = choose_plan_from_usd(usd or 0.0)
     if not days:
         return False, f"Valor insuficiente (${usd:.2f})", {"details": details, "usd": usd}
 

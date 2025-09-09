@@ -60,7 +60,6 @@ from payments import (
 from utils import (
     choose_plan_from_usd,                       # mapeia USD -> dias
     create_one_time_invite,                     # função de convite p/ o grupo VIP
-    get_prices_sync,                            # helper p/ tabela de planos
     vip_upsert_and_get_until,                   # centralizado
     make_link_sig,                              # assinatura de link compartilhada
     send_with_retry,
@@ -2739,13 +2738,17 @@ async def checkout_page():
 
 @app.get("/vip_pricing")
 async def get_vip_pricing():
-    """Endpoint para webapp obter informações de preços VIP"""
-    from utils import get_prices_sync
-    prices = get_prices_sync(os.getenv("VIP_PRICES_USD"))
+    """Endpoint para webapp obter informações de preços VIP - agora usa faixas dinâmicas"""
+    # Retorna faixas de valor em vez de preços fixos
     return {
         "wallet_address": WALLET_ADDRESS,
-        "plans": prices,
-        "min_confirmations": 3  # ou outra constante que você use
+        "value_tiers": {
+            "$0.10 - $0.99": "30 dias",
+            "$1.00 - $4.99": "60 dias", 
+            "$5.00 - $14.99": "180 dias",
+            "$15.00+": "365 dias"
+        },
+        "min_confirmations": 3
     }
 
 @app.post("/process_payment")
@@ -2773,7 +2776,7 @@ async def process_payment(request: Request):
 async def api_config(uid: str = None, ts: str = None, sig: str = None):
     """Endpoint /api/config para webapp obter configurações de pagamento"""
     try:
-        from utils import make_link_sig, get_prices_sync
+        from utils import make_link_sig
         
         # Permitir acesso sem autenticação
         if uid and ts and sig:
@@ -2795,12 +2798,17 @@ async def api_config(uid: str = None, ts: str = None, sig: str = None):
             if sig != expected_sig:
                 raise HTTPException(status_code=403, detail="Assinatura inválida")
         
-        # Obter configurações (sempre disponível)
-        prices = get_prices_sync(os.getenv("VIP_PRICES_USD"))
+        # Obter configurações (sempre disponível) - agora usa faixas dinâmicas
+        value_tiers = {
+            "30": "$0.10 - $0.99",
+            "60": "$1.00 - $4.99", 
+            "180": "$5.00 - $14.99",
+            "365": "$15.00+"
+        }
         
         return {
             "wallet": WALLET_ADDRESS,
-            "plans_usd": prices,
+            "plans_usd": value_tiers,
             "networks": ["ETH", "BSC", "POLYGON", "ARBITRUM", "BASE"],
             "confirmations_min": 1
         }

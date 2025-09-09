@@ -8,34 +8,38 @@ from datetime import datetime, timedelta, timezone
 from telegram import Bot
 from telegram.error import TelegramError, TimedOut
 
-# Planos pedidos
-DEFAULT_VIP_PRICES_USD = {
-    30: 0.05,
-    60: 1.00,
-    180: 1.50,
-    365: 2.00,
-}
+# Função de preços estáticos removida - agora usa faixas dinâmicas de valor
+# baseadas no valor real da transação em USD
 
-def get_prices_sync(cfg_val: Optional[str]) -> Dict[int, float]:
-    if not cfg_val:
-        return DEFAULT_VIP_PRICES_USD
-    try:
-        data = json.loads(cfg_val)
-        parsed = {int(k): float(v) for k, v in data.items()}
-        return parsed or DEFAULT_VIP_PRICES_USD
-    except Exception:
-        return DEFAULT_VIP_PRICES_USD
-
-def choose_plan_from_usd(amount_usd: float, prices: Dict[int, float]) -> Optional[int]:
-    # escolhe o maior plano cujo preço <= amount_usd (tolerância 1 cent)
-    tol = 0.01
-    best_days = None
-    best_price = -1.0
-    for days, price in prices.items():
-        if amount_usd + tol >= price and price > best_price:
-            best_price = price
-            best_days = days
-    return best_days
+def choose_plan_from_usd(amount_usd: float, prices: Dict[int, float] = None) -> Optional[int]:
+    """
+    Determina plano VIP baseado no valor real em USD da transação.
+    Usa faixas de valor em vez de preços fixos.
+    """
+    # Faixas de valor dinâmicas baseadas no valor real pago
+    if amount_usd < 0.1:  # Menos de 10 centavos - não elegível
+        return None
+    elif amount_usd < 1.0:  # $0.10 - $0.99
+        return 30   # 1 mês
+    elif amount_usd < 5.0:  # $1.00 - $4.99  
+        return 60   # 2 meses
+    elif amount_usd < 15.0: # $5.00 - $14.99
+        return 180  # 6 meses
+    else:  # $15.00+
+        return 365  # 1 ano
+    
+    # Fallback para compatibilidade (caso ainda existam preços fixos)
+    if prices:
+        tol = 0.01
+        best_days = None
+        best_price = -1.0
+        for days, price in prices.items():
+            if amount_usd + tol >= price and price > best_price:
+                best_price = price
+                best_days = days
+        return best_days
+    
+    return None
 
 async def vip_upsert_and_get_until(tg_id: int, username: Optional[str], days: int) -> datetime:
     """Create or extend VIP membership and return the new expiry."""
