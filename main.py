@@ -1446,7 +1446,7 @@ async def checkout_callback_handler(update: Update, context: ContextTypes.DEFAUL
             return
         
         # Criar botão WebApp para checkout se disponível
-        if WEBAPP_URL:
+        if WEBAPP_URL and WEBAPP_URL.startswith(('http://', 'https://')):
             # Gerar parâmetros de segurança para o link
             uid = user.id
             ts = int(time.time())
