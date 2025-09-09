@@ -1474,25 +1474,12 @@ async def checkout_callback_handler(update: Update, context: ContextTypes.DEFAUL
                 f"• 365 dias: $2.00"
             )
 
-            # Tentar enviar no privado primeiro
-            sent = await send_with_retry(
-                context.bot.send_message,
-                chat_id=user.id,
-                text=checkout_msg,
+            # Enviar diretamente no chat atual com o botão WebApp
+            await query.message.reply_text(
+                checkout_msg,
                 parse_mode="HTML",
                 reply_markup=keyboard,
             )
-
-            if sent is not None:
-                if query.message.chat.type != "private":
-                    await query.message.reply_text("📱 Te enviei o link de pagamento no privado!")
-            else:
-                # Se não conseguiu enviar no privado, envia no chat atual
-                await query.message.reply_text(
-                    checkout_msg,
-                    parse_mode="HTML",
-                    reply_markup=keyboard,
-                )
         else:
             # Fallback caso não tenha WEBAPP_URL: instruções manuais
             MIN_CONFIRMATIONS = os.getenv("MIN_CONFIRMATIONS", "1")
