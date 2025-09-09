@@ -39,10 +39,10 @@ FALLBACK_PRICES = {
     "binancecoin": 300.0,
     "polygon-pos": 0.9,
     "avalanche-2": 25.0,
-    "bitcoin": 68000.0,
+    "bitcoin": 110881.0,  # Atualizado 09/09/2025
 
     # Tokens populares por endereço (chain:address -> preço)
-    "0x38:0x7130d2a12b9bcbfae4f2634d864a1ee1ce3ead9c": 68000.0,  # BTCB na BSC
+    "0x38:0x7130d2a12b9bcbfae4f2634d864a1ee1ce3ead9c": 110881.0,  # BTCB na BSC - Atualizado 09/09/2025
     "0x1:0xa0b86991c31cc170c8b9e71b51e1a53af4e9b8c9e": 1.0,     # USDC na Ethereum
     "0x38:0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d": 1.0,     # USDC na BSC
 }
@@ -53,28 +53,92 @@ FALLBACK_PRICE_META: Dict[str, Dict[str, Any]] = {
 }
 
 
-def _update_btc_fallback_price() -> None:
-    """Atualiza preços de fallback do BTC a partir do CoinGecko no startup."""
-    url = "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd"
+def _update_fallback_prices() -> None:
+    """Atualiza preços de fallback principais a partir do CoinGecko."""
+    
+    # Lista de tokens para atualizar automaticamente
+    price_updates = [
+        {
+            "cg_id": "bitcoin", 
+            "keys": ["bitcoin", "0x38:0x7130d2a12b9bcbfae4f2634d864a1ee1ce3ead9c"],  # BTC/BTCB
+            "name": "Bitcoin/BTCB"
+        },
+        {
+            "cg_id": "ethereum",
+            "keys": ["ethereum"],
+            "name": "Ethereum"
+        },
+        {
+            "cg_id": "binancecoin", 
+            "keys": ["binancecoin"],
+            "name": "BNB"
+        }
+    ]
+    
+    # Construir URL com múltiplas moedas
+    coin_ids = [item["cg_id"] for item in price_updates]
+    url = f"https://api.coingecko.com/api/v3/simple/price?ids={','.join(coin_ids)}&vs_currencies=usd"
+    
     try:
-        r = httpx.get(url, timeout=10)
+        r = httpx.get(url, timeout=15)
         if r.status_code == 200:
             data = r.json()
-            if "bitcoin" in data and "usd" in data["bitcoin"]:
-                px = float(data["bitcoin"]["usd"])
-                for key in ["bitcoin", "0x38:0x7130d2a12b9bcbfae4f2634d864a1ee1ce3ead9c"]:
-                    FALLBACK_PRICES[key] = px
-                    FALLBACK_PRICE_META[key] = {"source": "coingecko", "ts": time.time()}
-                LOG.info(
-                    "Atualizado preço de fallback do BTC para %f (fonte=CoinGecko) em %s",
-                    px,
-                    time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()),
-                )
+            updated_count = 0
+            
+            for item in price_updates:
+                cg_id = item["cg_id"]
+                if cg_id in data and "usd" in data[cg_id]:
+                    px = float(data[cg_id]["usd"])
+                    
+                    # Atualizar todas as chaves para este token
+                    for key in item["keys"]:
+                        old_price = FALLBACK_PRICES.get(key, 0)
+                        FALLBACK_PRICES[key] = px
+                        FALLBACK_PRICE_META[key] = {"source": "coingecko_auto", "ts": time.time()}
+                        updated_count += 1
+                        
+                        LOG.info(
+                            "[AUTO-UPDATE] %s: $%.2f -> $%.2f (key: %s)",
+                            item["name"], old_price, px, key
+                        )
+            
+            LOG.info(
+                "[AUTO-UPDATE] Atualizados %d preços de fallback em %s",
+                updated_count,
+                time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()),
+            )
+        elif r.status_code == 429:
+            LOG.warning("[AUTO-UPDATE] Rate limit (429) - tentando novamente mais tarde")
+        else:
+            LOG.warning("[AUTO-UPDATE] CoinGecko erro %d", r.status_code)
+            
     except Exception as exc:
-        LOG.warning("Falha ao atualizar preço de fallback do BTC: %s", exc)
+        LOG.warning("[AUTO-UPDATE] Falha ao atualizar preços de fallback: %s", exc)
 
 
-_update_btc_fallback_price()
+# Atualizar preços de fallback no startup
+_update_fallback_prices()
+
+
+# =========================
+# Atualização Periódica de Preços de Fallback
+# =========================
+import threading
+
+def _periodic_price_update():
+    """Atualiza preços de fallback a cada 30 minutos"""
+    while True:
+        try:
+            time.sleep(1800)  # 30 minutos
+            LOG.info("[PERIODIC] Iniciando atualização automática de preços...")
+            _update_fallback_prices()
+        except Exception as e:
+            LOG.error("[PERIODIC] Erro na atualização automática: %s", e)
+
+# Iniciar thread em background para atualizações periódicas
+_update_thread = threading.Thread(target=_periodic_price_update, daemon=True)
+_update_thread.start()
+LOG.info("[PERIODIC] Thread de atualização automática de preços iniciada")
 
 
 def _price_cache_get(key: str, force_refresh: bool = False) -> Optional[float]:
@@ -166,7 +230,7 @@ async def _cg_get(url: str) -> Optional[dict]:
     
     # Adicionar delay inicial para evitar rate limiting
     if not COINGECKO_API_KEY:  # Apenas para free tier
-        await asyncio.sleep(0.5)  # 500ms delay inicial
+        await asyncio.sleep(2.0)  # 2s delay inicial para evitar 429
     
     for attempt in range(1, PRICE_MAX_RETRIES + 1):
         try:

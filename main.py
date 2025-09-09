@@ -2333,6 +2333,55 @@ async def aplicar_upgrades_cmd(update: Update, context: ContextTypes.DEFAULT_TYP
         parse_mode="HTML"
     )
 
+async def atualizar_precos_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Força atualização manual dos preços de fallback"""
+    if not (update.effective_user and is_admin(update.effective_user.id)):
+        return await update.effective_message.reply_text("❌ Apenas admins podem usar este comando.")
+    
+    await update.effective_message.reply_text(
+        "🔄 <b>ATUALIZANDO PREÇOS</b>\n\n"
+        "⏳ Buscando preços atuais no CoinGecko...",
+        parse_mode="HTML"
+    )
+    
+    try:
+        from payments import _update_fallback_prices, FALLBACK_PRICES
+        
+        # Capturar preços antes
+        old_btc = FALLBACK_PRICES.get("bitcoin", 0)
+        old_eth = FALLBACK_PRICES.get("ethereum", 0)
+        old_bnb = FALLBACK_PRICES.get("binancecoin", 0)
+        
+        # Atualizar
+        _update_fallback_prices()
+        
+        # Verificar mudanças
+        new_btc = FALLBACK_PRICES.get("bitcoin", 0)
+        new_eth = FALLBACK_PRICES.get("ethereum", 0)  
+        new_bnb = FALLBACK_PRICES.get("binancecoin", 0)
+        
+        result_lines = [
+            "✅ <b>PREÇOS ATUALIZADOS</b>\n",
+            f"₿ Bitcoin/BTCB: ${old_btc:,.0f} → ${new_btc:,.0f}",
+            f"Ξ Ethereum: ${old_eth:,.0f} → ${new_eth:,.0f}",
+            f"🔸 BNB: ${old_bnb:,.0f} → ${new_bnb:,.0f}",
+            "",
+            "💡 Próxima atualização automática em 30 minutos."
+        ]
+        
+        await update.effective_message.reply_text(
+            "\n".join(result_lines),
+            parse_mode="HTML"
+        )
+        
+    except Exception as e:
+        await update.effective_message.reply_text(
+            f"❌ <b>ERRO AO ATUALIZAR</b>\n\n"
+            f"🔍 Detalhes: {str(e)}\n\n"
+            f"💡 Tente novamente em alguns minutos.",
+            parse_mode="HTML"
+        )
+
 async def valor_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not (update.effective_user and is_admin(update.effective_user.id)):
         return await update.effective_message.reply_text("Apenas admins.")
@@ -3744,6 +3793,7 @@ async def on_startup():
         application.add_handler(CommandHandler("atualizar_comandos", atualizar_comandos_cmd), group=1)
         application.add_handler(CommandHandler("reavaliar_pagamentos", reavaliar_pagamentos_cmd), group=1)
         application.add_handler(CommandHandler("aplicar_upgrades", aplicar_upgrades_cmd), group=1)
+        application.add_handler(CommandHandler("atualizar_precos", atualizar_precos_cmd), group=1)
         
         # Handler para confirmações de exclusão de hash
         application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, processar_confirmacao_exclusao), group=2)
