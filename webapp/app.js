@@ -14,11 +14,12 @@ function clearAlert() {
   alertBox.innerHTML = "";
 }
 
-// --- pega uid/ts/sig da query ---
+// --- pega uid/ts/sig/username da query ---
 const q = new URLSearchParams(location.search);
 let uid = q.get("uid");
 const ts  = q.get("ts");
 const sig = q.get("sig");
+const username = q.get("username");
 
 // --- fallback para obter UID via Telegram WebApp ---
 if (!uid && window.Telegram && window.Telegram.WebApp) {
@@ -75,6 +76,24 @@ async function loadConfig() {
     const j = await r.json();
     $("addr").value = j.wallet || "";
     renderPlans(j.plans_usd || {});
+    
+    // Preencher automaticamente o campo de user ID se disponível
+    if (uid && $("userid")) {
+      $("userid").value = uid;
+      $("userid").disabled = true; // Desabilitar edição quando vem da URL
+      $("userid").style.background = "#16a34a20";
+      $("userid").style.borderColor = "#16a34a";
+      
+      // Atualizar status
+      const statusEl = $("userid-status");
+      if (statusEl) {
+        statusEl.innerHTML = "✅ ID capturado automaticamente do Telegram. VIP será ativado automaticamente!";
+        statusEl.style.color = "#16a34a";
+      }
+      
+      console.log("[auto-fill] User ID preenchido automaticamente:", uid);
+    }
+    
     // Mensagens contextuais opcionais
     if (ctxInfo) {
       const parts = [];
@@ -83,6 +102,9 @@ async function loadConfig() {
       }
       if (j.confirmations_min) {
         parts.push(`Confirmação mínima: ${j.confirmations_min}`);
+      }
+      if (username) {
+        parts.push(`Usuário: @${username}`);
       }
       if (parts.length) {
         ctxInfo.textContent = parts.join(" • ");
@@ -99,11 +121,19 @@ async function loadConfig() {
 }
 
 // --- validar pagamento (POST /api/validate) ---
+let isValidating = false; // Flag para prevenir duplo clique
 async function validatePayment() {
+  if (isValidating) {
+    console.log("Validação já em andamento, ignorando clique...");
+    return;
+  }
+  
+  isValidating = true;
   clearAlert();
   const hash = $("txhash").value.trim();
   if (!hash) {
     showAlert("Informe o hash da transação (ex.: 0xabc...)", false);
+    isValidating = false;
     return;
   }
   
@@ -160,11 +190,14 @@ async function validatePayment() {
     btn.disabled = false;
     pasteBtn.disabled = false;
     btn.textContent = "Validar pagamento";
+    isValidating = false; // Reset da flag
   }
 }
 
 // --- eventos ---
-$("pasteBtn").addEventListener("click", async () => {
+$("pasteBtn").addEventListener("click", async (e) => {
+  e.preventDefault();
+  e.stopPropagation();
   try {
     const t = await navigator.clipboard.readText();
     if (t) $("txhash").value = t.trim();
@@ -173,10 +206,16 @@ $("pasteBtn").addEventListener("click", async () => {
   }
 });
 
-$("validarBtn").addEventListener("click", validatePayment);
+$("validarBtn").addEventListener("click", (e) => {
+  e.preventDefault();
+  e.stopPropagation();
+  console.log("[click] Botão validar clicado, iniciando validação...");
+  validatePayment();
+});
 
 // --- heartbeat p/ manter Render ativo + log no console ---
-console.log("[checkout] page loaded", { uid, ts, sig });
+console.log("[checkout] page loaded", { uid, ts, sig, username });
+console.log("[checkout] User auto-detected:", uid ? "✅ YES" : "❌ NO");
 console.log("[checkout] Telegram WebApp available:", !!window.Telegram?.WebApp);
 if (window.Telegram?.WebApp) {
   console.log("[checkout] WebApp user:", window.Telegram.WebApp.initDataUnsafe?.user);

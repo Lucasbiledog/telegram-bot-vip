@@ -1487,27 +1487,35 @@ async def checkout_callback_handler(update: Update, context: ContextTypes.DEFAUL
             # Garantir que o path /pay/ esteja presente
             WEBAPP_URL = f"{WEBAPP_URL.rstrip('/')}/pay/"
         
-        # Criar botão WebApp para abrir index.html na rota /pay/
-        base_url = os.getenv("WEBAPP_URL", "https://telegram-bot-vip-hfn7.onrender.com")
-        # Se WEBAPP_URL já termina com /pay/, não adicionar novamente
-        if base_url.endswith('/pay/') or base_url.endswith('/pay'):
-            webapp_url = base_url.rstrip('/') + '/'
-        else:
-            webapp_url = f"{base_url.rstrip('/')}/pay/"
+        # Capturar dados do usuário automaticamente
+        uid = user.id
+        username = user.username or user.first_name or "user"
+        ts = int(time.time())
+        sig = make_link_sig(os.getenv("BOT_SECRET", "default"), uid, ts)
         
-        # Usar botão URL em vez de WebApp para funcionar em grupos
+        # Criar URL com parâmetros do usuário
+        base_url = os.getenv("WEBAPP_URL", "https://telegram-bot-vip-hfn7.onrender.com")
+        if base_url.endswith('/pay/') or base_url.endswith('/pay'):
+            checkout_url = f"{base_url.rstrip('/')}/?uid={uid}&username={username}&ts={ts}&sig={sig}"
+        else:
+            checkout_url = f"{base_url.rstrip('/')}/pay/?uid={uid}&username={username}&ts={ts}&sig={sig}"
+        
+        logging.info(f"Checkout callback: user_id={uid}, username={username}")
+        
+        # Botão que abre diretamente com o user ID capturado
         keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton(
                 "💳 Abrir Página de Pagamento",
-                url=webapp_url
+                url=checkout_url
             )]
         ])
 
         checkout_msg = (
             f"💸 <b>Pagamento VIP via Cripto</b>\n\n"
-            f"✅ Clique no botão abaixo para abrir a página de pagamento\n"
+            f"👤 <b>Usuário:</b> @{username}\n"
+            f"✅ Link personalizado para seu ID\n"
             f"🔒 Pague com qualquer criptomoeda\n"
-            f"⚡ Ativação automática\n\n"
+            f"⚡ Ativação automática do VIP\n\n"
             f"💰 <b>Planos:</b>\n"
             f"• 30 dias: $0.05\n"
             f"• 60 dias: $1.00\n"

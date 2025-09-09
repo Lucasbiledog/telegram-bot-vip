@@ -83,6 +83,12 @@
         border-radius: 10px;
         font-weight: 600;
         cursor: pointer;
+        -webkit-user-select: none;
+        -moz-user-select: none;
+        user-select: none;
+        -webkit-touch-callout: none;
+        -webkit-tap-highlight-color: transparent;
+        touch-action: manipulation;
       }
       .primary { background: #22c55e; color: #fff; }
       .secondary { background: #2a2a2a; color: #fff; }
@@ -123,9 +129,11 @@
         <p id="ctxInfo" class="muted"></p>
       </div>
       <div class="field">
-        <label for="userid">Seu ID do Telegram (opcional)</label>
+        <label for="userid">Seu ID do Telegram</label>
         <input id="userid" type="text" placeholder="123456789" autocomplete="off" />
-        <div class="muted" style="margin-top: 4px;">Necessário para receber o convite do grupo VIP. <a href="#" onclick="showHowToGetId()" style="color: #22c55e;">Como descobrir meu ID?</a></div>
+        <div class="muted" style="margin-top: 4px;">
+          <span id="userid-status">Necessário para receber o convite do grupo VIP. <a href="#" onclick="showHowToGetId()" style="color: #22c55e;">Como descobrir meu ID?</a></span>
+        </div>
       </div>
 
       <div class="field">

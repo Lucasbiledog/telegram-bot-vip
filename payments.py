@@ -25,12 +25,27 @@ DEBUG_PAYMENTS = os.getenv("DEBUG_PAYMENTS", "0") == "1"
 ALLOW_ANY_TO = os.getenv("ALLOW_ANY_TO", "0") == "1"  # aceita destino diferente (somente testes)
 
 COINGECKO_API_KEY = os.getenv("COINGECKO_API_KEY", "").strip()
-PRICE_TTL_SECONDS = int(os.getenv("PRICE_TTL_SECONDS", "600"))  # 10min
-PRICE_MAX_RETRIES = int(os.getenv("PRICE_MAX_RETRIES", "3"))
-PRICE_RETRY_BASE_DELAY = float(os.getenv("PRICE_RETRY_BASE_DELAY", "0.6"))
+PRICE_TTL_SECONDS = int(os.getenv("PRICE_TTL_SECONDS", "1800"))  # 30min (aumentado de 10min)
+PRICE_MAX_RETRIES = int(os.getenv("PRICE_MAX_RETRIES", "2"))    # Reduzido de 3 para 2
+PRICE_RETRY_BASE_DELAY = float(os.getenv("PRICE_RETRY_BASE_DELAY", "2.0"))  # Aumentado de 0.6 para 2.0
 
 # Cache simples em memória: key -> (price, ts)
 _PRICE_CACHE: Dict[str, Tuple[float, float]] = {}
+
+# Preços estáticos como fallback quando CoinGecko está indisponível (atualize manualmente)
+FALLBACK_PRICES = {
+    # Nativos
+    "ethereum": 2500.0,
+    "binancecoin": 300.0,
+    "polygon-pos": 0.9,
+    "avalanche-2": 25.0,
+    "bitcoin": 43000.0,
+    
+    # Tokens populares por endereço (chain:address -> preço)
+    "0x38:0x7130d2a12b9bcbfae4f2634d864a1ee1ce3ead9c": 43000.0,  # BTCB na BSC
+    "0x1:0xa0b86991c31cc170c8b9e71b51e1a53af4e9b8c9e": 1.0,     # USDC na Ethereum
+    "0x38:0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d": 1.0,     # USDC na BSC
+}
 
 
 def _price_cache_get(key: str) -> Optional[float]:
@@ -110,6 +125,11 @@ async def _cg_get(url: str) -> Optional[dict]:
 
     delay = PRICE_RETRY_BASE_DELAY
     last_err = None
+    
+    # Adicionar delay inicial para evitar rate limiting
+    if not COINGECKO_API_KEY:  # Apenas para free tier
+        await asyncio.sleep(0.5)  # 500ms delay inicial
+    
     for attempt in range(1, PRICE_MAX_RETRIES + 1):
         try:
             async with httpx.AsyncClient(timeout=12) as cli:
@@ -119,7 +139,7 @@ async def _cg_get(url: str) -> Optional[dict]:
             if r.status_code == 429:
                 LOG.warning("Coingecko 429 (rate-limit). attempt=%d url=%s", attempt, url)
                 await asyncio.sleep(delay)
-                delay *= 2
+                delay *= 3  # Aumenta mais agressivamente o delay
                 continue
             last_err = f"{r.status_code} {r.text[:140]}"
             await asyncio.sleep(delay)
@@ -143,11 +163,21 @@ async def _usd_native(chain_id: str, amount_native: float) -> Optional[Tuple[flo
 
     data = await _cg_get(f"https://api.coingecko.com/api/v3/simple/price?ids={cg_id}&vs_currencies=usd")
     if not data or cg_id not in data or "usd" not in data[cg_id]:
+        # Tentar cache expirado primeiro
         stale = _PRICE_CACHE.get(cache_key)
         if stale:
             px = float(stale[0])
             LOG.info("[price-fallback] usando cache expirado p/ %s: %f", cache_key, px)
             return px, amount_native * px
+        
+        # Usar preço estático como último recurso
+        fallback_price = FALLBACK_PRICES.get(cg_id)
+        if fallback_price:
+            px = float(fallback_price)
+            LOG.info("[price-static-fallback] usando preço estático p/ %s: %f", cg_id, px)
+            _price_cache_put(cache_key, px)  # Cache o preço estático
+            return px, amount_native * px
+        
         return None
 
     px = float(data[cg_id]["usd"])
@@ -172,6 +202,15 @@ async def _usd_token(chain_id: str, token_addr: str, amount_raw: int, decimals: 
             px = float(data[alt_cgid]["usd"])
             _price_cache_put(cache_key, px)
             return px, amount * px
+        
+        # Fallback estático para alt_cgid
+        fallback_price = FALLBACK_PRICES.get(alt_cgid)
+        if fallback_price:
+            px = float(fallback_price)
+            LOG.info("[price-static-fallback] usando preço estático p/ alt_cgid %s: %f", alt_cgid, px)
+            _price_cache_put(cache_key, px)
+            return px, amount * px
+            
         LOG.info("[price] falhou alt_cgid=%s p/ token %s; tentando plataforma CG...", alt_cgid, token_addr_lc)
 
     # 2) fluxo padrão por plataforma/contrato
@@ -198,6 +237,15 @@ async def _usd_token(chain_id: str, token_addr: str, amount_raw: int, decimals: 
     if stale:
         px = float(stale[0])
         LOG.info("[price-fallback] usando cache expirado p/ %s: %f", cache_key, px)
+        return px, amount * px
+
+    # 4) Fallback estático por endereço do token
+    token_key = f"{chain_id}:{token_addr_lc}"
+    fallback_price = FALLBACK_PRICES.get(token_key)
+    if fallback_price:
+        px = float(fallback_price)
+        LOG.info("[price-static-fallback] usando preço estático p/ token %s: %f", token_key, px)
+        _price_cache_put(cache_key, px)
         return px, amount * px
 
     return None
