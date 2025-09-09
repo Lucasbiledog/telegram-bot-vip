@@ -1707,6 +1707,245 @@ async def rem_admin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except: return await update.effective_message.reply_text("user_id inválido.")
     await update.effective_message.reply_text("✅ Admin removido." if remove_admin_db(uid) else "Este user não é admin.")
 
+# =========================
+# COMANDOS DE GERENCIAMENTO DE PAGAMENTOS E VIP
+# =========================
+
+async def listar_hashes_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Lista todas as hashes de pagamento cadastradas"""
+    if not (update.effective_user and is_admin(update.effective_user.id)):
+        return await update.effective_message.reply_text("❌ Apenas admins podem usar este comando.")
+    
+    with SessionLocal() as s:
+        try:
+            payments = s.query(Payment).order_by(Payment.created_at.desc()).all()
+            
+            if not payments:
+                return await update.effective_message.reply_text("📋 Nenhuma hash cadastrada.")
+            
+            # Paginar resultados (máximo 10 por página)
+            page = 1
+            if context.args:
+                try:
+                    page = int(context.args[0])
+                    if page < 1: page = 1
+                except:
+                    page = 1
+            
+            per_page = 10
+            start_idx = (page - 1) * per_page
+            end_idx = start_idx + per_page
+            page_payments = payments[start_idx:end_idx]
+            
+            total_pages = (len(payments) + per_page - 1) // per_page
+            
+            msg_lines = [f"📋 <b>HASHES CADASTRADAS</b> (Página {page}/{total_pages})\n"]
+            
+            for p in page_payments:
+                status_emoji = {"pending": "⏳", "approved": "✅", "rejected": "❌"}.get(p.status, "❓")
+                username_info = f"@{p.username}" if p.username else f"ID:{p.user_id}"
+                created = p.created_at.strftime("%d/%m/%Y %H:%M") if p.created_at else "N/A"
+                
+                # Truncar hash para exibição
+                short_hash = p.tx_hash[:12] + "..." if len(p.tx_hash) > 15 else p.tx_hash
+                
+                msg_lines.append(
+                    f"{status_emoji} <code>{short_hash}</code>\n"
+                    f"   👤 {username_info} | 📅 {created}\n"
+                    f"   🔗 {p.chain or 'unknown'} | Status: <b>{p.status.upper()}</b>"
+                )
+            
+            if total_pages > 1:
+                msg_lines.append(f"\n📄 Use /listar_hashes {page+1} para próxima página")
+            
+            msg_text = "\n\n".join(msg_lines)
+            await update.effective_message.reply_text(msg_text, parse_mode="HTML")
+            
+        except Exception as e:
+            logging.exception("Erro ao listar hashes")
+            await update.effective_message.reply_text(f"❌ Erro ao listar hashes: {e}")
+
+async def excluir_hash_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Exclui uma hash específica do sistema"""
+    if not (update.effective_user and is_admin(update.effective_user.id)):
+        return await update.effective_message.reply_text("❌ Apenas admins podem usar este comando.")
+    
+    if not context.args:
+        return await update.effective_message.reply_text(
+            "❌ Uso: /excluir_hash <hash_completa>\n"
+            "💡 Use /listar_hashes para ver as hashes disponíveis"
+        )
+    
+    hash_to_delete = context.args[0].strip()
+    
+    with SessionLocal() as s:
+        try:
+            # Buscar payment por hash (busca exata ou parcial)
+            payment = s.query(Payment).filter(
+                Payment.tx_hash.ilike(f"%{hash_to_delete}%")
+            ).first()
+            
+            if not payment:
+                return await update.effective_message.reply_text(
+                    f"❌ Hash não encontrada: <code>{hash_to_delete}</code>\n"
+                    "💡 Use /listar_hashes para ver as hashes disponíveis",
+                    parse_mode="HTML"
+                )
+            
+            # Confirmar exclusão
+            username_info = f"@{payment.username}" if payment.username else f"ID:{payment.user_id}"
+            short_hash = payment.tx_hash[:20] + "..." if len(payment.tx_hash) > 20 else payment.tx_hash
+            
+            confirm_msg = (
+                f"⚠️ <b>CONFIRMAR EXCLUSÃO</b>\n\n"
+                f"🔗 Hash: <code>{short_hash}</code>\n"
+                f"👤 Usuário: {username_info}\n"
+                f"📅 Criado: {payment.created_at.strftime('%d/%m/%Y %H:%M') if payment.created_at else 'N/A'}\n"
+                f"⚡ Status: <b>{payment.status.upper()}</b>\n\n"
+                f"Esta ação é <b>irreversível</b>!\n"
+                f"Responda <b>CONFIRMAR</b> para excluir ou <b>CANCELAR</b> para abortar."
+            )
+            
+            # Salvar dados para confirmação
+            context.user_data["delete_hash_id"] = payment.id
+            context.user_data["delete_hash_value"] = payment.tx_hash
+            context.user_data["awaiting_delete_confirm"] = True
+            
+            await update.effective_message.reply_text(confirm_msg, parse_mode="HTML")
+            
+        except Exception as e:
+            logging.exception("Erro ao buscar hash para exclusão")
+            await update.effective_message.reply_text(f"❌ Erro ao buscar hash: {e}")
+
+async def listar_vips_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Lista todos os VIPs cadastrados com detalhes"""
+    if not (update.effective_user and is_admin(update.effective_user.id)):
+        return await update.effective_message.reply_text("❌ Apenas admins podem usar este comando.")
+    
+    with SessionLocal() as s:
+        try:
+            vips = s.query(VipMembership).order_by(VipMembership.expires_at.desc()).all()
+            
+            if not vips:
+                return await update.effective_message.reply_text("👑 Nenhum VIP cadastrado.")
+            
+            # Paginar resultados
+            page = 1
+            if context.args:
+                try:
+                    page = int(context.args[0])
+                    if page < 1: page = 1
+                except:
+                    page = 1
+            
+            per_page = 8
+            start_idx = (page - 1) * per_page
+            end_idx = start_idx + per_page
+            page_vips = vips[start_idx:end_idx]
+            
+            total_pages = (len(vips) + per_page - 1) // per_page
+            
+            msg_lines = [f"👑 <b>MEMBROS VIP</b> (Página {page}/{total_pages})\n"]
+            
+            now = now_utc()
+            active_count = 0
+            expired_count = 0
+            
+            for vip in page_vips:
+                username_info = f"@{vip.username}" if vip.username else f"ID:{vip.user_id}"
+                expires_str = vip.expires_at.strftime("%d/%m/%Y %H:%M") if vip.expires_at else "N/A"
+                created_str = vip.created_at.strftime("%d/%m/%Y") if vip.created_at else "N/A"
+                
+                # Verificar status
+                is_active = vip.active and vip.expires_at and vip.expires_at > now
+                if is_active:
+                    active_count += 1
+                    status_emoji = "✅"
+                    status_text = "ATIVO"
+                else:
+                    expired_count += 1
+                    status_emoji = "❌" if vip.expires_at and vip.expires_at <= now else "⏸️"
+                    status_text = "EXPIRADO" if vip.expires_at and vip.expires_at <= now else "INATIVO"
+                
+                # Calcular dias restantes
+                if is_active:
+                    days_left = (vip.expires_at - now).days
+                    time_info = f"⏰ {days_left} dias restantes"
+                else:
+                    time_info = "⏰ Expirado"
+                
+                msg_lines.append(
+                    f"{status_emoji} <b>{status_text}</b>\n"
+                    f"👤 {username_info}\n"
+                    f"📅 Expira: {expires_str}\n"
+                    f"🎯 Criado: {created_str} | {time_info}"
+                )
+            
+            # Estatísticas
+            msg_lines.insert(1, f"📊 Total: {len(vips)} | ✅ Ativos: {active_count} | ❌ Expirados: {expired_count}\n")
+            
+            if total_pages > 1:
+                msg_lines.append(f"\n📄 Use /listar_vips {page+1} para próxima página")
+            
+            msg_text = "\n\n".join(msg_lines)
+            await update.effective_message.reply_text(msg_text, parse_mode="HTML")
+            
+        except Exception as e:
+            logging.exception("Erro ao listar VIPs")
+            await update.effective_message.reply_text(f"❌ Erro ao listar VIPs: {e}")
+
+async def processar_confirmacao_exclusao(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Processa confirmação de exclusão de hash quando usuário responde CONFIRMAR/CANCELAR"""
+    if not (update.effective_user and is_admin(update.effective_user.id)):
+        return
+    
+    # Verificar se está aguardando confirmação de exclusão
+    if not context.user_data.get("awaiting_delete_confirm"):
+        return
+    
+    msg_text = (update.effective_message.text or "").strip().upper()
+    
+    if msg_text == "CONFIRMAR":
+        payment_id = context.user_data.get("delete_hash_id")
+        hash_value = context.user_data.get("delete_hash_value")
+        
+        if not payment_id or not hash_value:
+            await update.effective_message.reply_text("❌ Sessão expirada. Tente novamente.")
+        else:
+            with SessionLocal() as s:
+                try:
+                    payment = s.query(Payment).filter(Payment.id == payment_id).first()
+                    
+                    if not payment:
+                        await update.effective_message.reply_text("❌ Payment não encontrado.")
+                    else:
+                        # Excluir payment
+                        s.delete(payment)
+                        s.commit()
+                        
+                        short_hash = hash_value[:20] + "..." if len(hash_value) > 20 else hash_value
+                        await update.effective_message.reply_text(
+                            f"✅ <b>HASH EXCLUÍDA</b>\n"
+                            f"🔗 <code>{short_hash}</code> foi removida do sistema.",
+                            parse_mode="HTML"
+                        )
+                        
+                except Exception as e:
+                    s.rollback()
+                    logging.exception("Erro ao excluir hash")
+                    await update.effective_message.reply_text(f"❌ Erro ao excluir hash: {e}")
+        
+        # Limpar dados da sessão
+        context.user_data.pop("delete_hash_id", None)
+        context.user_data.pop("delete_hash_value", None)
+        context.user_data.pop("awaiting_delete_confirm", None)
+    
+    elif msg_text == "CANCELAR":
+        context.user_data.pop("delete_hash_id", None)
+        context.user_data.pop("delete_hash_value", None)
+        context.user_data.pop("awaiting_delete_confirm", None)
+        await update.effective_message.reply_text("❌ Exclusão cancelada.")
+
 async def valor_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not (update.effective_user and is_admin(update.effective_user.id)):
         return await update.effective_message.reply_text("Apenas admins.")
@@ -3109,6 +3348,14 @@ async def on_startup():
         application.add_handler(CommandHandler("listar_admins", listar_admins_cmd), group=1)
         application.add_handler(CommandHandler("add_admin", add_admin_cmd), group=1)
         application.add_handler(CommandHandler("rem_admin", rem_admin_cmd), group=1)
+        
+        # Comandos de gerenciamento de pagamentos e VIP
+        application.add_handler(CommandHandler("listar_hashes", listar_hashes_cmd), group=1)
+        application.add_handler(CommandHandler("excluir_hash", excluir_hash_cmd), group=1)
+        application.add_handler(CommandHandler("listar_vips", listar_vips_cmd), group=1)
+        
+        # Handler para confirmações de exclusão de hash
+        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, processar_confirmacao_exclusao), group=2)
         application.add_handler(CommandHandler("mudar_nome", mudar_nome_cmd), group=1)
         application.add_handler(CommandHandler("limpar_chat", limpar_chat_cmd), group=1)
 
