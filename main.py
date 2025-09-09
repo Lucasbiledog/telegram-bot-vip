@@ -607,8 +607,12 @@ BOT_TOKEN   = os.getenv("BOT_TOKEN")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 SELF_URL    = os.getenv("SELF_URL")
 
+# Payment Configuration
+WALLET_ADDRESS = os.getenv("WALLET_ADDRESS", "")
+BOT_SECRET = os.getenv("BOT_SECRET", "")
+
 STORAGE_GROUP_ID       = int(os.getenv("STORAGE_GROUP_ID", "-4806334341"))
-GROUP_VIP_ID           = int(os.getenv("GROUP_VIP_ID", "-1002791988432"))
+GROUP_VIP_ID           = int(os.getenv("Group_VIP_ID", os.getenv("GROUP_VIP_ID", "-1002791988432")))
 STORAGE_GROUP_FREE_ID  = int(os.getenv("STORAGE_GROUP_FREE_ID", "-1002509364079"))
 GROUP_FREE_ID          = int(os.getenv("GROUP_FREE_ID", "-1002932075976"))
 
@@ -1458,12 +1462,17 @@ async def checkout_callback_handler(update: Update, context: ContextTypes.DEFAUL
         
         # Criar botão WebApp para abrir index.html na rota /pay/
         base_url = os.getenv("WEBAPP_URL", "https://telegram-bot-vip-hfn7.onrender.com")
-        webapp_url = f"{base_url.rstrip('/')}/pay/"
+        # Se WEBAPP_URL já termina com /pay/, não adicionar novamente
+        if base_url.endswith('/pay/') or base_url.endswith('/pay'):
+            webapp_url = base_url.rstrip('/') + '/'
+        else:
+            webapp_url = f"{base_url.rstrip('/')}/pay/"
         
+        # Usar botão URL em vez de WebApp para funcionar em grupos
         keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton(
-                "💳 Abrir Pagamento WebApp",
-                web_app=WebAppInfo(url=webapp_url)
+                "💳 Abrir Página de Pagamento",
+                url=webapp_url
             )]
         ])
 
@@ -1479,22 +1488,13 @@ async def checkout_callback_handler(update: Update, context: ContextTypes.DEFAUL
             f"• 365 dias: $2.00"
         )
 
-        # Enviar WebApp direto no grupo
-        try:
-            await context.bot.send_message(
-                chat_id=query.message.chat_id,
-                text=checkout_msg,
-                parse_mode="HTML",
-                reply_markup=keyboard
-            )
-        except Exception as webapp_error:
-            # Fallback: enviar link direto se WebApp falhar
-            logging.warning(f"Falha ao enviar WebApp: {webapp_error}")
-            await context.bot.send_message(
-                chat_id=query.message.chat_id,
-                text=f"{checkout_msg}\n\n🔗 Acesse: {webapp_url}",
-                parse_mode="HTML"
-            )
+        # Enviar mensagem com botão URL (funciona em grupos)
+        await context.bot.send_message(
+            chat_id=query.message.chat_id,
+            text=checkout_msg,
+            parse_mode="HTML",
+            reply_markup=keyboard
+        )
                 
     except Exception as e:
         logging.error(f"Erro no checkout_callback_handler: {e}")
@@ -2740,6 +2740,8 @@ async def api_config(uid: str, ts: str, sig: str):
 async def api_validate(request: Request):
     """Endpoint /api/validate para validar pagamentos"""
     try:
+        from payments import approve_by_usd_and_invite
+        
         data = await request.json()
         uid = data.get("uid")
         username = data.get("username")
@@ -2748,27 +2750,24 @@ async def api_validate(request: Request):
         if not uid or not hash:
             raise HTTPException(status_code=400, detail="uid e hash são obrigatórios")
         
-        # Validação real da transação usando a função do payments.py
-        if len(hash) < 40:  # hash muito curto
+        # Validação do hash
+        if len(hash) < 40:
             return {"ok": False, "message": "Hash de transação inválido"}
         
         try:
-            # Usar a função real de validação de pagamentos
-            result = await resolve_payment_usd_autochain(hash, uid, username)
+            # Usar a função completa de aprovação
+            ok, msg, payload = await approve_by_usd_and_invite(uid, username, hash, notify_user=False)
             
-            if result and "ok" in result and result["ok"]:
-                # Se a validação foi bem-sucedida, criar convite
-                invite_link = await assign_and_send_invite(uid, username, hash)
-                
+            if ok:
                 return {
                     "ok": True,
-                    "message": result.get("message", "Pagamento confirmado!"),
-                    "invite": invite_link
+                    "message": msg,
+                    **payload  # Inclui invite, until, usd
                 }
             else:
                 return {
                     "ok": False,
-                    "message": result.get("message", "Pagamento não encontrado ou inválido")
+                    "message": msg
                 }
             
         except Exception as validation_error:
@@ -2999,6 +2998,10 @@ async def on_startup():
 
 
 
+    # Comandos de pagamento crypto
+    from payments import pagar_cmd, tx_cmd, listar_pendentes_cmd, aprovar_tx_cmd, rejeitar_tx_cmd
+    application.add_handler(CommandHandler("pagar", pagar_cmd), group=1)
+    application.add_handler(CommandHandler("checkout", pagar_cmd), group=1)  # alias
     application.add_handler(CommandHandler("tx", tx_cmd), group=1)
     application.add_handler(CommandHandler("listar_pendentes", listar_pendentes_cmd), group=1)
     application.add_handler(CommandHandler("aprovar_tx", aprovar_tx_cmd), group=1)

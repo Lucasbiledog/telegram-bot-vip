@@ -753,3 +753,101 @@ async def rejeitar_tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"❌ Transação rejeitada para user_id:{p.user_id} @{p.username}"
         )
 
+# =========================
+# Função principal de aprovação
+# =========================
+async def approve_by_usd_and_invite(tg_id: int, username: Optional[str], tx_hash: str, notify_user: bool = True):
+    """Valida transação e gera convite VIP"""
+    from main import SessionLocal, Payment, Group_VIP_ID, application
+    from utils import create_one_time_invite
+    import datetime as dt
+    
+    # Verificar se hash já existe
+    with SessionLocal() as s:
+        existing = s.query(Payment).filter(Payment.tx_hash == tx_hash).first()
+        if existing:
+            return False, "Hash já usada", {"error": "hash_used"}
+
+    # Resolver pagamento
+    ok, info, usd, details = await resolve_payment_usd_autochain(tx_hash)
+    if not ok:
+        return False, info, {"details": details}
+
+    # Verificar se valor cobre algum plano
+    prices = get_prices_sync(None)
+    from utils import choose_plan_from_usd
+    days = choose_plan_from_usd(usd or 0.0, prices)
+    if not days:
+        return False, f"Valor insuficiente (${usd:.2f})", {"details": details, "usd": usd}
+
+    # Estender VIP
+    from utils import vip_upsert_and_get_until
+    until = await vip_upsert_and_get_until(tg_id, username, days)
+
+    # Gerar convite de 1 uso
+    link = await create_one_time_invite(application.bot, Group_VIP_ID, expire_seconds=7200, member_limit=1)
+    if not link:
+        return False, "Falha ao gerar convite", {"error": "invite_failed"}
+
+    # Salvar pagamento
+    with SessionLocal() as s:
+        p = Payment(
+            tx_hash=tx_hash,
+            tg_id=tg_id,
+            validated_at=dt.datetime.now(dt.timezone.utc)
+        )
+        s.add(p)
+        s.commit()
+
+    msg = f"Pagamento confirmado (${usd:.2f}).\nPlano: {days} dias\nConvite VIP: {link}"
+
+    if notify_user:
+        try:
+            await application.bot.send_message(chat_id=tg_id, text=msg)
+        except Exception:
+            pass
+
+    return True, msg, {"invite": link, "until": until.isoformat(), "usd": usd}
+
+# =========================
+# Função para verificar se hash já foi usada
+# =========================
+async def hash_exists(tx_hash: str) -> bool:
+    """Verifica se hash já foi usada"""
+    from main import SessionLocal, Payment
+    with SessionLocal() as s:
+        return bool(s.query(Payment).filter(Payment.tx_hash == tx_hash).first())
+
+# =========================
+# Função para salvar hash de pagamento
+# =========================
+async def store_payment_hash(tx_hash: str, tg_id: int):
+    """Salva hash de pagamento no banco"""
+    from main import SessionLocal, Payment
+    import datetime as dt
+    
+    with SessionLocal() as s:
+        p = Payment(
+            tx_hash=tx_hash,
+            tg_id=tg_id,
+            validated_at=dt.datetime.now(dt.timezone.utc)
+        )
+        s.add(p)
+        s.commit()
+
+# =========================
+# Função para obter preços do banco
+# =========================
+async def get_prices_from_db():
+    """Obtém preços dos planos do banco de dados"""
+    try:
+        from main import SessionLocal, Config
+        with SessionLocal() as s:
+            config = s.query(Config).filter(Config.key == "vip_prices").first()
+            if config:
+                import json
+                return json.loads(config.value)
+    except Exception:
+        pass
+    return DEFAULT_VIP_PRICES_USD
+
