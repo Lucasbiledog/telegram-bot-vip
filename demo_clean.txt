@@ -1,0 +1,65 @@
+===============================
+EXEMPLO DA NOVA LISTAGEM DE HASHES MELHORADA
+===============================
+
+[HASHES CADASTRADAS] (Página 1/1)
+
+✅ Hash #5 | Status: APPROVED
+👤 @crypto_user
+📅 09/09/2025 09:16 BRT
+💰 Pago: 25.50 USDC ($25.50 USD) | BSC
+👑 VIP Ativo: 365 dias restantes (expira 09/09/2026)
+🎯 VIP atribuído: 365 dias
+💳 0x31b1338d7503f66c750b60a8b133dff8c05b69c9a99eb5dc0eaf6e2e5de4e9b7
+
+✅ Hash #4 | Status: APPROVED
+👤 ID:1234567890
+📅 08/09/2025 15:30 BRT
+💰 Pago: 0.002 ETH ($5.20 USD) | Ethereum
+👑 VIP Ativo: 179 dias restantes (expira 07/03/2026)
+🎯 VIP atribuído: 180 dias
+💳 0xa1b2c3d4e5f6789012345678901234567890abcdef1234567890abcdef123456
+
+✅ Hash #3 | Status: APPROVED
+👤 @small_investor
+📅 07/09/2025 20:45 BRT
+💰 Pago: 1.25 MATIC ($1.13 USD) | Polygon
+👑 VIP Expirado
+🎯 VIP atribuído: 60 dias
+💳 0x9876543210abcdef9876543210abcdef9876543210abcdef9876543210abcdef
+
+===============================
+MELHORIAS IMPLEMENTADAS:
+===============================
+
+✅ INFORMAÇÕES COMPLETAS DE PAGAMENTO:
+   • Quantidade exata paga (0.002 ETH, 25.50 USDC, etc)
+   • Valor em USD na época do pagamento  
+   • Rede/blockchain utilizada
+
+✅ INFORMAÇÕES DETALHADAS DE VIP:
+   • Status atual (ativo/expirado)
+   • Dias restantes para VIPs ativos
+   • Data de expiração
+   • Quantos dias de VIP foram atribuídos originalmente
+
+✅ FACILIDADE PARA EXCLUSÃO:
+   • Pode excluir por ID: /excluir_hash 5
+   • Pode excluir por hash: /excluir_hash 0x31b1...
+   • Hash completa sempre visível
+
+✅ HORÁRIO BRASILEIRO:
+   • Todos os horários convertidos para BRT
+   • Fuso horário claramente indicado
+
+===============================
+RESULTADO FINAL:
+===============================
+
+Agora você tem visibilidade completa sobre:
+• Quanto foi pago e em qual moeda
+• Quanto VIP foi atribuído 
+• Status atual do VIP
+• Facilidade para gerenciar pagamentos
+
+Os próximos pagamentos aprovados já incluirão todas essas informações automaticamente!

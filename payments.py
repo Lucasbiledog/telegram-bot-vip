@@ -669,12 +669,19 @@ async def tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if plan_days:
                 # Registrar pagamento
                 with SessionLocal() as s:
+                    # Extrair informações do token
+                    token_symbol = details.get("token_symbol", "Unknown")
+                    token_amount = details.get("amount", "N/A")
+                    
                     p = Payment(
                         user_id=user.id,
                         username=user.username,
                         tx_hash=tx_hash,
                         chain=details.get("chain_id", "unknown"),
-                        amount=str(usd_paid),
+                        amount=str(token_amount),
+                        token_symbol=token_symbol,
+                        usd_value=str(usd_paid),
+                        vip_days=plan_days,
                         status="approved",
                         created_at=dt.datetime.now()
                     )
@@ -878,10 +885,19 @@ async def approve_by_usd_and_invite(tg_id, username: Optional[str], tx_hash: str
 
     # Salvar pagamento
     with SessionLocal() as s:
+        # Extrair informações do payment para salvar
+        token_symbol = details.get("token_symbol", "Unknown")
+        token_amount = details.get("amount", "N/A")
+        
         p = Payment(
             tx_hash=tx_hash,
             user_id=actual_tg_id if actual_tg_id else 0,  # 0 para pagamentos sem ID válido
             username=username,
+            chain=details.get("chain_id", "unknown"),
+            amount=str(token_amount),
+            token_symbol=token_symbol,
+            usd_value=str(usd),
+            vip_days=days,
             status="approved",
             created_at=dt.datetime.now(dt.timezone.utc)
         )

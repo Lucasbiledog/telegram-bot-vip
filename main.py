@@ -713,7 +713,10 @@ class Payment(Base):
     username = Column(String, nullable=True)
     tx_hash = Column(String, unique=True, index=True)
     chain = Column(String, default="unknown")
-    amount = Column(String, nullable=True)
+    amount = Column(String, nullable=True)  # Quantidade do token
+    token_symbol = Column(String, nullable=True)  # Símbolo do token (ETH, USDC, etc)
+    usd_value = Column(String, nullable=True)  # Valor em USD na época do pagamento
+    vip_days = Column(Integer, nullable=True)  # Dias de VIP atribuídos
     status = Column(String, default="pending")  # pending, approved, rejected
     created_at = Column(DateTime, nullable=False)
 
@@ -1755,11 +1758,57 @@ async def listar_hashes_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 else:
                     created = "N/A"
                 
+                # Buscar VIP associado a esta hash
+                vip_info = ""
+                if p.status == "approved":
+                    vip = s.query(VipMembership).filter(VipMembership.tx_hash == p.tx_hash).first()
+                    if vip:
+                        now = now_utc()
+                        if vip.expires_at and vip.expires_at > now and vip.active:
+                            days_left = (vip.expires_at - now).days
+                            expires_brt = vip.expires_at.replace(tzinfo=pytz.UTC).astimezone(pytz.timezone('America/Sao_Paulo'))
+                            vip_info = f"\n👑 VIP Ativo: {days_left} dias restantes (expira {expires_brt.strftime('%d/%m/%Y')})"
+                            
+                            # Usar informações do pagamento se disponível
+                            if p.vip_days:
+                                vip_info += f"\n🎯 VIP atribuído: {p.vip_days} dias"
+                            else:
+                                # Fallback para plano salvo no VIP
+                                plan_names = {
+                                    "mensal": "1 mês",
+                                    "bimestral": "2 meses", 
+                                    "trimestral": "6 meses",
+                                    "anual": "1 ano"
+                                }
+                                plan_desc = plan_names.get(vip.plan, vip.plan or "indefinido")
+                                vip_info += f"\n🎯 Plano: {plan_desc}"
+                        else:
+                            vip_info = f"\n👑 VIP Expirado"
+                
+                # Informações sobre pagamento (usar dados salvos)
+                payment_info = ""
+                chain_names = {
+                    "0x1": "Ethereum", "0x38": "BSC", "0x89": "Polygon",
+                    "ethereum": "Ethereum", "bsc": "BSC", "polygon": "Polygon"
+                }
+                chain_desc = chain_names.get(p.chain, p.chain or "unknown")
+                
+                if p.status == "approved" and p.token_symbol and p.amount and p.usd_value:
+                    # Usar informações salvas durante aprovação
+                    try:
+                        usd_val = float(p.usd_value)
+                        payment_info = f"\n💰 Pago: {p.amount} {p.token_symbol} (${usd_val:.2f} USD) | {chain_desc}"
+                    except:
+                        payment_info = f"\n💰 {p.amount} {p.token_symbol or 'Token'} | {chain_desc}"
+                elif p.amount:
+                    payment_info = f"\n💰 Valor: {p.amount} | Rede: {chain_desc}"
+                else:
+                    payment_info = f"\n🔗 Rede: {chain_desc}"
+                
                 msg_lines.append(
                     f"{status_emoji} <b>Hash #{p.id}</b> | Status: <b>{p.status.upper()}</b>\n"
                     f"👤 {username_info}\n"
-                    f"📅 {created}\n"
-                    f"🔗 Chain: {p.chain or 'unknown'}\n"
+                    f"📅 {created}{payment_info}{vip_info}\n"
                     f"💳 <code>{p.tx_hash}</code>"
                 )
             
