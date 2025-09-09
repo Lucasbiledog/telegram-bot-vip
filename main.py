@@ -2103,6 +2103,211 @@ async def chat_info_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await update.effective_message.reply_text(info_msg, parse_mode="HTML")
 
+async def atualizar_comandos_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Atualiza a lista de comandos do bot"""
+    if not (update.effective_user and is_admin(update.effective_user.id)):
+        return await update.effective_message.reply_text("❌ Apenas admins podem usar este comando.")
+    
+    try:
+        from telegram import BotCommand
+        
+        # Lista completa de comandos organizados por categoria
+        comandos = [
+            # Comandos básicos
+            BotCommand("start", "Iniciar o bot e ver instruções"),
+            BotCommand("help", "Ajuda e lista de comandos"),
+            BotCommand("status", "Ver seu status VIP atual"),
+            
+            # Comandos de pagamento
+            BotCommand("checkout", "Acessar página de pagamento"),
+            BotCommand("tx", "Verificar status de uma transação"),
+            
+            # Comandos de conteúdo (admins)
+            BotCommand("novopack", "Criar novo pack VIP/FREE"),
+            BotCommand("novopacvip", "Criar novo pack VIP rapidamente"),
+            BotCommand("novopackfree", "Criar novo pack FREE rapidamente"),
+            BotCommand("listar", "Listar todos os packs"),
+            BotCommand("listar_pendentes", "Listar packs pendentes de envio"),
+            BotCommand("excluir_pack", "Excluir um pack específico"),
+            
+            # Comandos administrativos
+            BotCommand("listar_admins", "Listar todos os administradores"),
+            BotCommand("add_admin", "Adicionar novo administrador"),
+            BotCommand("rem_admin", "Remover administrador"),
+            
+            # Comandos de gerenciamento VIP
+            BotCommand("vip_list", "Listar todos os membros VIP"),
+            BotCommand("vip_addtime", "Adicionar tempo VIP para usuário"),
+            BotCommand("vip_set", "Definir VIP para usuário"),
+            BotCommand("vip_remove", "Remover VIP de usuário"),
+            BotCommand("listar_vips", "Listar VIPs com detalhes completos"),
+            
+            # Comandos de pagamentos e hashes
+            BotCommand("listar_hashes", "Listar todas as hashes cadastradas"),
+            BotCommand("excluir_hash", "Excluir hash específica do sistema"),
+            BotCommand("aprovar_tx", "Aprovar transação manualmente"),
+            BotCommand("rejeitar_tx", "Rejeitar transação"),
+            
+            # Comandos de mensagens automáticas
+            BotCommand("add_msg_vip", "Adicionar mensagem automática VIP"),
+            BotCommand("add_msg_free", "Adicionar mensagem automática FREE"),
+            BotCommand("list_msgs_vip", "Listar mensagens VIP"),
+            BotCommand("list_msgs_free", "Listar mensagens FREE"),
+            
+            # Comandos utilitários
+            BotCommand("chat_info", "Ver informações do chat atual"),
+            BotCommand("limpar_chat", "Limpar mensagens do chat"),
+            BotCommand("valor", "Configurar preços de pagamento"),
+        ]
+        
+        # Atualizar comandos
+        await context.bot.set_my_commands(comandos)
+        
+        total_comandos = len(comandos)
+        await update.effective_message.reply_text(
+            f"✅ <b>COMANDOS ATUALIZADOS</b>\n\n"
+            f"📋 Total de comandos: <b>{total_comandos}</b>\n"
+            f"🔄 Lista de comandos atualizada com sucesso!\n\n"
+            f"💡 Os usuários agora verão todos os comandos disponíveis "
+            f"quando digitarem / no chat.",
+            parse_mode="HTML"
+        )
+        
+    except Exception as e:
+        await update.effective_message.reply_text(
+            f"❌ Erro ao atualizar comandos: {e}"
+        )
+
+async def reavaliar_pagamentos_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Reavalia pagamentos antigos com preços atuais da blockchain"""
+    if not (update.effective_user and is_admin(update.effective_user.id)):
+        return await update.effective_message.reply_text("❌ Apenas admins podem usar este comando.")
+    
+    try:
+        with SessionLocal() as s:
+            # Buscar pagamentos aprovados dos últimos 30 dias
+            from datetime import datetime, timedelta
+            import pytz
+            
+            thirty_days_ago = datetime.now(pytz.UTC) - timedelta(days=30)
+            payments = s.query(Payment).filter(
+                Payment.status == "approved",
+                Payment.created_at >= thirty_days_ago
+            ).order_by(Payment.created_at.desc()).all()
+            
+            if not payments:
+                return await update.effective_message.reply_text(
+                    "📋 Nenhum pagamento aprovado encontrado nos últimos 30 dias."
+                )
+            
+            total_payments = len(payments)
+            await update.effective_message.reply_text(
+                f"🔄 <b>REAVALIAÇÃO DE PAGAMENTOS</b>\n\n"
+                f"📊 Encontrados: {total_payments} pagamentos\n"
+                f"⏳ Reavaliando com preços atuais...\n\n"
+                f"💡 Isso pode levar alguns segundos...",
+                parse_mode="HTML"
+            )
+            
+            upgraded_count = 0
+            unchanged_count = 0
+            error_count = 0
+            results = []
+            
+            for payment in payments[:10]:  # Limitar a 10 por vez para não sobrecarregar
+                try:
+                    from payments import resolve_payment_usd_autochain
+                    from utils import choose_plan_from_usd
+                    
+                    # Obter valor atual na blockchain
+                    ok, msg, current_usd, details = await resolve_payment_usd_autochain(
+                        payment.tx_hash, force_refresh=True
+                    )
+                    
+                    if ok and current_usd:
+                        # Calcular VIP atual vs VIP que seria atribuído agora
+                        current_days = payment.vip_days or 0
+                        new_days = choose_plan_from_usd(current_usd)
+                        old_usd = float(payment.usd_value) if payment.usd_value else 0
+                        
+                        short_hash = payment.tx_hash[:12] + "..."
+                        username_info = f"@{payment.username}" if payment.username else f"ID:{payment.user_id}"
+                        
+                        if new_days and new_days > current_days:
+                            # Upgrade disponível!
+                            upgrade_days = new_days - current_days
+                            results.append({
+                                'type': 'upgrade',
+                                'hash': short_hash,
+                                'user': username_info,
+                                'old_usd': old_usd,
+                                'new_usd': current_usd,
+                                'old_days': current_days,
+                                'new_days': new_days,
+                                'upgrade_days': upgrade_days,
+                                'payment_id': payment.id
+                            })
+                            upgraded_count += 1
+                        else:
+                            # Sem mudança ou preço menor
+                            results.append({
+                                'type': 'unchanged',
+                                'hash': short_hash,
+                                'user': username_info,
+                                'old_usd': old_usd,
+                                'new_usd': current_usd,
+                                'days': current_days
+                            })
+                            unchanged_count += 1
+                    else:
+                        error_count += 1
+                        
+                except Exception as e:
+                    error_count += 1
+                    logging.warning(f"Erro ao reavaliar payment {payment.id}: {e}")
+            
+            # Mostrar resultados
+            msg_lines = [
+                f"📊 <b>RESULTADOS DA REAVALIAÇÃO</b>\n",
+                f"✅ Podem ser upgradados: {upgraded_count}",
+                f"➖ Sem mudança: {unchanged_count}", 
+                f"❌ Erros: {error_count}\n"
+            ]
+            
+            if upgraded_count > 0:
+                msg_lines.append(f"🚀 <b>UPGRADES DISPONÍVEIS:</b>\n")
+                for result in [r for r in results if r['type'] == 'upgrade'][:5]:
+                    msg_lines.append(
+                        f"💰 {result['hash']} ({result['user']})\n"
+                        f"   ${result['old_usd']:.2f} → ${result['new_usd']:.2f} USD\n"
+                        f"   {result['old_days']} → {result['new_days']} dias (+{result['upgrade_days']})\n"
+                    )
+                
+                if upgraded_count > 5:
+                    msg_lines.append(f"... e mais {upgraded_count - 5} upgrades\n")
+                    
+                msg_lines.append(f"💡 Use /aplicar_upgrades para aplicar os upgrades")
+            
+            msg_text = "\n".join(msg_lines)
+            await update.effective_message.reply_text(msg_text, parse_mode="HTML")
+            
+    except Exception as e:
+        logging.exception("Erro ao reavaliar pagamentos")
+        await update.effective_message.reply_text(f"❌ Erro ao reavaliar pagamentos: {e}")
+
+async def aplicar_upgrades_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Aplica upgrades de VIP baseados em preços atuais"""
+    if not (update.effective_user and is_admin(update.effective_user.id)):
+        return await update.effective_message.reply_text("❌ Apenas admins podem usar este comando.")
+    
+    await update.effective_message.reply_text(
+        f"⚠️ <b>APLICAR UPGRADES</b>\n\n"
+        f"⚠️ Esta funcionalidade atualiza VIPs existentes com base em preços atuais.\n"
+        f"💡 Use /reavaliar_pagamentos primeiro para ver quais upgrades estão disponíveis.\n\n"
+        f"🔧 Funcionalidade em desenvolvimento...",
+        parse_mode="HTML"
+    )
+
 async def valor_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not (update.effective_user and is_admin(update.effective_user.id)):
         return await update.effective_message.reply_text("Apenas admins.")
@@ -3194,12 +3399,12 @@ async def api_config(uid: str = None, ts: str = None, sig: str = None):
             if sig != expected_sig:
                 raise HTTPException(status_code=403, detail="Assinatura inválida")
         
-        # Obter configurações (sempre disponível) - agora usa faixas dinâmicas
+        # Obter configurações (sempre disponível) - preços mínimos para compatibilidade com webapp
         value_tiers = {
-            "30": "$0.10 - $0.99",
-            "60": "$1.00 - $4.99", 
-            "180": "$5.00 - $14.99",
-            "365": "$15.00+"
+            "30": 0.10,   # Mínimo para 1 mês
+            "60": 1.00,   # Mínimo para 2 meses
+            "180": 5.00,  # Mínimo para 6 meses
+            "365": 15.00  # Mínimo para 1 ano
         }
         
         return {
@@ -3511,6 +3716,9 @@ async def on_startup():
         application.add_handler(CommandHandler("excluir_hash", excluir_hash_cmd), group=1)
         application.add_handler(CommandHandler("listar_vips", listar_vips_cmd), group=1)
         application.add_handler(CommandHandler("chat_info", chat_info_cmd), group=1)
+        application.add_handler(CommandHandler("atualizar_comandos", atualizar_comandos_cmd), group=1)
+        application.add_handler(CommandHandler("reavaliar_pagamentos", reavaliar_pagamentos_cmd), group=1)
+        application.add_handler(CommandHandler("aplicar_upgrades", aplicar_upgrades_cmd), group=1)
         
         # Handler para confirmações de exclusão de hash
         application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, processar_confirmacao_exclusao), group=2)
