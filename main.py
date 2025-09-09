@@ -2092,14 +2092,60 @@ async def novopack_confirm_save(update: Update, context: ContextTypes.DEFAULT_TY
         await update.effective_message.reply_text("Responda <b>sim</b> para salvar ou <b>não</b> para cancelar.", parse_mode="HTML"); return CONFIRM_SAVE
     if answer in ("não", "nao"):
         context.user_data.clear(); await update.effective_message.reply_text("Operação cancelada. Nada foi salvo."); return ConversationHandler.END
-    title = context.user_data.get("title"); previews = context.user_data.get("previews", []); files = context.user_data.get("files", []); tier = context.user_data.get("tier", "vip")
-    p = create_pack(title=title, header_message_id=None, tier=tier)
-    for it in previews:
-        add_file_to_pack(p.id, it["file_id"], None, it["file_type"], "preview", it.get("file_name"), it.get("src_chat_id"), it.get("src_message_id"))
-    for it in files:
-        add_file_to_pack(p.id, it["file_id"], None, it["file_type"], "file", it.get("file_name"), it.get("src_chat_id"), it.get("src_message_id"))
-    context.user_data.clear(); await update.effective_message.reply_text(f"🎉 <b>{esc(title)}</b> cadastrado com sucesso em <b>{tier.upper()}</b>!", parse_mode="HTML")
-    return ConversationHandler.END
+    
+    # Obter dados da sessão
+    title = context.user_data.get("title")
+    previews = context.user_data.get("previews", [])
+    files = context.user_data.get("files", [])
+    tier = context.user_data.get("tier", "vip")
+    
+    # Debug: log dos dados
+    logging.info(f"[novopack_confirm_save] Salvando pack: title='{title}', tier='{tier}', previews={len(previews)}, files={len(files)}")
+    
+    try:
+        # Verificar se title não está vazio
+        if not title:
+            await update.effective_message.reply_text("❌ Erro: título do pack não encontrado. Use /cancelar e tente novamente.")
+            return ConversationHandler.END
+        
+        # Criar o pack no banco
+        logging.info(f"[novopack_confirm_save] Criando pack no banco...")
+        p = create_pack(title=title, header_message_id=None, tier=tier)
+        logging.info(f"[novopack_confirm_save] Pack criado com ID: {p.id}")
+        
+        # Adicionar previews
+        for idx, it in enumerate(previews):
+            logging.info(f"[novopack_confirm_save] Adicionando preview {idx+1}/{len(previews)}: {it.get('file_type')}")
+            add_file_to_pack(
+                p.id, it["file_id"], None, it["file_type"], "preview", 
+                it.get("file_name"), it.get("src_chat_id"), it.get("src_message_id")
+            )
+        
+        # Adicionar arquivos
+        for idx, it in enumerate(files):
+            logging.info(f"[novopack_confirm_save] Adicionando arquivo {idx+1}/{len(files)}: {it.get('file_type')}")
+            add_file_to_pack(
+                p.id, it["file_id"], None, it["file_type"], "file", 
+                it.get("file_name"), it.get("src_chat_id"), it.get("src_message_id")
+            )
+        
+        # Sucesso
+        logging.info(f"[novopack_confirm_save] Pack '{title}' salvo com sucesso! ID: {p.id}")
+        context.user_data.clear()
+        await update.effective_message.reply_text(
+            f"🎉 <b>{esc(title)}</b> cadastrado com sucesso em <b>{tier.upper()}</b>!\n\nID do pack: <code>{p.id}</code>", 
+            parse_mode="HTML"
+        )
+        return ConversationHandler.END
+        
+    except Exception as e:
+        # Log do erro completo
+        logging.exception(f"[novopack_confirm_save] Erro ao salvar pack: {e}")
+        await update.effective_message.reply_text(
+            f"❌ Erro ao salvar o pack: {str(e)}\n\nTente novamente ou use /cancelar.", 
+            parse_mode="HTML"
+        )
+        return CONFIRM_SAVE  # Volta para o estado de confirmação
 
 async def novopack_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear(); await update.effective_message.reply_text("Operação cancelada."); return ConversationHandler.END
