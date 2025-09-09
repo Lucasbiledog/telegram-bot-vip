@@ -2907,197 +2907,210 @@ async def on_startup():
     global bot, BOT_USERNAME
     logging.basicConfig(level=logging.INFO)
     
+    # Verificar se BOT_TOKEN está configurado
+    if not BOT_TOKEN or BOT_TOKEN == "test_token":
+        logging.error("BOT_TOKEN não está configurado corretamente!")
+        return
+    
     # Retry logic for bot initialization (common on cloud platforms)
     max_retries = 3
     for attempt in range(max_retries):
         try:
+            # Inicializar o application primeiro
             await application.initialize()
-            await application.start()
+            # Depois inicializar o bot
             bot = application.bot
+            # Por último, iniciar o application
+            await application.start()
             break
         except Exception as e:
             logging.warning(f"Bot initialization attempt {attempt + 1}/{max_retries} failed: {e}")
             if attempt == max_retries - 1:
-                raise
+                logging.error("Falha na inicialização do bot após todas as tentativas.")
+                # Não fazer raise para não quebrar o servidor
+                return
             await asyncio.sleep(5)  # Wait 5 seconds before retry
     
-    # Set webhook with retry
-    try:
-        await bot.set_webhook(url=WEBHOOK_URL)
-    except Exception as e:
-        logging.warning(f"set_webhook falhou: {e}")
-    
-    # Get bot info with retry
-    for attempt in range(3):
+    # Só configurar webhook se bot foi inicializado com sucesso
+    if bot:
+        # Set webhook with retry
         try:
-            me = await bot.get_me()
-            BOT_USERNAME = me.username
-            break
+            await bot.set_webhook(url=WEBHOOK_URL)
+            logging.info(f"Webhook configurado: {WEBHOOK_URL}")
         except Exception as e:
-            logging.warning(f"get_me attempt {attempt + 1}/3 failed: {e}")
-            if attempt == 2:
-                BOT_USERNAME = "UnknownBot"  # fallback
-            else:
-                await asyncio.sleep(2)
-    
-    logging.info("Bot iniciado (cripto + schedules + VIP/FREE).")
+            logging.warning(f"set_webhook falhou: {e}")
+        
+        # Get bot info with retry
+        for attempt in range(3):
+            try:
+                me = await bot.get_me()
+                BOT_USERNAME = me.username
+                logging.info(f"Bot conectado: @{BOT_USERNAME}")
+                break
+            except Exception as e:
+                logging.warning(f"get_me attempt {attempt + 1}/3 failed: {e}")
+                if attempt == 2:
+                    BOT_USERNAME = "UnknownBot"  # fallback
+                else:
+                    await asyncio.sleep(2)
+        
+        logging.info("Bot iniciado com sucesso (cripto + schedules + VIP/FREE).")
+        
+        # ==== Error handler (só se bot inicializou)
+        application.add_error_handler(error_handler)
+        
+        # ==== TODOS OS HANDLERS SÓ EXECUTAM SE O BOT FOI INICIALIZADO COM SUCESSO ====
+        
+        application.add_handler(CommandHandler("simular_tx", simular_tx_cmd), group=1)
+        application.add_handler(ChatJoinRequestHandler(vip_join_request_handler), group=1)
 
-    # ==== Error handler
-    application.add_error_handler(error_handler)
+        # ===== Guard GLOBAL para não-admin (vem BEM cedo)
+        application.add_handler(MessageHandler(filters.COMMAND, _block_non_admin_commands), group=-2)
 
+        # ==== Guard (tem que vir ANTES)
+        application.add_handler(MessageHandler(filters.COMMAND, _block_non_admin_everywhere), group=-100)
 
-    application.add_handler(CommandHandler("simular_tx", simular_tx_cmd), group=1)
-    application.add_handler(ChatJoinRequestHandler(vip_join_request_handler), group=1)
-
-
-    # ===== Guard GLOBAL para não-admin (vem BEM cedo)
-    application.add_handler(MessageHandler(filters.COMMAND, _block_non_admin_commands), group=-2)
-
-
-    # ==== Guard (tem que vir ANTES)
-    application.add_handler(MessageHandler(filters.COMMAND, _block_non_admin_everywhere), group=-100)
-
-    # ==== Conversas do NOVOPACK
-    states_map = {
-        TITLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, novopack_title)],
-        CONFIRM_TITLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, novopack_confirm_title)],
-        PREVIEWS: [
-            CommandHandler("proximo", novopack_next_to_files),
-            MessageHandler(filters.PHOTO | filters.VIDEO | filters.ANIMATION, novopack_collect_previews),
-            MessageHandler(filters.TEXT & ~filters.COMMAND, hint_previews),
-        ],
-        FILES: [
-            CommandHandler("finalizar", novopack_finish_review),
-            MessageHandler(filters.Document.ALL | filters.AUDIO | filters.VOICE, novopack_collect_files),
-            MessageHandler(filters.TEXT & ~filters.COMMAND, hint_files),
-        ],
-        CONFIRM_SAVE: [MessageHandler(filters.TEXT & ~filters.COMMAND, novopack_confirm_save)],
-    }
-
-    conv_main = ConversationHandler(
-        entry_points=[
-            CommandHandler("novopack", novopack_start),
-            CommandHandler("start", novopack_start, filters=filters.ChatType.PRIVATE & filters.Regex(r"^/start\s+novopack(\s|$)")),
-        ],
-        states={CHOOSE_TIER: [MessageHandler(filters.TEXT & ~filters.COMMAND, novopack_choose_tier)], **states_map},
-        fallbacks=[CommandHandler("cancelar", novopack_cancel)], allow_reentry=True,
-    )
-    application.add_handler(conv_main, group=0)
-
-    conv_vip = ConversationHandler(
-        entry_points=[CommandHandler("novopackvip", novopackvip_start, filters=filters.ChatType.PRIVATE)],
-        states=states_map, fallbacks=[CommandHandler("cancelar", novopack_cancel)], allow_reentry=True,
-    )
-    application.add_handler(conv_vip, group=0)
-
-    conv_free = ConversationHandler(
-        entry_points=[CommandHandler("novopackfree", novopackfree_start, filters=filters.ChatType.PRIVATE)],
-        states=states_map, fallbacks=[CommandHandler("cancelar", novopack_cancel)], allow_reentry=True,
-    )
-    application.add_handler(conv_free, group=0)
-
-    # ===== Conversa /excluir_pack
-    excluir_conv = ConversationHandler(
-        entry_points=[CommandHandler("excluir_pack", excluir_pack_cmd)],
-        states={DELETE_PACK_CONFIRM: [MessageHandler(filters.TEXT & ~filters.COMMAND, excluir_pack_confirm)]},
-        fallbacks=[], allow_reentry=True,
-    )
-    application.add_handler(excluir_conv, group=0)
-
-    # ===== Handlers de storage
-    application.add_handler(
-        MessageHandler(
-            (filters.Chat(STORAGE_GROUP_ID) | filters.Chat(STORAGE_GROUP_FREE_ID)) & filters.TEXT & ~filters.COMMAND,
-            storage_text_handler
-        ),
-        group=1,
-    )
-    media_filter = (
-        (filters.Chat(STORAGE_GROUP_ID) | filters.Chat(STORAGE_GROUP_FREE_ID)) &
-        (filters.PHOTO | filters.VIDEO | filters.ANIMATION | filters.AUDIO | filters.Document.ALL | filters.VOICE)
-    )
-    application.add_handler(MessageHandler(media_filter, storage_media_handler), group=1)
-
-    # ===== Comandos gerais (group=1)
-    application.add_handler(CommandHandler("start", start_cmd), group=1)
-    application.add_handler(CommandHandler("comandos", comandos_cmd), group=5)
-    application.add_handler(CommandHandler("listar_comandos", comandos_cmd), group=5)
-    application.add_handler(CommandHandler("getid", getid_cmd), group=1)
-    application.add_handler(CommandHandler("debug_grupos", debug_grupos_cmd), group=1)
-
-    application.add_handler(CommandHandler("say_vip", say_vip_cmd), group=1)
-    application.add_handler(CommandHandler("say_free", say_free_cmd), group=1)
-
-    application.add_handler(CommandHandler("simularvip", simularvip_cmd), group=1)
-    application.add_handler(CommandHandler("simularfree", simularfree_cmd), group=1)
-    application.add_handler(
-        CommandHandler(
-            [
-                "listar_packsvip",
-                "listar_packvip",
-                "listar_packs_vip",
-                "listar_pack_vip",
+        # ==== Conversas do NOVOPACK
+        states_map = {
+            TITLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, novopack_title)],
+            CONFIRM_TITLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, novopack_confirm_title)],
+            PREVIEWS: [
+                CommandHandler("proximo", novopack_next_to_files),
+                MessageHandler(filters.PHOTO | filters.VIDEO | filters.ANIMATION, novopack_collect_previews),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, hint_previews),
             ],
-            listar_packsvip_cmd,
-            block=True,
-        ),
-        group=1,
-    )
-    application.add_handler(CommandHandler("listar_packsfree", listar_packsfree_cmd), group=1,)
-    application.add_handler(CommandHandler("pack_info", pack_info_cmd), group=1)
-    application.add_handler(CommandHandler("excluir_item", excluir_item_cmd), group=1)
-    application.add_handler(CommandHandler("set_pendentevip", set_pendentevip_cmd), group=1)
-    application.add_handler(CommandHandler("set_pendentefree", set_pendentefree_cmd), group=1)
-    application.add_handler(CommandHandler("set_enviadovip", set_enviadovip_cmd), group=1)
-    application.add_handler(CommandHandler("set_enviadofree", set_enviadofree_cmd), group=1)
+            FILES: [
+                CommandHandler("finalizar", novopack_finish_review),
+                MessageHandler(filters.Document.ALL | filters.AUDIO | filters.VOICE, novopack_collect_files),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, hint_files),
+            ],
+            CONFIRM_SAVE: [MessageHandler(filters.TEXT & ~filters.COMMAND, novopack_confirm_save)],
+        }
 
-    application.add_handler(CommandHandler("listar_admins", listar_admins_cmd), group=1)
-    application.add_handler(CommandHandler("add_admin", add_admin_cmd), group=1)
-    application.add_handler(CommandHandler("rem_admin", rem_admin_cmd), group=1)
-    application.add_handler(CommandHandler("mudar_nome", mudar_nome_cmd), group=1)
-    application.add_handler(CommandHandler("limpar_chat", limpar_chat_cmd), group=1)
+        conv_main = ConversationHandler(
+            entry_points=[
+                CommandHandler("novopack", novopack_start),
+                CommandHandler("start", novopack_start, filters=filters.ChatType.PRIVATE & filters.Regex(r"^/start\s+novopack(\s|$)")),
+            ],
+            states={CHOOSE_TIER: [MessageHandler(filters.TEXT & ~filters.COMMAND, novopack_choose_tier)], **states_map},
+            fallbacks=[CommandHandler("cancelar", novopack_cancel)], allow_reentry=True,
+        )
+        application.add_handler(conv_main, group=0)
 
-    application.add_handler(CommandHandler("valor", valor_cmd), group=1)
-    application.add_handler(CommandHandler("vip_list", vip_list_cmd), group=1)
-    application.add_handler(CommandHandler("vip_addtime", vip_addtime_cmd), group=1)
-    application.add_handler(CommandHandler("vip_set", vip_set_cmd), group=1)
-    application.add_handler(CommandHandler("vip_remove", vip_remove_cmd), group=1)
+        conv_vip = ConversationHandler(
+            entry_points=[CommandHandler("novopackvip", novopackvip_start, filters=filters.ChatType.PRIVATE)],
+            states=states_map, fallbacks=[CommandHandler("cancelar", novopack_cancel)], allow_reentry=True,
+        )
+        application.add_handler(conv_vip, group=0)
 
+        conv_free = ConversationHandler(
+            entry_points=[CommandHandler("novopackfree", novopackfree_start, filters=filters.ChatType.PRIVATE)],
+            states=states_map, fallbacks=[CommandHandler("cancelar", novopack_cancel)], allow_reentry=True,
+        )
+        application.add_handler(conv_free, group=0)
 
+        # ===== Conversa /excluir_pack
+        excluir_conv = ConversationHandler(
+            entry_points=[CommandHandler("excluir_pack", excluir_pack_cmd)],
+            states={DELETE_PACK_CONFIRM: [MessageHandler(filters.TEXT & ~filters.COMMAND, excluir_pack_confirm)]},
+            fallbacks=[], allow_reentry=True,
+        )
+        application.add_handler(excluir_conv, group=0)
 
-    # Comandos de pagamento crypto
-    from payments import pagar_cmd, tx_cmd, listar_pendentes_cmd, aprovar_tx_cmd, rejeitar_tx_cmd
-    application.add_handler(CommandHandler("pagar", pagar_cmd), group=1)
-    application.add_handler(CommandHandler("checkout", pagar_cmd), group=1)  # alias
-    application.add_handler(CommandHandler("tx", tx_cmd), group=1)
-    application.add_handler(CommandHandler("listar_pendentes", listar_pendentes_cmd), group=1)
-    application.add_handler(CommandHandler("aprovar_tx", aprovar_tx_cmd), group=1)
-    application.add_handler(CommandHandler("rejeitar_tx", rejeitar_tx_cmd), group=1)
+        # ===== Handlers de storage
+        application.add_handler(
+            MessageHandler(
+                (filters.Chat(STORAGE_GROUP_ID) | filters.Chat(STORAGE_GROUP_FREE_ID)) & filters.TEXT & ~filters.COMMAND,
+                storage_text_handler
+            ),
+            group=1,
+        )
+        media_filter = (
+            (filters.Chat(STORAGE_GROUP_ID) | filters.Chat(STORAGE_GROUP_FREE_ID)) &
+            (filters.PHOTO | filters.VIDEO | filters.ANIMATION | filters.AUDIO | filters.Document.ALL | filters.VOICE)
+        )
+        application.add_handler(MessageHandler(media_filter, storage_media_handler), group=1)
 
-    application.add_handler(CommandHandler("add_msg_vip", add_msg_vip_cmd), group=1)
-    application.add_handler(CommandHandler("add_msg_free", add_msg_free_cmd), group=1)
-    application.add_handler(CommandHandler("list_msgs_vip", list_msgs_vip_cmd), group=1)
-    application.add_handler(CommandHandler("list_msgs_free", list_msgs_free_cmd), group=1)
-    application.add_handler(CommandHandler("edit_msg_vip", edit_msg_vip_cmd), group=1)
-    application.add_handler(CommandHandler("edit_msg_free", edit_msg_free_cmd), group=1)
-    application.add_handler(CommandHandler("toggle_msg_vip", toggle_msg_vip_cmd), group=1)
-    application.add_handler(CommandHandler("toggle_msg_free", toggle_msg_free_cmd), group=1)
-    application.add_handler(CommandHandler("del_msg_vip", del_msg_vip_cmd), group=1)
-    application.add_handler(CommandHandler("del_msg_free", del_msg_free_cmd), group=1)
+        # ===== Comandos gerais (group=1)
+        application.add_handler(CommandHandler("start", start_cmd), group=1)
+        application.add_handler(CommandHandler("comandos", comandos_cmd), group=5)
+        application.add_handler(CommandHandler("listar_comandos", comandos_cmd), group=5)
+        application.add_handler(CommandHandler("getid", getid_cmd), group=1)
+        application.add_handler(CommandHandler("debug_grupos", debug_grupos_cmd), group=1)
 
-    application.add_handler(CommandHandler("set_pack_horario_vip", set_pack_horario_vip_cmd), group=1)
-    application.add_handler(CommandHandler("set_pack_horario_free", set_pack_horario_free_cmd), group=1)
+        application.add_handler(CommandHandler("say_vip", say_vip_cmd), group=1)
+        application.add_handler(CommandHandler("say_free", say_free_cmd), group=1)
 
-    # ===== Callback Query Handler
-    application.add_handler(CallbackQueryHandler(checkout_callback_handler, pattern="checkout_callback"), group=1)
+        application.add_handler(CommandHandler("simularvip", simularvip_cmd), group=1)
+        application.add_handler(CommandHandler("simularfree", simularfree_cmd), group=1)
+        application.add_handler(
+            CommandHandler(
+                [
+                    "listar_packsvip",
+                    "listar_packvip",
+                    "listar_packs_vip",
+                    "listar_pack_vip",
+                ],
+                listar_packsvip_cmd,
+                block=True,
+            ),
+            group=1,
+        )
+        application.add_handler(CommandHandler("listar_packsfree", listar_packsfree_cmd), group=1,)
+        application.add_handler(CommandHandler("pack_info", pack_info_cmd), group=1)
+        application.add_handler(CommandHandler("excluir_item", excluir_item_cmd), group=1)
+        application.add_handler(CommandHandler("set_pendentevip", set_pendentevip_cmd), group=1)
+        application.add_handler(CommandHandler("set_pendentefree", set_pendentefree_cmd), group=1)
+        application.add_handler(CommandHandler("set_enviadovip", set_enviadovip_cmd), group=1)
+        application.add_handler(CommandHandler("set_enviadofree", set_enviadofree_cmd), group=1)
 
-    # Jobs
-    await _reschedule_daily_packs()
-    _register_all_scheduled_messages(application.job_queue)
+        application.add_handler(CommandHandler("listar_admins", listar_admins_cmd), group=1)
+        application.add_handler(CommandHandler("add_admin", add_admin_cmd), group=1)
+        application.add_handler(CommandHandler("rem_admin", rem_admin_cmd), group=1)
+        application.add_handler(CommandHandler("mudar_nome", mudar_nome_cmd), group=1)
+        application.add_handler(CommandHandler("limpar_chat", limpar_chat_cmd), group=1)
 
-    application.job_queue.run_daily(vip_expiration_warn_job, time=dt.time(hour=9, minute=0, tzinfo=pytz.timezone("America/Sao_Paulo")), name="vip_warn")
-    application.job_queue.run_repeating(keepalive_job, interval=dt.timedelta(minutes=4), first=dt.timedelta(seconds=20), name="keepalive")
-    logging.info("Handlers e jobs registrados.")
+        application.add_handler(CommandHandler("valor", valor_cmd), group=1)
+        application.add_handler(CommandHandler("vip_list", vip_list_cmd), group=1)
+        application.add_handler(CommandHandler("vip_addtime", vip_addtime_cmd), group=1)
+        application.add_handler(CommandHandler("vip_set", vip_set_cmd), group=1)
+        application.add_handler(CommandHandler("vip_remove", vip_remove_cmd), group=1)
+
+        # Comandos de pagamento crypto
+        from payments import pagar_cmd, tx_cmd, listar_pendentes_cmd, aprovar_tx_cmd, rejeitar_tx_cmd
+        application.add_handler(CommandHandler("pagar", pagar_cmd), group=1)
+        application.add_handler(CommandHandler("checkout", pagar_cmd), group=1)  # alias
+        application.add_handler(CommandHandler("tx", tx_cmd), group=1)
+        application.add_handler(CommandHandler("listar_pendentes", listar_pendentes_cmd), group=1)
+        application.add_handler(CommandHandler("aprovar_tx", aprovar_tx_cmd), group=1)
+        application.add_handler(CommandHandler("rejeitar_tx", rejeitar_tx_cmd), group=1)
+
+        application.add_handler(CommandHandler("add_msg_vip", add_msg_vip_cmd), group=1)
+        application.add_handler(CommandHandler("add_msg_free", add_msg_free_cmd), group=1)
+        application.add_handler(CommandHandler("list_msgs_vip", list_msgs_vip_cmd), group=1)
+        application.add_handler(CommandHandler("list_msgs_free", list_msgs_free_cmd), group=1)
+        application.add_handler(CommandHandler("edit_msg_vip", edit_msg_vip_cmd), group=1)
+        application.add_handler(CommandHandler("edit_msg_free", edit_msg_free_cmd), group=1)
+        application.add_handler(CommandHandler("toggle_msg_vip", toggle_msg_vip_cmd), group=1)
+        application.add_handler(CommandHandler("toggle_msg_free", toggle_msg_free_cmd), group=1)
+        application.add_handler(CommandHandler("del_msg_vip", del_msg_vip_cmd), group=1)
+        application.add_handler(CommandHandler("del_msg_free", del_msg_free_cmd), group=1)
+
+        application.add_handler(CommandHandler("set_pack_horario_vip", set_pack_horario_vip_cmd), group=1)
+        application.add_handler(CommandHandler("set_pack_horario_free", set_pack_horario_free_cmd), group=1)
+
+        # ===== Callback Query Handler
+        application.add_handler(CallbackQueryHandler(checkout_callback_handler, pattern="checkout_callback"), group=1)
+
+        # Jobs
+        await _reschedule_daily_packs()
+        _register_all_scheduled_messages(application.job_queue)
+
+        application.job_queue.run_daily(vip_expiration_warn_job, time=dt.time(hour=9, minute=0, tzinfo=pytz.timezone("America/Sao_Paulo")), name="vip_warn")
+        application.job_queue.run_repeating(keepalive_job, interval=dt.timedelta(minutes=4), first=dt.timedelta(seconds=20), name="keepalive")
+        logging.info("Handlers e jobs registrados.")
+    else:
+        logging.error("Bot não foi inicializado - funcionalidades do Telegram não estarão disponíveis.")
 
 # =========================
 # Run
