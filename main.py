@@ -1789,6 +1789,21 @@ async def listar_packsvip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE
         return await update.effective_message.reply_text("Apenas admins.")
 
     with SessionLocal() as s:
+        # Debug: contar todos os packs (incluindo enviados)
+        total_packs_vip = s.query(Pack).filter(Pack.tier == "vip").count()
+        total_packs_all = s.query(Pack).count()
+        
+        logging.info(f"[listar_packsvip] Total VIP packs: {total_packs_vip}, Total all packs: {total_packs_all}")
+        
+        # Buscar todos os packs VIP (não apenas pendentes)
+        all_vip_packs = (
+            s.query(Pack)
+            .filter(Pack.tier == "vip")
+            .order_by(Pack.created_at.asc())
+            .all()
+        )
+        
+        # Buscar apenas os pendentes
         packs = (
             s.query(Pack)
             .filter(Pack.tier == "vip", Pack.sent.is_(False))
@@ -1796,8 +1811,25 @@ async def listar_packsvip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE
             .all()
         )
 
+        # Se não há packs pendentes, mas há packs VIP, mostrar informação
+        if not packs and all_vip_packs:
+            lines = [f"📊 <b>Todos os packs VIP ({len(all_vip_packs)} total):</b>"]
+            for p in all_vip_packs:
+                previews = s.query(PackFile).filter(PackFile.pack_id == p.id, PackFile.role == "preview").count()
+                docs = s.query(PackFile).filter(PackFile.pack_id == p.id, PackFile.role == "file").count()
+                status = "ENVIADO" if p.sent else "PENDENTE"
+                ag = (
+                    f" (agendado para {p.scheduled_for.strftime('%d/%m %H:%M')})"
+                    if p.scheduled_for else ""
+                )
+                lines.append(
+                    f"[{p.id}] {esc(p.title)} — {status} — previews:{previews} arquivos:{docs} — {p.created_at.strftime('%d/%m %H:%M')}{ag}"
+                )
+            await update.effective_message.reply_text("\n".join(lines), parse_mode="HTML")
+            raise ApplicationHandlerStop
+
         if not packs:
-            await update.effective_message.reply_text("Nenhum pack VIP registrado.")
+            await update.effective_message.reply_text(f"Nenhum pack VIP pendente.\n\n📊 Total VIP packs no banco: {total_packs_vip}\n📊 Total de todos os packs: {total_packs_all}")
             raise ApplicationHandlerStop  # garante que nada mais responda
 
         lines = []
