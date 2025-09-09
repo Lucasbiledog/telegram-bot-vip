@@ -403,6 +403,44 @@ ALLOWED_FOR_NON_ADM = {"pagar", "tx", "start", "novopack" }
 def esc(s): return html.escape(str(s) if s is not None else "")
 def now_utc(): return dt.datetime.utcnow()
 
+def _reorganize_payment_ids(session):
+    """Reorganiza IDs dos payments para preencher lacunas após exclusões"""
+    try:
+        # Buscar todos os payments ordenados por created_at (mais antigo primeiro)
+        payments = session.query(Payment).order_by(Payment.created_at.asc()).all()
+        
+        if not payments:
+            # Se não há payments, resetar sequência para 1
+            from sqlalchemy import text
+            session.execute(text("ALTER SEQUENCE payments_id_seq RESTART WITH 1;"))
+            return
+        
+        # Reorganizar IDs sequenciais começando de 1
+        for new_id, payment in enumerate(payments, 1):
+            if payment.id != new_id:
+                payment.id = new_id
+        
+        # Resetar sequência para próximo ID disponível
+        next_id = len(payments) + 1
+        from sqlalchemy import text
+        session.execute(text(f"ALTER SEQUENCE payments_id_seq RESTART WITH {next_id};"))
+        
+    except Exception as e:
+        logging.warning(f"Erro ao reorganizar IDs dos payments: {e}")
+        # Em caso de erro, apenas tentar resetar a sequência
+        try:
+            payments_count = session.query(Payment).count()
+            if payments_count == 0:
+                from sqlalchemy import text
+                session.execute(text("ALTER SEQUENCE payments_id_seq RESTART WITH 1;"))
+            else:
+                max_id = session.query(Payment.id).order_by(Payment.id.desc()).first()
+                if max_id:
+                    from sqlalchemy import text
+                    session.execute(text(f"ALTER SEQUENCE payments_id_seq RESTART WITH {max_id[0] + 1};"))
+        except:
+            pass
+
 
 def wrap_ph(s: str) -> str:
     # Converte qualquer <algo> em <code>&lt;algo&gt;</code> para não quebrar o HTML
@@ -1746,7 +1784,8 @@ async def listar_hashes_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if not payments:
                 # Resetar sequence do auto-increment quando não houver payments
                 try:
-                    s.execute("ALTER SEQUENCE payments_id_seq RESTART WITH 1;")
+                    from sqlalchemy import text
+                    s.execute(text("ALTER SEQUENCE payments_id_seq RESTART WITH 1;"))
                     s.commit()
                 except Exception:
                     pass  # Ignorar se não conseguir resetar
@@ -1785,16 +1824,35 @@ async def listar_hashes_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 else:
                     created = "N/A"
                 
-                # Buscar VIP associado a esta hash
+                # Buscar VIP associado a esta hash ou usuário
                 vip_info = ""
                 if p.status == "approved":
+                    # Primeiro tentar por hash
                     vip = s.query(VipMembership).filter(VipMembership.tx_hash == p.tx_hash).first()
+                    
+                    # Se não encontrar por hash, tentar por user_id (VIP pode existir sem hash vinculada)
+                    if not vip and p.user_id:
+                        vip = s.query(VipMembership).filter(
+                            VipMembership.user_id == p.user_id,
+                            VipMembership.active == True
+                        ).order_by(VipMembership.expires_at.desc()).first()
+                    
                     if vip:
                         now = now_utc()
                         if vip.expires_at and vip.expires_at > now and vip.active:
                             days_left = (vip.expires_at - now).days
+                            hours_left = ((vip.expires_at - now).total_seconds() / 3600) % 24
                             expires_brt = vip.expires_at.replace(tzinfo=pytz.UTC).astimezone(pytz.timezone('America/Sao_Paulo'))
-                            vip_info = f"\n👑 VIP Ativo: {days_left} dias restantes (expira {expires_brt.strftime('%d/%m/%Y')})"
+                            
+                            # Mostrar tempo mais preciso
+                            if days_left > 0:
+                                time_left = f"{days_left} dias restantes"
+                            elif hours_left > 0:
+                                time_left = f"{int(hours_left)} horas restantes"
+                            else:
+                                time_left = "expira em breve"
+                                
+                            vip_info = f"\n👑 VIP Ativo: {time_left}\n📅 Expira: {expires_brt.strftime('%d/%m/%Y às %H:%M BRT')}"
                             
                             # Usar informações do pagamento se disponível
                             if p.vip_days:
@@ -1802,15 +1860,23 @@ async def listar_hashes_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             else:
                                 # Fallback para plano salvo no VIP
                                 plan_names = {
-                                    "mensal": "1 mês",
-                                    "bimestral": "2 meses", 
-                                    "trimestral": "6 meses",
-                                    "anual": "1 ano"
+                                    "mensal": "30 dias",
+                                    "bimestral": "60 dias", 
+                                    "trimestral": "180 dias",
+                                    "anual": "365 dias"
                                 }
                                 plan_desc = plan_names.get(vip.plan, vip.plan or "indefinido")
                                 vip_info += f"\n🎯 Plano: {plan_desc}"
                         else:
-                            vip_info = f"\n👑 VIP Expirado"
+                            # VIP expirado - mostrar quando expirou
+                            if vip.expires_at:
+                                expires_brt = vip.expires_at.replace(tzinfo=pytz.UTC).astimezone(pytz.timezone('America/Sao_Paulo'))
+                                vip_info = f"\n👑 VIP Expirado\n📅 Expirou: {expires_brt.strftime('%d/%m/%Y às %H:%M BRT')}"
+                            else:
+                                vip_info = f"\n👑 VIP Expirado (sem data)"
+                    else:
+                        # Payment aprovado mas VIP não encontrado
+                        vip_info = f"\n⚠️ VIP não encontrado para este usuário"
                 
                 # Informações sobre pagamento (usar dados salvos)
                 payment_info = ""
@@ -2065,6 +2131,10 @@ async def processar_confirmacao_exclusao(update: Update, context: ContextTypes.D
                         
                         # Excluir payment
                         s.delete(payment)
+                        
+                        # Reorganizar IDs para preencher lacunas
+                        _reorganize_payment_ids(s)
+                        
                         s.commit()
                         
                         username_info = f"@{username}" if username else f"ID:{user_id}"
