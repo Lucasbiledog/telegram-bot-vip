@@ -1433,11 +1433,10 @@ async def checkout_callback_handler(update: Update, context: ContextTypes.DEFAUL
     
     # Implementa a lógica de checkout diretamente para callback queries
     try:
-        from config import WEBAPP_URL
-        from telegram import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
-        from utils import send_with_retry, make_link_sig
         import time
         import os
+        from telegram import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
+        from utils import send_with_retry, make_link_sig
         
         # Verificar se o WALLET_ADDRESS está configurado
         WALLET_ADDRESS = os.getenv("WALLET_ADDRESS")
@@ -1448,73 +1447,56 @@ async def checkout_callback_handler(update: Update, context: ContextTypes.DEFAUL
             )
             return
         
-        # Criar botão WebApp para checkout se disponível
-        if WEBAPP_URL and WEBAPP_URL.startswith(('http://', 'https://')):
-            # Gerar parâmetros de segurança para o link
-            uid = user.id
-            ts = int(time.time())
-            sig = make_link_sig(os.getenv("BOT_SECRET", "default"), uid, ts)
+        # Obter WEBAPP_URL diretamente das variáveis de ambiente
+        WEBAPP_URL = os.getenv("WEBAPP_URL")
+        if not WEBAPP_URL:
+            SELF_URL = os.getenv("SELF_URL", "")
+            WEBAPP_URL = f"{SELF_URL.rstrip('/')}/pay/" if SELF_URL else None
+        elif WEBAPP_URL and not WEBAPP_URL.endswith('/pay/'):
+            # Garantir que o path /pay/ esteja presente
+            WEBAPP_URL = f"{WEBAPP_URL.rstrip('/')}/pay/"
+        
+        # Criar botão WebApp para abrir index.html na rota /pay/
+        base_url = os.getenv("WEBAPP_URL", "https://telegram-bot-vip-hfn7.onrender.com")
+        webapp_url = f"{base_url.rstrip('/')}/pay/"
+        
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton(
+                "💳 Abrir Pagamento WebApp",
+                web_app=WebAppInfo(url=webapp_url)
+            )]
+        ])
 
-            # URL com parâmetros de segurança
-            secure_url = f"{WEBAPP_URL}?uid={uid}&ts={ts}&sig={sig}"
+        checkout_msg = (
+            f"💸 <b>Pagamento VIP via Cripto</b>\n\n"
+            f"✅ Clique no botão abaixo para abrir a página de pagamento\n"
+            f"🔒 Pague com qualquer criptomoeda\n"
+            f"⚡ Ativação automática\n\n"
+            f"💰 <b>Planos:</b>\n"
+            f"• 30 dias: $0.05\n"
+            f"• 60 dias: $1.00\n"
+            f"• 180 dias: $1.50\n"
+            f"• 365 dias: $2.00"
+        )
 
-            keyboard = InlineKeyboardMarkup([
-                [InlineKeyboardButton(
-                    "💳 Pagar com Crypto - Checkout",
-                    web_app=WebAppInfo(url=secure_url)
-                )]
-            ])
-
-            checkout_msg = (
-                f"💸 <b>Pagamento VIP via Cripto</b>\n\n"
-                f"✅ Clique no botão abaixo para acessar nossa página de checkout segura\n"
-                f"🔒 Pague com qualquer criptomoeda\n"
-                f"⚡ Ativação automática após confirmação\n\n"
-                f"💰 <b>Planos disponíveis:</b>\n"
-                f"• 30 dias: $0.05\n"
-                f"• 60 dias: $1.00\n"
-                f"• 180 dias: $1.50\n"
-                f"• 365 dias: $2.00"
-            )
-
-            # Enviar diretamente no chat atual com o botão WebApp
-            await query.message.reply_text(
-                checkout_msg,
-                parse_mode="HTML",
-                reply_markup=keyboard,
-            )
-        else:
-            # Fallback caso não tenha WEBAPP_URL: instruções manuais
-            MIN_CONFIRMATIONS = os.getenv("MIN_CONFIRMATIONS", "1")
-            instrucoes = (
-                f"💸 <b>Pagamento via Cripto</b>\n"
-                f"1) Abra seu banco de cripto.\n"
-                f"2) Envie o valor para a carteira:\n<code>{WALLET_ADDRESS}</code>\n"
-                f"3) Depois me mande aqui: <code>/tx &lt;hash_da_transacao&gt;</code>\n\n"
-                f"⚙️ Valido on-chain (mín. {MIN_CONFIRMATIONS} confirmações).\n"
-                f"✅ Aprovando, te envio o convite do VIP no privado."
-            )
-
-            try:
-                await context.bot.send_message(
-                    chat_id=user.id,
-                    text=instrucoes,
-                    parse_mode="HTML"
-                )
-                if query.message.chat.type != "private":
-                    await query.message.reply_text("📱 Te enviei as instruções no privado!")
-            except Exception:
-                await query.message.reply_text(instrucoes, parse_mode="HTML")
+        await query.message.reply_text(
+            checkout_msg,
+            parse_mode="HTML",
+            reply_markup=keyboard
+        )
                 
     except Exception as e:
         logging.error(f"Erro no checkout_callback_handler: {e}")
+        logging.error(f"Tipo do erro: {type(e).__name__}")
+        import traceback
+        logging.error(f"Traceback: {traceback.format_exc()}")
         try:
             await query.message.reply_text(
                 "❌ Erro ao processar pagamento. Tente usar o comando /pagar diretamente.",
                 parse_mode="HTML"
             )
-        except Exception:
-            pass
+        except Exception as reply_error:
+            logging.error(f"Erro ao enviar mensagem de erro: {reply_error}")
 
 # =========================
 # COMMANDS & ADMIN
