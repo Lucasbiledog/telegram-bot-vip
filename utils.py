@@ -39,18 +39,35 @@ def choose_plan_from_usd(amount_usd: float, prices: Dict[int, float]) -> Optiona
 
 async def vip_upsert_and_get_until(tg_id: int, username: Optional[str], days: int) -> datetime:
     """Create or extend VIP membership and return the new expiry."""
-    from db import user_get_or_create, user_set_vip_until
-
-    user = await user_get_or_create(tg_id, username)
-    now = datetime.now(timezone.utc)
-    vip_until = user.vip_until
-    if vip_until and vip_until.tzinfo is None:
-        vip_until = vip_until.replace(tzinfo=timezone.utc)
-
-    base = vip_until if (vip_until and vip_until > now) else now
-    new_until = base + timedelta(days=days)
-    await user_set_vip_until(tg_id, new_until)
-    return new_until
+    from main import SessionLocal, VipMembership, now_utc
+    
+    now = now_utc()
+    
+    with SessionLocal() as s:
+        # Buscar ou criar VipMembership
+        m = s.query(VipMembership).filter(VipMembership.user_id == tg_id).first()
+        if not m:
+            # Criar novo membro VIP
+            new_until = now + timedelta(days=days)
+            m = VipMembership(
+                user_id=tg_id,
+                username=username,
+                active=True,
+                expires_at=new_until,
+                created_at=now
+            )
+            s.add(m)
+        else:
+            # Estender VIP existente
+            base = m.expires_at if (m.expires_at and m.expires_at > now) else now
+            new_until = base + timedelta(days=days)
+            m.expires_at = new_until
+            m.active = True
+            if username:
+                m.username = username
+        
+        s.commit()
+        return m.expires_at
 
 async def create_one_time_invite(
     bot: Bot,
