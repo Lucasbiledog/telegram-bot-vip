@@ -86,11 +86,18 @@ CHAINS: Dict[str, Dict[str, str]] = {
 # Signature do evento Transfer(address,address,uint256)
 ERC20_TRANSFER_SIG = Web3.keccak(text="Transfer(address,address,uint256)").hex().lower()
 
-# Alguns tokens “wrapped/mirrors” mapeados para ids nativos no CoinGecko
+# Alguns tokens "wrapped/mirrors" mapeados para ids nativos no CoinGecko
 # BTCB (BSC) -> bitcoin
 KNOWN_TOKEN_TO_CGID = {
     # chainId:tokenAddress -> cg_id
     f"0x38:{'0x7130d2a12b9bcbfae4f2634d864a1ee1ce3ead9c'}": "bitcoin",
+}
+
+# Mapeamento de endereços para símbolos conhecidos (fallback)
+KNOWN_TOKEN_SYMBOLS = {
+    "0x7130d2a12b9bcbfae4f2634d864a1ee1ce3ead9c": "BTCB",  # BTCB na BSC
+    "0xa0b86991c31cc170c8b9e71b51e1a53af4e9b8c9e": "USDC",  # USDC na Ethereum
+    "0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d": "USDC",   # USDC na BSC
 }
 
 
@@ -269,17 +276,37 @@ def _erc20_decimals(w3: Web3, token: str) -> int:
 
 
 def _erc20_symbol(w3: Web3, token: str) -> str:
+    # Primeiro, tentar mapeamento conhecido
+    known_symbol = KNOWN_TOKEN_SYMBOLS.get(token.lower())
+    if known_symbol:
+        LOG.info(f"Usando símbolo conhecido para {token}: {known_symbol}")
+        return known_symbol
+        
     raw = _erc20_static_call(w3, token, "0x95d89b41")  # symbol()
     if not raw:
         return "TOKEN"
     try:
-        # string dinâmica (ABI)
+        # string dinâmica (ABI) - formato: offset(32) + length(32) + data
         if len(raw) >= 96 and raw[:4] == b"\x00\x00\x00\x20":
             strlen = int.from_bytes(raw[64:96], "big")
-            return raw[96:96 + strlen].decode("utf-8", errors="ignore") or "TOKEN"
-        # string padded
-        return raw.rstrip(b"\x00").decode("utf-8", errors="ignore") or "TOKEN"
-    except Exception:
+            if strlen > 0 and strlen <= 32:  # Validar tamanho
+                symbol_bytes = raw[96:96 + strlen]
+                symbol = symbol_bytes.decode("utf-8", errors="ignore").strip()
+                return symbol or "TOKEN"
+        
+        # string padded (formato antigo) - dados diretos nos 32 bytes
+        elif len(raw) >= 32:
+            # Remover bytes nulos e decodificar
+            symbol_bytes = raw.rstrip(b"\x00")
+            if symbol_bytes:
+                symbol = symbol_bytes.decode("utf-8", errors="ignore").strip()
+                # Filtrar apenas caracteres alfanuméricos
+                symbol = ''.join(c for c in symbol if c.isalnum())
+                return symbol or "TOKEN"
+        
+        return "TOKEN"
+    except Exception as e:
+        LOG.warning(f"Erro ao decodificar símbolo do token {token}: {e}")
         return "TOKEN"
 
 
@@ -822,6 +849,7 @@ async def approve_by_usd_and_invite(tg_id, username: Optional[str], tx_hash: str
         return False, info, {"details": details}
 
     # Verificar se valor cobre algum plano
+    from utils import get_prices_sync
     prices = get_prices_sync(None)
     days = choose_plan_from_usd(usd or 0.0, prices)
     if not days:
