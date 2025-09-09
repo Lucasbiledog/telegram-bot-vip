@@ -1308,39 +1308,38 @@ async def _send_preview_media(context: ContextTypes.DEFAULT_TYPE, target_chat_id
     
     # Adicionar botão de checkout automaticamente após as imagens (apenas no grupo FREE)
     if target_chat_id == GROUP_FREE_ID and (counts["photos"] > 0 or counts["videos"] > 0 or counts["animations"] > 0):
-        # Sempre enviar o botão de checkout, mesmo sem WEBAPP_URL ou WALLET_ADDRESS configurados
-        from telegram import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
-        import time
-        import os
+        # Enviar apenas o botão simples - a mensagem completa virá do callback
+        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
         
-        # Sempre usar o botão callback que simula o comando /pagar
         keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton(
-                "💳 Assinar VIP - Clique Aqui",
+                "💳 Abrir Página de Pagamento",
                 callback_data="checkout_callback"
             )]
         ])
         
-        if keyboard:
-            checkout_msg = (
-                "💸 <b>Quer ver o conteúdo completo?</b>\n\n"
-                "✅ Clique abaixo para assinar VIP\n"
-                "🔒 Pague com qualquer criptomoeda\n"
-                "⚡ Ativação automática\n\n"
-                "💰 <b>Planos:</b>\n"
-                "• 30 dias: $0.05\n"
-                "• 60 dias: $1.00\n"
-                "• 180 dias: $1.50"
+        # Mensagem completa com informações de pagamento
+        checkout_msg = (
+            "💸 <b>Quer ver o conteúdo completo?</b>\n\n"
+            "✅ Clique no botão abaixo para abrir a página de pagamento\n"
+            "🔒 Pague com qualquer criptomoeda\n"
+            "⚡ Ativação automática\n\n"
+            "💰 <b>Planos:</b>\n"
+            "• 30 dias: $0.05\n"
+            "• 60 dias: $1.00\n"
+            "• 180 dias: $1.50\n"
+            "• 365 dias: $2.00"
+        )
+        
+        try:
+            await context.application.bot.send_message(
+                chat_id=target_chat_id,
+                text=checkout_msg,
+                reply_markup=keyboard,
+                parse_mode="HTML"
             )
-            try:
-                await context.application.bot.send_message(
-                    chat_id=target_chat_id,
-                    text=checkout_msg,
-                    reply_markup=keyboard,
-                    parse_mode="HTML"
-                )
-            except Exception as e:
-                logging.warning(f"[send_preview_media] Erro ao enviar checkout: {e}")
+        except Exception as e:
+            logging.warning(f"[send_preview_media] Erro ao enviar checkout: {e}")
     
     return counts
 
@@ -1500,13 +1499,17 @@ async def checkout_callback_handler(update: Update, context: ContextTypes.DEFAUL
             f"• 365 dias: $2.00"
         )
 
-        # Enviar mensagem com botão URL (funciona em grupos)
-        await context.bot.send_message(
-            chat_id=query.message.chat_id,
-            text=checkout_msg,
-            parse_mode="HTML",
-            reply_markup=keyboard
-        )
+        # Editar a mensagem existente para trocar o callback por URL
+        try:
+            await query.edit_message_reply_markup(reply_markup=keyboard)
+        except Exception:
+            # Se falhar ao editar, enviar nova mensagem
+            await context.bot.send_message(
+                chat_id=query.message.chat_id,
+                text="💳 Link de pagamento:",
+                parse_mode="HTML",
+                reply_markup=keyboard
+            )
                 
     except Exception as e:
         logging.error(f"Erro no checkout_callback_handler: {e}")

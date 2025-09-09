@@ -88,11 +88,16 @@
       .secondary { background: #2a2a2a; color: #fff; }
       #alert { margin-top: 16px; }
       #alert .ok, #alert .error {
-        padding: 12px;
-        border-radius: 10px;
+        padding: 16px;
+        border-radius: 12px;
+        line-height: 1.5;
       }
-      #alert .ok { background: #16a34a20; }
-      #alert .error { background: #ef444420; }
+      #alert .ok { background: #16a34a20; color: #16a34a; }
+      #alert .error { background: #ef444420; color: #ef4444; }
+      #alert h3 { margin: 0 0 12px 0; color: inherit; }
+      #alert p { margin: 8px 0; color: #f1f1f1; }
+      #alert ol { margin: 8px 0; padding-left: 20px; color: #f1f1f1; }
+      #alert code { background: #333; padding: 2px 6px; border-radius: 4px; font-family: monospace; }
     </style>
   </head>
   <body>

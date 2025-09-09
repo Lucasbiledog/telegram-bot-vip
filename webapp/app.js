@@ -48,7 +48,22 @@ async function loadConfig() {
       showAlert("Para acessar o checkout, clique no botão que aparece junto às imagens do bot do Telegram.", false);
       return;
     }
-    showAlert("Link sem parâmetros de segurança (uid/ts/sig). Abra esta página pelo botão de checkout do bot do Telegram.", false);
+    showAlert(`
+      <div style="text-align: left;">
+        <h3>🔒 Acesso Seguro Necessário</h3>
+        <p>Esta página de pagamento requer acesso pelo bot do Telegram.</p>
+        <p><strong>Como acessar corretamente:</strong></p>
+        <ol>
+          <li>Abra o bot no Telegram</li>
+          <li>Digite o comando <code>/pagar</code> ou <code>/checkout</code></li>
+          <li>Clique no botão "💳 Abrir Página de Pagamento"</li>
+        </ol>
+        <p>Isso garante a segurança da sua transação! 🛡️</p>
+      </div>
+    `, false);
+    
+    // Carregar informações básicas mesmo sem autenticação (só para mostrar)
+    loadBasicInfo();
     return;
   }
   try {
@@ -158,6 +173,34 @@ setInterval(() => {
   console.log("[heartbeat] page alive", new Date().toISOString());
   fetch("/keepalive").catch(() => {});
 }, 60_000);
+
+// --- carrega informações básicas sem autenticação ---
+async function loadBasicInfo() {
+  try {
+    // Mostrar informações básicas (carteira e planos padrão)
+    $("addr").value = "Acesso pelo bot do Telegram para ver a carteira";
+    $("addr").disabled = true;
+    
+    // Mostrar planos padrão
+    const defaultPlans = {
+      "30": 0.05,
+      "60": 1.00,
+      "180": 1.50,
+      "365": 2.00
+    };
+    renderPlans(defaultPlans);
+    
+    // Desabilitar botões
+    $("validarBtn").disabled = true;
+    $("validarBtn").textContent = "Acesso pelo Telegram necessário";
+    $("pasteBtn").disabled = true;
+    $("txhash").disabled = true;
+    $("txhash").placeholder = "Acesso pelo bot do Telegram para validar pagamentos";
+    
+  } catch (err) {
+    console.warn("Erro ao carregar info básica:", err);
+  }
+}
 
 // start
 loadConfig();
