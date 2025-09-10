@@ -1754,6 +1754,7 @@ async def comandos_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• /pack_info <id> — detalhes do pack",
         "• /excluir_item <id_item> — remove item do pack",
         "• /excluir_pack [<id>] — remove pack (com confirmação)",
+        "• /excluir_todos_packs — remove TODOS os packs (CUIDADO!)",
         "• /set_pendentevip <id> — marca pack VIP como pendente",
         "• /set_pendentefree <id> — marca pack FREE como pendente",
         "• /set_enviadovip <id> — marca pack VIP como enviado",
@@ -3521,6 +3522,101 @@ async def listar_packs_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         await update.effective_message.reply_text("\n".join(lines), parse_mode="HTML")
 
+EXCLUIR_TODOS_CONFIRM = 2
+
+async def excluir_todos_packs_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Comando para excluir TODOS os packs (VIP e FREE) com confirmação"""
+    if not (update.effective_user and is_admin(update.effective_user.id)):
+        return await update.effective_message.reply_text("Apenas admins.")
+    
+    with SessionLocal() as session:
+        # Contar packs
+        all_packs = session.query(Pack).all()
+        vip_count = session.query(Pack).filter(Pack.tier == "vip").count()
+        free_count = session.query(Pack).filter(Pack.tier == "free").count()
+        total = len(all_packs)
+        
+        if total == 0:
+            return await update.effective_message.reply_text("❌ Não há packs para excluir.")
+        
+        # Solicitar confirmação
+        await update.effective_message.reply_text(
+            f"⚠️ <b>ATENÇÃO - EXCLUSÃO EM MASSA</b>\n\n"
+            f"Você está prestes a excluir <b>TODOS</b> os packs:\n"
+            f"👑 VIP: {vip_count} packs\n"
+            f"🆓 FREE: {free_count} packs\n"
+            f"📦 Total: {total} packs\n\n"
+            f"⚠️ <b>Esta ação é IRREVERSÍVEL!</b>\n"
+            f"Todos os arquivos e previews serão perdidos.\n\n"
+            f"Para confirmar, digite: <code>EXCLUIR TUDO</code>",
+            parse_mode="HTML"
+        )
+        
+        # Salvar dados para confirmação
+        context.user_data["excluir_todos_count"] = total
+        context.user_data["excluir_todos_vip"] = vip_count
+        context.user_data["excluir_todos_free"] = free_count
+        
+        return EXCLUIR_TODOS_CONFIRM
+
+async def excluir_todos_packs_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Confirmação para exclusão de todos os packs"""
+    resposta = (update.effective_message.text or "").strip()
+    
+    if resposta != "EXCLUIR TUDO":
+        await update.effective_message.reply_text(
+            "❌ Confirmação incorreta. Operação cancelada.\n"
+            "Para confirmar, digite exatamente: <code>EXCLUIR TUDO</code>",
+            parse_mode="HTML"
+        )
+        return ConversationHandler.END
+    
+    # Dados da confirmação
+    total = context.user_data.get("excluir_todos_count", 0)
+    vip_count = context.user_data.get("excluir_todos_vip", 0)
+    free_count = context.user_data.get("excluir_todos_free", 0)
+    
+    try:
+        with SessionLocal() as session:
+            # Excluir todos os packs (cascade deleta PackFiles automaticamente)
+            all_packs = session.query(Pack).all()
+            
+            if not all_packs:
+                await update.effective_message.reply_text("❌ Nenhum pack encontrado para excluir.")
+                return ConversationHandler.END
+            
+            # Excluir todos
+            for pack in all_packs:
+                session.delete(pack)
+            
+            # Reorganizar IDs (resetar sequência)
+            _reorganize_pack_ids(session)
+            
+            session.commit()
+            
+            await update.effective_message.reply_text(
+                f"✅ <b>EXCLUSÃO CONCLUÍDA!</b>\n\n"
+                f"📊 Excluídos:\n"
+                f"👑 VIP: {vip_count} packs\n"
+                f"🆓 FREE: {free_count} packs\n"
+                f"📦 Total: {total} packs\n\n"
+                f"🔄 IDs reorganizados - próximo pack será #1",
+                parse_mode="HTML"
+            )
+            
+    except Exception as e:
+        await update.effective_message.reply_text(
+            f"❌ Erro ao excluir packs: {str(e)}\n"
+            f"Operação cancelada por segurança."
+        )
+    
+    # Limpar dados temporários
+    context.user_data.pop("excluir_todos_count", None)
+    context.user_data.pop("excluir_todos_vip", None)
+    context.user_data.pop("excluir_todos_free", None)
+    
+    return ConversationHandler.END
+
 # =========================
 # Error handler global
 # =========================
@@ -3979,6 +4075,15 @@ async def on_startup():
             fallbacks=[], allow_reentry=True,
         )
         application.add_handler(excluir_conv, group=0)
+
+        # ===== Conversa /excluir_todos_packs
+        excluir_todos_conv = ConversationHandler(
+            entry_points=[CommandHandler("excluir_todos_packs", excluir_todos_packs_cmd)],
+            states={EXCLUIR_TODOS_CONFIRM: [MessageHandler(filters.TEXT & ~filters.COMMAND, excluir_todos_packs_confirm)]},
+            fallbacks=[CommandHandler("cancelar", lambda u, c: ConversationHandler.END)], 
+            allow_reentry=True,
+        )
+        application.add_handler(excluir_todos_conv, group=0)
 
         # ===== Handlers de storage
         application.add_handler(
