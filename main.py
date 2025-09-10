@@ -1175,6 +1175,7 @@ def create_pack(
     header_message_id: Optional[int] = None,
     tier: str = "vip",
     scheduled_for: Optional[dt.datetime] = None,
+    reorganize_ids: bool = False,  # Novo parâmetro para controlar reorganização
 ) -> 'Pack':
     with SessionLocal() as s:
         try:
@@ -1187,8 +1188,9 @@ def create_pack(
             s.add(p)
             s.flush()  # Para obter o ID temporário
             
-            # Reorganizar IDs dos packs para manter sequência
-            _reorganize_pack_ids(s)
+            # Reorganizar IDs apenas quando explicitamente solicitado
+            if reorganize_ids:
+                _reorganize_pack_ids(s)
             
             s.commit()
             s.refresh(p)
@@ -1296,11 +1298,27 @@ async def storage_text_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     if update.effective_user and not is_admin(update.effective_user.id): return
 
     hkey = header_key(msg.chat.id, msg.message_id)
-    if get_pack_by_header(hkey):
-        await msg.reply_text("Pack já registrado."); return
-
     tier = "vip" if msg.chat.id == STORAGE_GROUP_ID else "free"
-    p = create_pack(title=title, header_message_id=hkey, tier=tier)
+    
+    # Otimização: usar uma única sessão de database para verificar e criar
+    with SessionLocal() as s:
+        # Verificar se já existe
+        existing = s.query(Pack).filter(Pack.header_message_id == hkey).first()
+        if existing:
+            await msg.reply_text("Pack já registrado.")
+            return
+            
+        # Criar novo pack na mesma sessão
+        p = Pack(
+            title=title.strip(),
+            header_message_id=hkey,
+            tier=tier,
+            scheduled_for=None,
+        )
+        s.add(p)
+        s.commit()
+        s.refresh(p)
+        
     await msg.reply_text(
         f"Pack registrado: <b>{esc(p.title)}</b> (id {p.id}) — <i>{tier.upper()}</i>",
         parse_mode="HTML"
@@ -1320,11 +1338,7 @@ async def storage_media_handler(update: Update, context: ContextTypes.DEFAULT_TY
         return
 
     hkey = header_key(update.effective_chat.id, reply.message_id)
-    pack = get_pack_by_header(hkey)
-    if not pack:
-        await msg.reply_text("Cabeçalho do pack não encontrado. Responda à mensagem de título.")
-        return
-
+    
     file_id = None; file_unique_id = None; file_type = None; role = "file"; visible_name = None
 
     if msg.photo:
@@ -1349,7 +1363,15 @@ async def storage_media_handler(update: Update, context: ContextTypes.DEFAULT_TY
     else:
         await msg.reply_text("Tipo de mídia não suportado.", parse_mode="HTML"); return
 
+    # Otimização: usar uma única sessão para todas as operações de database
     with SessionLocal() as s:
+        # Buscar pack
+        pack = s.query(Pack).filter(Pack.header_message_id == hkey).first()
+        if not pack:
+            await msg.reply_text("Cabeçalho do pack não encontrado. Responda à mensagem de título.")
+            return
+
+        # Verificar se arquivo já existe
         q = s.query(PackFile).filter(PackFile.pack_id == pack.id)
         if file_unique_id:
             q = q.filter(PackFile.file_unique_id == file_unique_id)
@@ -1358,10 +1380,21 @@ async def storage_media_handler(update: Update, context: ContextTypes.DEFAULT_TY
         if q.first():
             await msg.reply_text("Este arquivo já foi adicionado a este pack.", parse_mode="HTML")
             return
-    add_file_to_pack(
-        pack_id=pack.id, file_id=file_id, file_unique_id=file_unique_id, file_type=file_type, role=role,
-        file_name=visible_name, src_chat_id=msg.chat.id, src_message_id=msg.message_id
-    )
+            
+        # Adicionar arquivo na mesma sessão
+        pf = PackFile(
+            pack_id=pack.id,
+            file_id=file_id,
+            file_unique_id=file_unique_id,
+            file_type=file_type,
+            role=role,
+            file_name=visible_name,
+            src_chat_id=msg.chat.id,
+            src_message_id=msg.message_id,
+        )
+        s.add(pf)
+        s.commit()
+        
     await msg.reply_text(f"Item adicionado ao pack <b>{esc(pack.title)}</b> — <i>{pack.tier.upper()}</i>.", parse_mode="HTML")
     
 
@@ -3114,7 +3147,7 @@ async def novopack_confirm_save(update: Update, context: ContextTypes.DEFAULT_TY
         
         # Criar o pack no banco
         logging.info(f"[novopack_confirm_save] Criando pack no banco...")
-        p = create_pack(title=title, header_message_id=None, tier=tier)
+        p = create_pack(title=title, header_message_id=None, tier=tier, reorganize_ids=True)
         logging.info(f"[novopack_confirm_save] Pack criado com ID: {p.id}")
         
         # Adicionar previews
@@ -3527,13 +3560,13 @@ async def listar_packs_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Seção VIP
         if vip_packs:
             lines.append(f"👑 <b>VIP ({len(vip_packs)} packs):</b>")
-            for p in vip_packs:
+            for idx, p in enumerate(vip_packs, 1):
                 previews = s.query(PackFile).filter(PackFile.pack_id == p.id, PackFile.role == "preview").count()
                 docs = s.query(PackFile).filter(PackFile.pack_id == p.id, PackFile.role == "file").count()
                 status = "✅ ENVIADO" if p.sent else "⏳ PENDENTE"
                 
                 lines.append(
-                    f"[{p.id}] {esc(p.title)} — {status}\n"
+                    f"[{idx}] {esc(p.title)} — {status}\n"
                     f"    📷 {previews} previews | 📄 {docs} arquivos\n"
                     f"    📅 {p.created_at.strftime('%d/%m %H:%M')}"
                 )
@@ -3545,13 +3578,14 @@ async def listar_packs_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Seção FREE
         if free_packs:
             lines.append(f"🆓 <b>FREE ({len(free_packs)} packs):</b>")
-            for p in free_packs:
+            vip_count = len(vip_packs)  # Para continuar numeração após VIP
+            for idx, p in enumerate(free_packs, vip_count + 1):
                 previews = s.query(PackFile).filter(PackFile.pack_id == p.id, PackFile.role == "preview").count()
                 docs = s.query(PackFile).filter(PackFile.pack_id == p.id, PackFile.role == "file").count()
                 status = "✅ ENVIADO" if p.sent else "⏳ PENDENTE"
                 
                 lines.append(
-                    f"[{p.id}] {esc(p.title)} — {status}\n"
+                    f"[{idx}] {esc(p.title)} — {status}\n"
                     f"    📷 {previews} previews | 📄 {docs} arquivos\n"
                     f"    📅 {p.created_at.strftime('%d/%m %H:%M')}"
                 )
