@@ -103,9 +103,6 @@ async function loadConfig() {
       if (j.confirmations_min) {
         parts.push(`Confirmação mínima: ${j.confirmations_min}`);
       }
-      if (username) {
-        parts.push(`Usuário: @${username}`);
-      }
       if (parts.length) {
         ctxInfo.textContent = parts.join(" • ");
         ctxInfo.style.display = "block";
