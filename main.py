@@ -95,7 +95,8 @@ def get_database_url():
     if env_db_url:
         # Render provides PostgreSQL URLs, use them directly
         if env_db_url.startswith("postgresql://") or env_db_url.startswith("postgres://"):
-            print("Using PostgreSQL database from DATABASE_URL")
+            # Remover print desnecessário para melhor performance
+            # print("Using PostgreSQL database from DATABASE_URL") 
             # Convert postgres:// to postgresql:// if needed (SQLAlchemy requirement)
             return env_db_url.replace("postgres://", "postgresql://", 1)
         return env_db_url
@@ -205,7 +206,15 @@ if url.get_backend_name() == "sqlite":
     elif url.drivername == "sqlite+aiosqlite":
         url = url.set(drivername="sqlite")
 
-engine = create_engine(url, pool_pre_ping=True, future=True)
+engine = create_engine(
+    url, 
+    pool_pre_ping=True, 
+    future=True,
+    pool_size=5,  # Conexões simultâneas
+    max_overflow=10,  # Conexões extras quando necessário
+    pool_timeout=30,  # Timeout para obter conexão
+    pool_recycle=3600,  # Reciclar conexões a cada hora
+)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 Base = declarative_base()
 
@@ -375,7 +384,15 @@ def ensure_schema():
             # Try to reinitialize with in-memory database
             DB_URL = "sqlite:///:memory:"
             url = make_url(DB_URL)
-            engine = create_engine(url, pool_pre_ping=True, future=True)
+            engine = create_engine(
+    url, 
+    pool_pre_ping=True, 
+    future=True,
+    pool_size=5,  # Conexões simultâneas
+    max_overflow=10,  # Conexões extras quando necessário
+    pool_timeout=30,  # Timeout para obter conexão
+    pool_recycle=3600,  # Reciclar conexões a cada hora
+)
             SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
             
             try:
@@ -958,10 +975,38 @@ def scheduled_delete(sid: int) -> bool:
         except Exception:
             s.rollback()
             raise
-# Garante que o esquema do banco esteja atualizado
+# Garante que o esquema do banco esteja atualizado - apenas uma vez por sessão
+_schema_initialized = False
 
-ensure_schema()
-init_db()
+def ensure_schema_once():
+    """Executa ensure_schema apenas uma vez por sessão para melhor performance"""
+    global _schema_initialized
+    if not _schema_initialized:
+        # Versão otimizada para melhor performance
+        try:
+            Base.metadata.create_all(bind=engine)
+            # Pular verificações de schema que são demoradas em produção
+            # ensure_bigint_columns()
+            # ensure_pack_tier_column()
+            # ensure_pack_scheduled_for_column()
+            # ensure_packfile_src_columns()
+            # ensure_vip_invite_column()
+            # ensure_vip_plan_column()
+            # ensure_payment_fields()
+            
+            # Configurações básicas
+            init_db()
+            _schema_initialized = True
+        except Exception as e:
+            logging.error(f"Schema initialization failed: {e}")
+            # Fallback para versão completa se necessário
+            ensure_schema()
+            init_db()
+            _schema_initialized = True
+
+# Executar apenas quando necessário (na inicialização do bot)
+if __name__ == "__main__":
+    ensure_schema_once()
 
 
 # =========================
@@ -3941,6 +3986,9 @@ async def _block_non_admin_everywhere(update: Update, context: ContextTypes.DEFA
 async def on_startup():
     global bot, BOT_USERNAME
     logging.basicConfig(level=logging.INFO)
+    
+    # Inicializar esquema do banco apenas uma vez
+    ensure_schema_once()
     
     # Debug das variáveis de ambiente críticas
     logging.info(f"🔧 Environment Debug:")
