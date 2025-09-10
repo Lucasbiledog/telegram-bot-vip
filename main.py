@@ -1184,14 +1184,8 @@ def add_file_to_pack(
 
 def get_next_unsent_pack(tier: str = "vip") -> Optional['Pack']:
     s = SessionLocal()
-    try:
-        now = now_utc()
-        return s.query(Pack).filter(
-            Pack.sent == False, 
-            Pack.tier == tier,
-            # Incluir packs sem agendamento OU com agendamento que já passou
-            (Pack.scheduled_for.is_(None)) | (Pack.scheduled_for <= now)
-        ).order_by(Pack.created_at.asc()).first()
+    try: 
+        return s.query(Pack).filter(Pack.sent == False, Pack.tier == tier).order_by(Pack.created_at.asc()).first()
     finally: s.close()
 
 def mark_pack_sent(pack_id: int):
@@ -1608,50 +1602,7 @@ async def enviar_pack_vip_job(context: ContextTypes.DEFAULT_TYPE):
 async def enviar_pack_free_job(context: ContextTypes.DEFAULT_TYPE):
     return await enviar_pack_job(context, tier="free", target_chat_id=GROUP_FREE_ID)
 
-async def check_scheduled_packs_job(context: ContextTypes.DEFAULT_TYPE):
-    """Job que verifica periodicamente se há packs agendados prontos para envio"""
-    try:
-        now = now_utc()
-        
-        with SessionLocal() as session:
-            # Buscar packs agendados que já deveriam ter sido enviados
-            scheduled_packs = session.query(Pack).filter(
-                Pack.sent == False,
-                Pack.scheduled_for.isnot(None),
-                Pack.scheduled_for <= now
-            ).all()
-            
-            if not scheduled_packs:
-                return
-            
-            logging.info(f"[check_scheduled_packs] Encontrados {len(scheduled_packs)} packs agendados prontos para envio")
-            
-            # Agrupar por tier
-            vip_packs = [p for p in scheduled_packs if p.tier == "vip"]
-            free_packs = [p for p in scheduled_packs if p.tier == "free"]
-            
-            # Enviar packs VIP
-            for pack in vip_packs:
-                try:
-                    logging.info(f"[check_scheduled_packs] Enviando pack VIP agendado: #{pack.id} '{pack.title}' (agendado para {pack.scheduled_for})")
-                    result = await enviar_pack_job(context, tier="vip", target_chat_id=GROUP_VIP_ID)
-                    logging.info(f"[check_scheduled_packs] Resultado pack VIP #{pack.id}: {result}")
-                    break  # Enviar apenas um pack por vez
-                except Exception as e:
-                    logging.error(f"[check_scheduled_packs] Erro ao enviar pack VIP #{pack.id}: {e}")
-            
-            # Enviar packs FREE
-            for pack in free_packs:
-                try:
-                    logging.info(f"[check_scheduled_packs] Enviando pack FREE agendado: #{pack.id} '{pack.title}' (agendado para {pack.scheduled_for})")
-                    result = await enviar_pack_job(context, tier="free", target_chat_id=GROUP_FREE_ID)
-                    logging.info(f"[check_scheduled_packs] Resultado pack FREE #{pack.id}: {result}")
-                    break  # Enviar apenas um pack por vez
-                except Exception as e:
-                    logging.error(f"[check_scheduled_packs] Erro ao enviar pack FREE #{pack.id}: {e}")
-                    
-    except Exception as e:
-        logging.error(f"[check_scheduled_packs] Erro no job de verificação de packs agendados: {e}")
+# Função removida - agendamento individual não é mais usado
 
 # =========================
 # CALLBACK QUERY HANDLER
@@ -1799,8 +1750,7 @@ async def comandos_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🛠 <b>Admin</b>",
         "• /simularvip — envia o próximo pack VIP pendente",
         "• /simularfree — envia o próximo pack FREE pendente",
-        "• /listar_packsvip | /listar_packvip | /listar_packs_vip | /listar_pack_vip — lista packs VIP",
-        "• /listar_packsfree — lista packs FREE",
+        "• /listar_packs — lista todos os packs (VIP e FREE)",
         "• /pack_info <id> — detalhes do pack",
         "• /excluir_item <id_item> — remove item do pack",
         "• /excluir_pack [<id>] — remove pack (com confirmação)",
@@ -1810,8 +1760,6 @@ async def comandos_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• /set_enviadofree <id> — marca pack FREE como enviado",
         "• /set_pack_horario_vip HH:MM — define horário diário VIP",
         "• /set_pack_horario_free HH:MM — define horário diário FREE",
-        "• /agendar_pack <id> <DD/MM> <HH:MM> — agenda pack específico",
-        "• /cancelar_agendamento <id> — cancela agendamento do pack",
         "• /limpar_chat <N> — apaga últimas N mensagens",
         "• /mudar_nome <novo nome> — muda nome exibido do bot",
         "• /add_admin <user_id> | /rem_admin <user_id>",
@@ -3507,100 +3455,71 @@ async def set_pack_horario_free_cmd(update: Update, context: ContextTypes.DEFAUL
         await update.effective_message.reply_text(f"✅ Horário diário dos packs FREE definido para {hhmm}.")
     except Exception as e: await update.effective_message.reply_text(f"Hora inválida: {e}")
 
-async def agendar_pack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Comando para agendar um pack específico: /agendar_pack <pack_id> <DD/MM> <HH:MM>"""
+async def listar_packs_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Comando unificado para listar todos os packs (VIP e FREE)"""
     if not (update.effective_user and is_admin(update.effective_user.id)):
         return await update.effective_message.reply_text("Apenas admins.")
-    
-    if len(context.args) != 3:
-        return await update.effective_message.reply_text(
-            "Uso: /agendar_pack <pack_id> <DD/MM> <HH:MM>\n"
-            "Exemplo: /agendar_pack 1 25/12 14:30"
-        )
-    
-    try:
-        pack_id = int(context.args[0])
-        date_str = context.args[1]  # DD/MM
-        time_str = context.args[2]  # HH:MM
-        
-        # Parse da data
-        day, month = map(int, date_str.split('/'))
-        current_year = now_utc().year
-        
-        # Parse do horário
-        hour, minute = parse_hhmm(time_str)
-        
-        # Criar datetime agendado (assumindo timezone São Paulo)
-        import pytz
-        tz = pytz.timezone("America/Sao_Paulo")
-        scheduled_dt = tz.localize(dt.datetime(current_year, month, day, hour, minute))
-        scheduled_utc = scheduled_dt.astimezone(dt.timezone.utc)
-        
-        # Verificar se é no futuro
-        now = now_utc()
-        if scheduled_utc <= now:
-            return await update.effective_message.reply_text(
-                f"❌ Data/hora deve ser no futuro.\n"
-                f"Agendado para: {scheduled_dt.strftime('%d/%m/%Y %H:%M')} BRT\n"
-                f"Atual: {now.astimezone(tz).strftime('%d/%m/%Y %H:%M')} BRT"
-            )
-        
-        # Atualizar pack no banco
-        with SessionLocal() as session:
-            pack = session.query(Pack).filter(Pack.id == pack_id).first()
-            if not pack:
-                return await update.effective_message.reply_text(f"❌ Pack #{pack_id} não encontrado.")
-            
-            if pack.sent:
-                return await update.effective_message.reply_text(f"❌ Pack #{pack_id} '{pack.title}' já foi enviado.")
-            
-            pack.scheduled_for = scheduled_utc
-            session.commit()
-            
-            await update.effective_message.reply_text(
-                f"✅ Pack #{pack_id} '{pack.title}' agendado!\n"
-                f"📅 Data: {scheduled_dt.strftime('%d/%m/%Y %H:%M')} BRT\n"
-                f"🎯 Tier: {pack.tier.upper()}\n"
-                f"⏰ Será enviado automaticamente no horário agendado."
-            )
-            
-    except ValueError as e:
-        await update.effective_message.reply_text(f"❌ Formato inválido: {e}\nUse DD/MM HH:MM")
-    except Exception as e:
-        await update.effective_message.reply_text(f"❌ Erro: {e}")
 
-async def cancelar_agendamento_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Comando para cancelar agendamento de um pack: /cancelar_agendamento <pack_id>"""
-    if not (update.effective_user and is_admin(update.effective_user.id)):
-        return await update.effective_message.reply_text("Apenas admins.")
-    
-    if not context.args:
-        return await update.effective_message.reply_text("Uso: /cancelar_agendamento <pack_id>")
-    
-    try:
-        pack_id = int(context.args[0])
+    with SessionLocal() as s:
+        # Buscar todos os packs ordenados por tier e created_at
+        all_packs = (
+            s.query(Pack)
+            .order_by(Pack.tier.desc(), Pack.created_at.asc())  # VIP primeiro, depois FREE
+            .all()
+        )
         
-        with SessionLocal() as session:
-            pack = session.query(Pack).filter(Pack.id == pack_id).first()
-            if not pack:
-                return await update.effective_message.reply_text(f"❌ Pack #{pack_id} não encontrado.")
+        if not all_packs:
+            await update.effective_message.reply_text("Nenhum pack cadastrado.")
+            return
+
+        # Separar por tier
+        vip_packs = [p for p in all_packs if p.tier == "vip"]
+        free_packs = [p for p in all_packs if p.tier == "free"]
+        
+        lines = [f"📦 <b>PACKS CADASTRADOS</b>\n"]
+        
+        # Seção VIP
+        if vip_packs:
+            lines.append(f"👑 <b>VIP ({len(vip_packs)} packs):</b>")
+            for p in vip_packs:
+                previews = s.query(PackFile).filter(PackFile.pack_id == p.id, PackFile.role == "preview").count()
+                docs = s.query(PackFile).filter(PackFile.pack_id == p.id, PackFile.role == "file").count()
+                status = "✅ ENVIADO" if p.sent else "⏳ PENDENTE"
+                
+                lines.append(
+                    f"[{p.id}] {esc(p.title)} — {status}\n"
+                    f"    📷 {previews} previews | 📄 {docs} arquivos\n"
+                    f"    📅 {p.created_at.strftime('%d/%m %H:%M')}"
+                )
+        else:
+            lines.append("👑 <b>VIP:</b> Nenhum pack")
             
-            if not pack.scheduled_for:
-                return await update.effective_message.reply_text(f"❌ Pack #{pack_id} '{pack.title}' não está agendado.")
-            
-            pack.scheduled_for = None
-            session.commit()
-            
-            await update.effective_message.reply_text(
-                f"✅ Agendamento cancelado!\n"
-                f"📦 Pack #{pack_id} '{pack.title}' não está mais agendado.\n"
-                f"🎯 Tier: {pack.tier.upper()}"
-            )
-            
-    except ValueError:
-        await update.effective_message.reply_text("❌ ID do pack deve ser um número.")
-    except Exception as e:
-        await update.effective_message.reply_text(f"❌ Erro: {e}")
+        lines.append("")  # Linha em branco
+        
+        # Seção FREE
+        if free_packs:
+            lines.append(f"🆓 <b>FREE ({len(free_packs)} packs):</b>")
+            for p in free_packs:
+                previews = s.query(PackFile).filter(PackFile.pack_id == p.id, PackFile.role == "preview").count()
+                docs = s.query(PackFile).filter(PackFile.pack_id == p.id, PackFile.role == "file").count()
+                status = "✅ ENVIADO" if p.sent else "⏳ PENDENTE"
+                
+                lines.append(
+                    f"[{p.id}] {esc(p.title)} — {status}\n"
+                    f"    📷 {previews} previews | 📄 {docs} arquivos\n"
+                    f"    📅 {p.created_at.strftime('%d/%m %H:%M')}"
+                )
+        else:
+            lines.append("🆓 <b>FREE:</b> Nenhum pack")
+        
+        # Informações de agendamento
+        lines.append(f"\n⏰ <b>HORÁRIOS DE ENVIO:</b>")
+        vip_horario = cfg_get("daily_pack_vip_hhmm") or "09:00"
+        free_horario = cfg_get("daily_pack_free_hhmm") or "09:30"
+        lines.append(f"👑 VIP: {vip_horario} (diário)")
+        lines.append(f"🆓 FREE: {free_horario} (diário)")
+        
+        await update.effective_message.reply_text("\n".join(lines), parse_mode="HTML")
 
 # =========================
 # Error handler global
@@ -4087,20 +4006,7 @@ async def on_startup():
 
         application.add_handler(CommandHandler("simularvip", simularvip_cmd), group=1)
         application.add_handler(CommandHandler("simularfree", simularfree_cmd), group=1)
-        application.add_handler(
-            CommandHandler(
-                [
-                    "listar_packsvip",
-                    "listar_packvip",
-                    "listar_packs_vip",
-                    "listar_pack_vip",
-                ],
-                listar_packsvip_cmd,
-                block=True,
-            ),
-            group=1,
-        )
-        application.add_handler(CommandHandler("listar_packsfree", listar_packsfree_cmd), group=1,)
+        application.add_handler(CommandHandler("listar_packs", listar_packs_cmd), group=1)
         application.add_handler(CommandHandler("pack_info", pack_info_cmd), group=1)
         application.add_handler(CommandHandler("excluir_item", excluir_item_cmd), group=1)
         application.add_handler(CommandHandler("set_pendentevip", set_pendentevip_cmd), group=1)
@@ -4155,8 +4061,6 @@ async def on_startup():
 
         application.add_handler(CommandHandler("set_pack_horario_vip", set_pack_horario_vip_cmd), group=1)
         application.add_handler(CommandHandler("set_pack_horario_free", set_pack_horario_free_cmd), group=1)
-        application.add_handler(CommandHandler("agendar_pack", agendar_pack_cmd), group=1)
-        application.add_handler(CommandHandler("cancelar_agendamento", cancelar_agendamento_cmd), group=1)
 
         # ===== Callback Query Handler
         application.add_handler(CallbackQueryHandler(checkout_callback_handler, pattern="checkout_callback"), group=1)
@@ -4167,7 +4071,6 @@ async def on_startup():
 
         application.job_queue.run_daily(vip_expiration_warn_job, time=dt.time(hour=9, minute=0, tzinfo=pytz.timezone("America/Sao_Paulo")), name="vip_warn")
         application.job_queue.run_repeating(keepalive_job, interval=dt.timedelta(minutes=4), first=dt.timedelta(seconds=20), name="keepalive")
-        application.job_queue.run_repeating(check_scheduled_packs_job, interval=dt.timedelta(minutes=1), first=dt.timedelta(seconds=30), name="check_scheduled_packs")
         logging.info("Handlers e jobs registrados.")
     else:
         logging.error("Bot não foi inicializado - funcionalidades do Telegram não estarão disponíveis.")
