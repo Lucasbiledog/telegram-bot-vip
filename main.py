@@ -401,7 +401,7 @@ def ensure_schema():
 ALLOWED_FOR_NON_ADM = {"pagar", "tx", "start", "novopack" }
 
 def esc(s): return html.escape(str(s) if s is not None else "")
-def now_utc(): return dt.datetime.utcnow()
+def now_utc(): return dt.datetime.now(dt.timezone.utc)
 
 def _reorganize_payment_ids(session):
     """Reorganiza IDs dos payments para preencher lacunas após exclusões"""
@@ -426,7 +426,7 @@ def _reorganize_payment_ids(session):
         session.execute(text(f"ALTER SEQUENCE payments_id_seq RESTART WITH {next_id};"))
         
     except Exception as e:
-        logging.warning(f"Erro ao reorganizar IDs dos payments: {e}")
+        logging.error(f"Erro ao reorganizar IDs dos payments: {e}")
         # Em caso de erro, apenas tentar resetar a sequência
         try:
             payments_count = session.query(Payment).count()
@@ -440,6 +440,95 @@ def _reorganize_payment_ids(session):
                     session.execute(text(f"ALTER SEQUENCE payments_id_seq RESTART WITH {max_id[0] + 1};"))
         except:
             pass
+
+def _reorganize_pack_ids(session):
+    """Reorganiza IDs dos packs para preencher lacunas após exclusões"""
+    try:
+        # Buscar todos os packs ordenados por created_at (mais antigo primeiro)
+        packs = session.query(Pack).order_by(Pack.created_at.asc()).all()
+        
+        if not packs:
+            # Se não há packs, resetar sequência para 1
+            from sqlalchemy import text
+            session.execute(text("ALTER SEQUENCE packs_id_seq RESTART WITH 1;"))
+            return
+        
+        # Verificar se precisa reorganizar (se os IDs já são sequenciais, não faz nada)
+        needs_reorganization = False
+        for i, pack in enumerate(packs, 1):
+            if pack.id != i:
+                needs_reorganization = True
+                break
+        
+        if not needs_reorganization:
+            # IDs já estão sequenciais, apenas resetar sequência
+            next_id = len(packs) + 1
+            from sqlalchemy import text
+            session.execute(text(f"ALTER SEQUENCE packs_id_seq RESTART WITH {next_id};"))
+            return
+        
+        # Approach: reconstruir os packs com IDs corretos
+        # Primeiro coletar todos os dados
+        pack_data = []
+        for i, pack in enumerate(packs, 1):
+            if pack.id != i:
+                # Coletar dados do pack e seus arquivos
+                pack_files = session.query(PackFile).filter(PackFile.pack_id == pack.id).all()
+                pack_data.append({
+                    'old_id': pack.id,
+                    'new_id': i,
+                    'pack': pack,
+                    'files': pack_files
+                })
+        
+        # Executar reorganização apenas se necessário
+        if pack_data:
+            # Criar novos packs com IDs corretos
+            temp_packs = {}  # old_id -> new_pack
+            for data in pack_data:
+                # Criar novo pack com ID correto
+                new_pack = Pack(
+                    title=data['pack'].title,
+                    header_message_id=data['pack'].header_message_id,
+                    tier=data['pack'].tier,
+                    sent=data['pack'].sent,
+                    created_at=data['pack'].created_at,
+                    scheduled_for=data['pack'].scheduled_for
+                )
+                new_pack.id = data['new_id']
+                session.add(new_pack)
+                session.flush()  # Para garantir que o ID seja atribuído
+                temp_packs[data['old_id']] = new_pack
+            
+            # Criar novos PackFiles apontando para os novos packs
+            for data in pack_data:
+                new_pack = temp_packs[data['old_id']]
+                for pf in data['files']:
+                    new_file = PackFile(
+                        pack_id=new_pack.id,
+                        file_id=pf.file_id,
+                        file_unique_id=pf.file_unique_id,
+                        file_type=pf.file_type,
+                        role=pf.role,
+                        file_name=pf.file_name,
+                        added_at=pf.added_at,
+                        src_chat_id=pf.src_chat_id,
+                        src_message_id=pf.src_message_id
+                    )
+                    session.add(new_file)
+            
+            # Deletar packs antigos (isso deletará automaticamente os PackFiles por cascade)
+            for data in pack_data:
+                session.delete(data['pack'])
+        
+        # Resetar sequência para próximo ID disponível
+        next_id = len(packs) + 1
+        from sqlalchemy import text
+        session.execute(text(f"ALTER SEQUENCE packs_id_seq RESTART WITH {next_id};"))
+        
+    except Exception as e:
+        logging.error(f"Erro ao reorganizar IDs dos packs: {e}")
+        raise  # Re-raise para reverter transação
 
 
 def wrap_ph(s: str) -> str:
@@ -1051,6 +1140,11 @@ def create_pack(
                 scheduled_for=scheduled_for,
             )
             s.add(p)
+            s.flush()  # Para obter o ID temporário
+            
+            # Reorganizar IDs dos packs para manter sequência
+            _reorganize_pack_ids(s)
+            
             s.commit()
             s.refresh(p)
             return p
@@ -1090,7 +1184,14 @@ def add_file_to_pack(
 
 def get_next_unsent_pack(tier: str = "vip") -> Optional['Pack']:
     s = SessionLocal()
-    try: return s.query(Pack).filter(Pack.sent == False, Pack.tier == tier).order_by(Pack.created_at.asc()).first()
+    try:
+        now = now_utc()
+        return s.query(Pack).filter(
+            Pack.sent == False, 
+            Pack.tier == tier,
+            # Incluir packs sem agendamento OU com agendamento que já passou
+            (Pack.scheduled_for.is_(None)) | (Pack.scheduled_for <= now)
+        ).order_by(Pack.created_at.asc()).first()
     finally: s.close()
 
 def mark_pack_sent(pack_id: int):
@@ -1507,6 +1608,51 @@ async def enviar_pack_vip_job(context: ContextTypes.DEFAULT_TYPE):
 async def enviar_pack_free_job(context: ContextTypes.DEFAULT_TYPE):
     return await enviar_pack_job(context, tier="free", target_chat_id=GROUP_FREE_ID)
 
+async def check_scheduled_packs_job(context: ContextTypes.DEFAULT_TYPE):
+    """Job que verifica periodicamente se há packs agendados prontos para envio"""
+    try:
+        now = now_utc()
+        
+        with SessionLocal() as session:
+            # Buscar packs agendados que já deveriam ter sido enviados
+            scheduled_packs = session.query(Pack).filter(
+                Pack.sent == False,
+                Pack.scheduled_for.isnot(None),
+                Pack.scheduled_for <= now
+            ).all()
+            
+            if not scheduled_packs:
+                return
+            
+            logging.info(f"[check_scheduled_packs] Encontrados {len(scheduled_packs)} packs agendados prontos para envio")
+            
+            # Agrupar por tier
+            vip_packs = [p for p in scheduled_packs if p.tier == "vip"]
+            free_packs = [p for p in scheduled_packs if p.tier == "free"]
+            
+            # Enviar packs VIP
+            for pack in vip_packs:
+                try:
+                    logging.info(f"[check_scheduled_packs] Enviando pack VIP agendado: #{pack.id} '{pack.title}' (agendado para {pack.scheduled_for})")
+                    result = await enviar_pack_job(context, tier="vip", target_chat_id=GROUP_VIP_ID)
+                    logging.info(f"[check_scheduled_packs] Resultado pack VIP #{pack.id}: {result}")
+                    break  # Enviar apenas um pack por vez
+                except Exception as e:
+                    logging.error(f"[check_scheduled_packs] Erro ao enviar pack VIP #{pack.id}: {e}")
+            
+            # Enviar packs FREE
+            for pack in free_packs:
+                try:
+                    logging.info(f"[check_scheduled_packs] Enviando pack FREE agendado: #{pack.id} '{pack.title}' (agendado para {pack.scheduled_for})")
+                    result = await enviar_pack_job(context, tier="free", target_chat_id=GROUP_FREE_ID)
+                    logging.info(f"[check_scheduled_packs] Resultado pack FREE #{pack.id}: {result}")
+                    break  # Enviar apenas um pack por vez
+                except Exception as e:
+                    logging.error(f"[check_scheduled_packs] Erro ao enviar pack FREE #{pack.id}: {e}")
+                    
+    except Exception as e:
+        logging.error(f"[check_scheduled_packs] Erro no job de verificação de packs agendados: {e}")
+
 # =========================
 # CALLBACK QUERY HANDLER
 # =========================
@@ -1664,6 +1810,8 @@ async def comandos_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• /set_enviadofree <id> — marca pack FREE como enviado",
         "• /set_pack_horario_vip HH:MM — define horário diário VIP",
         "• /set_pack_horario_free HH:MM — define horário diário FREE",
+        "• /agendar_pack <id> <DD/MM> <HH:MM> — agenda pack específico",
+        "• /cancelar_agendamento <id> — cancela agendamento do pack",
         "• /limpar_chat <N> — apaga últimas N mensagens",
         "• /mudar_nome <novo nome> — muda nome exibido do bot",
         "• /add_admin <user_id> | /rem_admin <user_id>",
@@ -1839,10 +1987,16 @@ async def listar_hashes_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     
                     if vip:
                         now = now_utc()
-                        if vip.expires_at and vip.expires_at > now and vip.active:
-                            days_left = (vip.expires_at - now).days
-                            hours_left = ((vip.expires_at - now).total_seconds() / 3600) % 24
-                            expires_brt = vip.expires_at.replace(tzinfo=pytz.UTC).astimezone(pytz.timezone('America/Sao_Paulo'))
+                        if vip.expires_at and vip.active:
+                            # Garantir que ambas as datas tenham timezone
+                            expires_at = vip.expires_at
+                            if expires_at.tzinfo is None:
+                                expires_at = expires_at.replace(tzinfo=dt.timezone.utc)
+                            
+                            if expires_at > now:
+                                days_left = (expires_at - now).days
+                                hours_left = ((expires_at - now).total_seconds() / 3600) % 24
+                                expires_brt = expires_at.astimezone(pytz.timezone('America/Sao_Paulo'))
                             
                             # Mostrar tempo mais preciso
                             if days_left > 0:
@@ -2073,7 +2227,11 @@ async def listar_vips_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 
                 # Calcular dias restantes
                 if is_active:
-                    days_left = (vip.expires_at - now).days
+                    # Garantir que ambas as datas tenham timezone
+                    expires_at = vip.expires_at
+                    if expires_at.tzinfo is None:
+                        expires_at = expires_at.replace(tzinfo=dt.timezone.utc)
+                    days_left = (expires_at - now).days
                     time_info = f"⏰ {days_left} dias restantes"
                 else:
                     time_info = "⏰ Expirado"
@@ -2761,6 +2919,10 @@ async def excluir_pack_confirm(update: Update, context: ContextTypes.DEFAULT_TYP
                 return ConversationHandler.END
             title = p.title
             s.delete(p)
+            
+            # Reorganizar IDs dos packs para preencher lacunas
+            _reorganize_pack_ids(s)
+            
             s.commit()
             await update.effective_message.reply_text(f"✅ Pack <b>{esc(title)}</b> (#{pid}) excluído.", parse_mode="HTML")
         except Exception as e:
@@ -3345,6 +3507,101 @@ async def set_pack_horario_free_cmd(update: Update, context: ContextTypes.DEFAUL
         await update.effective_message.reply_text(f"✅ Horário diário dos packs FREE definido para {hhmm}.")
     except Exception as e: await update.effective_message.reply_text(f"Hora inválida: {e}")
 
+async def agendar_pack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Comando para agendar um pack específico: /agendar_pack <pack_id> <DD/MM> <HH:MM>"""
+    if not (update.effective_user and is_admin(update.effective_user.id)):
+        return await update.effective_message.reply_text("Apenas admins.")
+    
+    if len(context.args) != 3:
+        return await update.effective_message.reply_text(
+            "Uso: /agendar_pack <pack_id> <DD/MM> <HH:MM>\n"
+            "Exemplo: /agendar_pack 1 25/12 14:30"
+        )
+    
+    try:
+        pack_id = int(context.args[0])
+        date_str = context.args[1]  # DD/MM
+        time_str = context.args[2]  # HH:MM
+        
+        # Parse da data
+        day, month = map(int, date_str.split('/'))
+        current_year = now_utc().year
+        
+        # Parse do horário
+        hour, minute = parse_hhmm(time_str)
+        
+        # Criar datetime agendado (assumindo timezone São Paulo)
+        import pytz
+        tz = pytz.timezone("America/Sao_Paulo")
+        scheduled_dt = tz.localize(dt.datetime(current_year, month, day, hour, minute))
+        scheduled_utc = scheduled_dt.astimezone(dt.timezone.utc)
+        
+        # Verificar se é no futuro
+        now = now_utc()
+        if scheduled_utc <= now:
+            return await update.effective_message.reply_text(
+                f"❌ Data/hora deve ser no futuro.\n"
+                f"Agendado para: {scheduled_dt.strftime('%d/%m/%Y %H:%M')} BRT\n"
+                f"Atual: {now.astimezone(tz).strftime('%d/%m/%Y %H:%M')} BRT"
+            )
+        
+        # Atualizar pack no banco
+        with SessionLocal() as session:
+            pack = session.query(Pack).filter(Pack.id == pack_id).first()
+            if not pack:
+                return await update.effective_message.reply_text(f"❌ Pack #{pack_id} não encontrado.")
+            
+            if pack.sent:
+                return await update.effective_message.reply_text(f"❌ Pack #{pack_id} '{pack.title}' já foi enviado.")
+            
+            pack.scheduled_for = scheduled_utc
+            session.commit()
+            
+            await update.effective_message.reply_text(
+                f"✅ Pack #{pack_id} '{pack.title}' agendado!\n"
+                f"📅 Data: {scheduled_dt.strftime('%d/%m/%Y %H:%M')} BRT\n"
+                f"🎯 Tier: {pack.tier.upper()}\n"
+                f"⏰ Será enviado automaticamente no horário agendado."
+            )
+            
+    except ValueError as e:
+        await update.effective_message.reply_text(f"❌ Formato inválido: {e}\nUse DD/MM HH:MM")
+    except Exception as e:
+        await update.effective_message.reply_text(f"❌ Erro: {e}")
+
+async def cancelar_agendamento_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Comando para cancelar agendamento de um pack: /cancelar_agendamento <pack_id>"""
+    if not (update.effective_user and is_admin(update.effective_user.id)):
+        return await update.effective_message.reply_text("Apenas admins.")
+    
+    if not context.args:
+        return await update.effective_message.reply_text("Uso: /cancelar_agendamento <pack_id>")
+    
+    try:
+        pack_id = int(context.args[0])
+        
+        with SessionLocal() as session:
+            pack = session.query(Pack).filter(Pack.id == pack_id).first()
+            if not pack:
+                return await update.effective_message.reply_text(f"❌ Pack #{pack_id} não encontrado.")
+            
+            if not pack.scheduled_for:
+                return await update.effective_message.reply_text(f"❌ Pack #{pack_id} '{pack.title}' não está agendado.")
+            
+            pack.scheduled_for = None
+            session.commit()
+            
+            await update.effective_message.reply_text(
+                f"✅ Agendamento cancelado!\n"
+                f"📦 Pack #{pack_id} '{pack.title}' não está mais agendado.\n"
+                f"🎯 Tier: {pack.tier.upper()}"
+            )
+            
+    except ValueError:
+        await update.effective_message.reply_text("❌ ID do pack deve ser um número.")
+    except Exception as e:
+        await update.effective_message.reply_text(f"❌ Erro: {e}")
+
 # =========================
 # Error handler global
 # =========================
@@ -3898,6 +4155,8 @@ async def on_startup():
 
         application.add_handler(CommandHandler("set_pack_horario_vip", set_pack_horario_vip_cmd), group=1)
         application.add_handler(CommandHandler("set_pack_horario_free", set_pack_horario_free_cmd), group=1)
+        application.add_handler(CommandHandler("agendar_pack", agendar_pack_cmd), group=1)
+        application.add_handler(CommandHandler("cancelar_agendamento", cancelar_agendamento_cmd), group=1)
 
         # ===== Callback Query Handler
         application.add_handler(CallbackQueryHandler(checkout_callback_handler, pattern="checkout_callback"), group=1)
@@ -3908,6 +4167,7 @@ async def on_startup():
 
         application.job_queue.run_daily(vip_expiration_warn_job, time=dt.time(hour=9, minute=0, tzinfo=pytz.timezone("America/Sao_Paulo")), name="vip_warn")
         application.job_queue.run_repeating(keepalive_job, interval=dt.timedelta(minutes=4), first=dt.timedelta(seconds=20), name="keepalive")
+        application.job_queue.run_repeating(check_scheduled_packs_job, interval=dt.timedelta(minutes=1), first=dt.timedelta(seconds=30), name="check_scheduled_packs")
         logging.info("Handlers e jobs registrados.")
     else:
         logging.error("Bot não foi inicializado - funcionalidades do Telegram não estarão disponíveis.")

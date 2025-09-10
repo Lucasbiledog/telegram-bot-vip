@@ -16,6 +16,13 @@ def choose_plan_from_usd(amount_usd: float, prices: Dict[int, float] = None) -> 
     Determina plano VIP baseado no valor real em USD da transação.
     Usa faixas de valor em vez de preços fixos.
     """
+    # Converter para float se for string
+    if isinstance(amount_usd, str):
+        try:
+            amount_usd = float(amount_usd)
+        except (ValueError, TypeError):
+            return None
+    
     # Faixas de valor dinâmicas baseadas no valor real pago
     if amount_usd < 0.1:  # Menos de 10 centavos - não elegível
         return None
