@@ -1135,9 +1135,12 @@ async def approve_by_usd_and_invite(tg_id, username: Optional[str], tx_hash: str
             until = await vip_upsert_and_get_until(actual_tg_id, username, days)
             
             # Gerar convite de 1 uso
-            link = await create_one_time_invite(application.bot, GROUP_VIP_ID, expire_seconds=7200, member_limit=1)
-            if not link:
-                return False, "Falha ao gerar convite", {"error": "invite_failed"}
+            try:
+                link = await create_one_time_invite(application.bot, GROUP_VIP_ID, expire_seconds=7200, member_limit=1)
+            except Exception as e:
+                LOG.warning(f"Falha ao gerar convite automático: {e}")
+                # Continuar sem convite - será tratado no retorno
+                link = None
         except (ValueError, TypeError):
             is_temp_uid = True
 
@@ -1166,7 +1169,12 @@ async def approve_by_usd_and_invite(tg_id, username: Optional[str], tx_hash: str
         msg = f"✅ Pagamento confirmado (${usd:.2f})!\nPlano: {days} dias\n\n⚠️ Para receber o convite do grupo VIP, forneça seu ID do Telegram válido."
         return True, msg, {"usd": usd, "days": days, "temp_uid": True}
     else:
-        msg = f"✅ Pagamento confirmado (${usd:.2f})!\nPlano: {days} dias\nConvite VIP: {link}"
+        if link:
+            msg = f"✅ Pagamento confirmado (${usd:.2f})!\nPlano: {days} dias\nConvite VIP: {link}"
+            payload = {"invite": link, "until": until.isoformat(), "usd": usd, "days": days}
+        else:
+            msg = f"✅ Pagamento confirmado (${usd:.2f})!\nPlano: {days} dias\n\n⚠️ VIP ativado! Entre em contato para receber o convite do grupo."
+            payload = {"no_auto_invite": True, "until": until.isoformat(), "usd": usd, "days": days}
         
         if notify_user and actual_tg_id:
             try:
@@ -1174,7 +1182,7 @@ async def approve_by_usd_and_invite(tg_id, username: Optional[str], tx_hash: str
             except Exception:
                 pass
 
-        return True, msg, {"invite": link, "until": until.isoformat(), "usd": usd, "days": days}
+        return True, msg, payload
 
 # =========================
 # Função para verificar se hash já foi usada

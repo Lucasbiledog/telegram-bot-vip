@@ -174,6 +174,9 @@ async function validatePayment() {
         setTimeout(() => {
           window.location.href = j.invite;
         }, 600); // pequeno delay para o usuário ver a mensagem
+      } else if (j.no_auto_invite) {
+        // VIP ativado mas sem convite automático
+        showAlert((j.message || "Pagamento confirmado!") + "<br><br><strong>🎉 VIP Ativado!</strong><br>Entre em contato no bot para receber o convite do grupo.", true);
       } else {
         showAlert((j.message || "Pagamento confirmado!") + "<br><br>Não recebemos o link de convite. Tente novamente.", true);
       }
