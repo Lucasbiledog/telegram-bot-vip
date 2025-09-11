@@ -1722,20 +1722,20 @@ async def checkout_callback_handler(update: Update, context: ContextTypes.DEFAUL
             # Garantir que o path /pay/ esteja presente
             WEBAPP_URL = f"{WEBAPP_URL.rstrip('/')}/pay/"
         
-        # Capturar dados do usuário automaticamente
-        uid = user.id
-        username = user.username or user.first_name or "user"
+        # Capturar dados do usuário automaticamente - SEMPRE usar o ID do usuário que clicou
+        uid = user.id  # ID do usuário que clicou no botão
+        username = user.username or user.first_name or f"user_{uid}"
         ts = int(time.time())
         sig = make_link_sig(os.getenv("BOT_SECRET", "default"), uid, ts)
         
-        # Criar URL com parâmetros do usuário
+        # Criar URL com parâmetros do usuário CORRETO (quem clicou)
         base_url = os.getenv("WEBAPP_URL", "https://telegram-bot-vip-hfn7.onrender.com")
         if base_url.endswith('/pay/') or base_url.endswith('/pay'):
             checkout_url = f"{base_url.rstrip('/')}/?uid={uid}&username={username}&ts={ts}&sig={sig}"
         else:
             checkout_url = f"{base_url.rstrip('/')}/pay/?uid={uid}&username={username}&ts={ts}&sig={sig}"
         
-        logging.info(f"Checkout callback: user_id={uid}, username={username}")
+        logging.info(f"[CHECKOUT] Usuário que clicou - ID: {uid}, Username: {username}, URL: {checkout_url[:100]}...")
         
         # Botão que abre diretamente com o user ID capturado
         keyboard = InlineKeyboardMarkup([
@@ -1747,8 +1747,8 @@ async def checkout_callback_handler(update: Update, context: ContextTypes.DEFAUL
 
         checkout_msg = (
             f"💸 <b>Pagamento VIP via Cripto</b>\n\n"
-            f"👤 <b>Usuário:</b> @{username}\n"
-            f"✅ Link personalizado para seu ID\n"
+            f"👤 <b>Usuário:</b> {username} (ID: {uid})\n"
+            f"✅ Link personalizado para SEU ID\n"
             f"🔒 Pague com qualquer criptomoeda\n"
             f"⚡ Ativação automática do VIP\n\n"
             f"💰 <b>Planos:</b>\n"
@@ -3309,7 +3309,15 @@ async def verify_erc20_payment(tx_hash: str) -> Dict[str, Any]:
         return {"ok": False, "reason": f"Confirmações insuficientes ({confirmations}/{MIN_CONFIRMATIONS})"}
     return {"ok": True, "type": "erc20", "to": found["to"], "amount_raw": found["amount_raw"], "confirmations": confirmations}
 
+# Cache simples para evitar validações repetidas
+_HASH_CACHE = {}
+
 async def verify_tx_any(tx_hash: str) -> Dict[str, Any]:
+    # Verificar cache primeiro
+    if tx_hash in _HASH_CACHE:
+        logging.info(f"Hash {tx_hash[:10]}... encontrada em cache")
+        return _HASH_CACHE[tx_hash]
+    
     if TOKEN_CONTRACT:
         res = await verify_erc20_payment(tx_hash)
     else:
@@ -3329,6 +3337,16 @@ async def verify_tx_any(tx_hash: str) -> Dict[str, Any]:
         res["plan_days"] = plan_days
         if plan_days is None:
             res["reason"] = res.get("reason") or "Valor não corresponde a nenhum plano"
+    
+    # Cachear resultado
+    _HASH_CACHE[tx_hash] = res
+    # Limitar tamanho do cache
+    if len(_HASH_CACHE) > 100:
+        # Remover metade das entradas mais antigas
+        old_keys = list(_HASH_CACHE.keys())[:50]
+        for key in old_keys:
+            del _HASH_CACHE[key]
+    
     return res
     
 
@@ -3876,10 +3894,13 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
 @app.post("/crypto_webhook")
 async def crypto_webhook(request: Request):
     data   = await request.json()
-    uid    = data.get("telegram_user_id")
-    tx_hash= (data.get("tx_hash") or "").strip().lower()
+    uid    = data.get("telegram_user_id") or data.get("uid")  # Fallback para 'uid'
+    tx_hash= (data.get("tx_hash") or data.get("hash", "")).strip().lower()  # Fallback para 'hash'
     amount = data.get("amount")
     chain  = data.get("chain") or CHAIN_NAME
+    
+    # Log detalhado para debug
+    logging.info(f"Webhook recebido - UID: {uid}, Hash: {tx_hash[:10] if tx_hash else 'None'}..., Amount: {amount}")
 
     if not uid or not tx_hash:
         return JSONResponse({"ok": False, "error": "telegram_user_id e tx_hash são obrigatórios"}, status_code=400)
@@ -3928,21 +3949,32 @@ async def crypto_webhook(request: Request):
      # Se aprovado, renova VIP conforme plano e manda convite
     if approved:
         try:
-            # melhor esforço para obter username atual
+            # melhor esforço para obter username atual do usuário específico
+            username = None
             try:
                 u = await application.bot.get_chat(int(uid))
-                username = u.username
-            except Exception:
-                username = None
+                username = u.username or u.first_name or f"user_{uid}"
+                logging.info(f"Username obtido para UID {uid}: {username}")
+            except Exception as e:
+                logging.warning(f"Erro ao obter dados do usuário {uid}: {e}")
+                username = f"user_{uid}"
 
-            vip_upsert_start_or_extend(int(uid), username, tx_hash, plan)
-            invite_link = await create_and_store_personal_invite(int(uid))
+            # Garantir que VIP seja atribuído ao usuário correto
+            user_id_final = int(uid)
+            vip_upsert_start_or_extend(user_id_final, username, tx_hash, plan)
+            invite_link = await create_and_store_personal_invite(user_id_final)
+            
+            # Notificar o usuário específico que fez o pagamento
             await application.bot.send_message(
-    chat_id=int(uid),
-    text=(f"✅ Pagamento confirmado!\n"
-          f"Seu VIP foi ativado por {PLAN_DAYS[plan]} dias.\n"
-          f"Entre no VIP: {invite_link}")
-)
+                chat_id=user_id_final,
+                text=(f"✅ Pagamento confirmado para {username}!\n"
+                      f"Seu VIP foi ativado por {PLAN_DAYS[plan]} dias.\n"
+                      f"Entre no VIP: {invite_link}")
+            )
+            logging.info(f"[WEBHOOK] VIP ativado para usuário {user_id_final} ({username})")
+            
+            # Log adicional para debug
+            logging.info(f"[WEBHOOK] Pagamento processado - Hash: {tx_hash[:10]}..., Usuario: {user_id_final}, Plano: {PLAN_DAYS[plan]} dias")
 
         except Exception:
             logging.exception("Erro enviando invite")
@@ -4079,16 +4111,27 @@ async def api_validate(request: Request):
         username = data.get("username")
         hash = data.get("hash", "").strip()
         
+        # Log detalhado do que foi recebido
+        logging.info(f"[API-VALIDATE] Recebido - UID: {uid}, Username: {username}, Hash: {hash[:10] if hash else 'None'}...")
+        
         if not uid or not hash:
             raise HTTPException(status_code=400, detail="uid e hash são obrigatórios")
+        
+        # Garantir que UID seja numérico
+        try:
+            uid_int = int(uid)
+        except (ValueError, TypeError):
+            logging.error(f"[API-VALIDATE] UID inválido: {uid}")
+            raise HTTPException(status_code=400, detail="UID deve ser um número válido")
         
         # Validação do hash
         if len(hash) < 40:
             return {"ok": False, "message": "Hash de transação inválido"}
         
         try:
-            # Usar a função completa de aprovação
-            ok, msg, payload = await approve_by_usd_and_invite(uid, username, hash, notify_user=False)
+            # Usar a função completa de aprovação com UID validado
+            logging.info(f"[API-VALIDATE] Processando pagamento para UID: {uid_int}")
+            ok, msg, payload = await approve_by_usd_and_invite(uid_int, username, hash, notify_user=False)
             
             if ok:
                 return {
