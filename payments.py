@@ -433,9 +433,12 @@ async def _cg_get(url: str) -> Optional[dict]:
                 return r.json()
             if r.status_code == 429:
                 LOG.warning("Coingecko 429 (rate-limit). attempt=%d url=%s", attempt, url)
-                # Backoff exponencial agressivo para rate limiting
-                base_delay = 15 if COINGECKO_API_KEY else 30  # API key vs free tier
-                rate_limit_delay = min(120, base_delay * (2 ** attempt))  # Cap de 2 minutos
+                # Para rate limiting severo, desistir mais rápido e usar fallbacks
+                if attempt >= 2:  # Após 2 tentativas, desistir
+                    LOG.warning(f"[RATE-LIMIT] Desistindo do CoinGecko após {attempt} tentativas (429), usando fallbacks")
+                    break
+                
+                rate_limit_delay = 20 if COINGECKO_API_KEY else 30  # Delay fixo menor
                 LOG.warning(f"[RATE-LIMIT] Rate limited! Aguardando {rate_limit_delay}s (attempt {attempt}/{PRICE_MAX_RETRIES})")
                 await asyncio.sleep(rate_limit_delay)
                 continue
@@ -455,12 +458,23 @@ async def _usd_native(chain_id: str, amount_native: float, force_refresh: bool =
     cg_id = CHAINS[chain_id]["cg_native"]
     cache_key = f"native:{cg_id}"
     
-    # SEMPRE tentar cache primeiro para evitar rate limits (mesmo com force_refresh)
+    # SEMPRE tentar cache primeiro para evitar rate limits
     cached = _price_cache_get(cache_key, force_refresh=False, allow_extended=True)
     if cached is not None:
         px = float(cached)
         usd_value = amount_native * px
         return px, usd_value
+    
+    # Para BNB, tentar APIs de backup PRIMEIRO (mais rápidas que CoinGecko)
+    if cg_id == "binancecoin":
+        LOG.info(f"[BACKUP-FIRST] Tentando APIs de backup para {cg_id} antes do CoinGecko...")
+        backup_price = await _try_backup_apis(cg_id)
+        if backup_price:
+            px = backup_price
+            usd_value = amount_native * px
+            LOG.info(f"[BACKUP-SUCCESS] ✅ {cg_id}: ${px:.2f} | {amount_native} unidades = ${usd_value:.2f}")
+            _price_cache_put(cache_key, px, from_backup=True)
+            return px, usd_value
     
     LOG.info(f"[LIVE-PRICE] Buscando preço atual da internet para {cg_id}...")
     data = await _cg_get(f"https://api.coingecko.com/api/v3/simple/price?ids={cg_id}&vs_currencies=usd")
@@ -493,11 +507,11 @@ async def _usd_native(chain_id: str, amount_native: float, force_refresh: bool =
             ts = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(meta.get("ts", 0)))
             src = meta.get("source", "manual")
             LOG.warning(
-                "[RATE-LIMIT-FALLBACK] CoinGecko indisponível (rate limit?), usando preço fallback p/ %s: ${:.2f} | {} unidades = ${:.2f} (source={} ts={})".format(
+                "[STATIC-FALLBACK] CoinGecko + backup APIs indisponíveis, usando preço estático p/ %s: ${:.2f} | {} unidades = ${:.2f} (source={} ts={})".format(
                     cg_id, px, amount_native, usd_value, src, ts
                 )
             )
-            _price_cache_put(cache_key, px)  # Cache o preço de fallback por um tempo
+            _price_cache_put(cache_key, px, from_backup=True)  # Cache por mais tempo
             return px, usd_value
         
         LOG.error("[price-fail] Falha ao obter preço para %s - configure COINGECKO_API_KEY", cg_id)
