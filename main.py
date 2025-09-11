@@ -30,6 +30,8 @@ from telegram.ext import (
     ApplicationHandlerStop,
     ChatJoinRequestHandler,
     CallbackQueryHandler,
+    MessageHandler,
+    ChatMemberHandler,
 )
 # === Imports ===
 from sqlalchemy import (
@@ -4829,7 +4831,6 @@ async def on_startup():
         application.add_handler(CommandHandler("recibo", comprovante_cmd), group=1)  # Alias
 
         # ===== Member Join Handlers - para capturar ID quando usuário ENTRA no grupo
-        from telegram.ext import MessageHandler, ChatMemberHandler
         
         # Handler para novos membros (new_chat_members)
         application.add_handler(
