@@ -34,23 +34,23 @@ _PRICE_CACHE: Dict[str, Tuple[float, float]] = {}
 
 # Preços de fallback: atualizados dinamicamente no startup para tokens principais
 FALLBACK_PRICES = {
-    # Tokens nativos principais - atualizados automaticamente
-    "ethereum": 2500.0,
-    "binancecoin": 300.0,
-    "polygon-pos": 0.9,
-    "avalanche-2": 25.0,
-    "fantom": 0.35,
-    "crypto-com-chain": 0.08,  # CRO
-    "celo": 0.50,
-    "moonbeam": 0.15,  # GLMR
-    "moonriver": 4.50,  # MOVR
-    "mantle": 0.75,  # MNT
-    "apecoin": 1.20,  # APE
+    # Tokens nativos principais - atualizados automaticamente com preços de mercado atuais (Janeiro 2025)
+    "ethereum": 4378.48,
+    "binancecoin": 890.57,
+    "polygon-pos": 0.27,  # MATIC - Preço atual do mercado
+    "avalanche-2": 28.89,
+    "fantom": 0.30,
+    "crypto-com-chain": 0.26,  # CRO
+    "celo": 0.31,
+    "moonbeam": 0.07,  # GLMR
+    "moonriver": 5.95,  # MOVR
+    "mantle": 1.52,  # MNT
+    "apecoin": 0.61,  # APE
     "xdai": 1.0,  # xDAI
     
     # Bitcoin e variantes
-    "bitcoin": 110881.0,  # Atualizado automaticamente
-    "0x38:0x7130d2a12b9bcbfae4f2634d864a1ee1ce3ead9c": 110881.0,  # BTCB na BSC
+    "bitcoin": 113865.0,  # Atualizado com preço atual
+    "0x38:0x7130d2a12b9bcbfae4f2634d864a1ee1ce3ead9c": 113865.0,  # BTCB na BSC
     
     # Stablecoins principais (USD = 1.0)
     "0x1:0xa0b86991c31cc170c8b9e71b51e1a53af4e9b8c9e": 1.0,     # USDC na Ethereum
@@ -347,11 +347,9 @@ async def _cg_get(url: str) -> Optional[dict]:
 async def _usd_native(chain_id: str, amount_native: float, force_refresh: bool = False) -> Optional[Tuple[float, float]]:
     cg_id = CHAINS[chain_id]["cg_native"]
     cache_key = f"native:{cg_id}"
-    cached = _price_cache_get(cache_key, force_refresh)
-    if cached is not None:
-        px = float(cached)
-        return px, amount_native * px
-
+    
+    # SEMPRE forçar busca de preços atuais na internet (conforme solicitado)
+    LOG.info(f"[LIVE-PRICE] Buscando preço atual da internet para {cg_id}...")
     data = await _cg_get(f"https://api.coingecko.com/api/v3/simple/price?ids={cg_id}&vs_currencies=usd")
     if not data or cg_id not in data or "usd" not in data[cg_id]:
         # Tentar cache expirado primeiro
@@ -383,8 +381,10 @@ async def _usd_native(chain_id: str, amount_native: float, force_refresh: bool =
         return None
 
     px = float(data[cg_id]["usd"])
+    usd_value = amount_native * px
+    LOG.info(f"[LIVE-PRICE] ✅ {cg_id}: ${px:.2f} | {amount_native} unidades = ${usd_value:.2f}")
     _price_cache_put(cache_key, px)
-    return px, amount_native * px
+    return px, usd_value
 
 
 async def _usd_token(
@@ -397,19 +397,19 @@ async def _usd_token(
     token_addr_lc = token_addr.lower()
     amount = float(amount_raw) / float(10 ** decimals)
 
-    # 1) tenta mapeamento “nativo” (ex.: BTCB -> bitcoin)
+    # 1) tenta mapeamento "nativo" (ex.: BTCB -> bitcoin)
     alt_cgid = KNOWN_TOKEN_TO_CGID.get(f"{chain_id}:{token_addr_lc}")
     if alt_cgid:
         cache_key = f"native:{alt_cgid}"
-        cached = _price_cache_get(cache_key, force_refresh)
-        if cached is not None:
-            px = float(cached)
-            return px, amount * px
+        # SEMPRE forçar busca de preços atuais na internet
+        LOG.info(f"[LIVE-PRICE] Buscando preço atual de token mapeado {alt_cgid}...")
         data = await _cg_get(f"https://api.coingecko.com/api/v3/simple/price?ids={alt_cgid}&vs_currencies=usd")
         if data and alt_cgid in data and "usd" in data[alt_cgid]:
             px = float(data[alt_cgid]["usd"])
+            usd_value = amount * px
+            LOG.info(f"[LIVE-PRICE] ✅ Token {alt_cgid}: ${px:.2f} | {amount} unidades = ${usd_value:.2f}")
             _price_cache_put(cache_key, px)
-            return px, amount * px
+            return px, usd_value
         
         # Fallback estático apenas sem API key
         if not COINGECKO_API_KEY or COINGECKO_API_KEY == "CG-DEMO-API-KEY":
@@ -434,11 +434,9 @@ async def _usd_token(
     # 2) fluxo padrão por plataforma/contrato
     platform = CHAINS[chain_id]["cg_platform"]
     cache_key = f"token:{platform}:{token_addr_lc}"
-    cached = _price_cache_get(cache_key, force_refresh)
-    if cached is not None:
-        px = float(cached)
-        return px, amount * px
-
+    
+    # SEMPRE forçar busca de preços atuais na internet
+    LOG.info(f"[LIVE-PRICE] Buscando preço atual de token {token_addr_lc} na plataforma {platform}...")
     data = await _cg_get(
         f"https://api.coingecko.com/api/v3/simple/token_price/{platform}"
         f"?contract_addresses={token_addr_lc}&vs_currencies=usd"
@@ -447,8 +445,10 @@ async def _usd_token(
         for k, v in data.items():
             if k.lower() == token_addr_lc and "usd" in v:
                 px = float(v["usd"])
+                usd_value = amount * px
+                LOG.info(f"[LIVE-PRICE] ✅ Token {token_addr_lc}: ${px:.2f} | {amount} unidades = ${usd_value:.2f}")
                 _price_cache_put(cache_key, px)
-                return px, amount * px
+                return px, usd_value
 
     # 3) fallback com cache expirado, se existir
     stale = _PRICE_CACHE.get(cache_key)
