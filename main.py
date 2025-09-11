@@ -654,8 +654,19 @@ async def create_and_store_personal_invite(user_id: int) -> str:
     if not m.expires_at:
         raise RuntimeError(f"VIP sem data de expiração para user_id: {user_id}")
 
-    expire_ts = int(m.expires_at.timestamp())
-    logging.info(f"[INVITE-DEBUG] VIP válido até: {m.expires_at} (timestamp: {expire_ts})")
+    # Corrigir timezone se necessário antes de converter para timestamp
+    expires_at = m.expires_at
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=dt.timezone.utc)
+        # Atualizar no banco para evitar o problema no futuro
+        with SessionLocal() as update_session:
+            vm_update = update_session.query(VipMembership).filter(VipMembership.user_id == user_id).first()
+            if vm_update:
+                vm_update.expires_at = expires_at
+                update_session.commit()
+    
+    expire_ts = int(expires_at.timestamp())
+    logging.info(f"[INVITE-DEBUG] VIP válido até: {expires_at} (timestamp: {expire_ts})")
 
     try:
         # Verificar se o bot tem permissões no grupo
@@ -668,7 +679,7 @@ async def create_and_store_personal_invite(user_id: int) -> str:
         
         invite = await application.bot.create_chat_invite_link(
             chat_id=GROUP_VIP_ID,
-            expire_date=expire_ts,
+            expire_date=expires_at,  # Usar o datetime corrigido
             member_limit=1
         )
         logging.info(f"[INVITE-DEBUG] Convite criado: {invite.invite_link}")

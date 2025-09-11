@@ -69,8 +69,19 @@ async def vip_upsert_and_get_until(tg_id: int, username: Optional[str], days: in
             )
             s.add(m)
         else:
-            # Estender VIP existente
-            base = m.expires_at if (m.expires_at and m.expires_at > now) else now
+            # Estender VIP existente - corrigir timezone antes de comparar
+            expires_at = m.expires_at
+            if expires_at and expires_at.tzinfo is None:
+                # Se expires_at não tem timezone, adicionar UTC
+                expires_at = expires_at.replace(tzinfo=timezone.utc)
+                m.expires_at = expires_at  # Atualizar no banco
+            
+            # Determinar base para extensão
+            if expires_at and expires_at > now:
+                base = expires_at  # VIP ainda ativo, estender do fim atual
+            else:
+                base = now  # VIP expirado, começar de agora
+            
             new_until = base + timedelta(days=days)
             m.expires_at = new_until
             m.active = True
