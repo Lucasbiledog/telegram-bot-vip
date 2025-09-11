@@ -281,31 +281,32 @@ def ensure_vip_invite_column():
 def ensure_vip_notification_columns():
     """Adiciona colunas de notificação e remoção se não existirem"""
     try:
+        logging.info("Iniciando migração das colunas de notificação VIP...")
         with engine.begin() as conn:
             # Adicionar colunas de notificação
             try: 
                 conn.execute(text("ALTER TABLE vip_memberships ADD COLUMN notified_7_days BOOLEAN DEFAULT FALSE"))
-                logging.info("Coluna notified_7_days adicionada")
-            except Exception: 
-                pass
+                logging.info("✅ Coluna notified_7_days adicionada")
+            except Exception as e: 
+                logging.debug(f"Coluna notified_7_days já existe ou erro: {e}")
             
             try: 
                 conn.execute(text("ALTER TABLE vip_memberships ADD COLUMN notified_3_days BOOLEAN DEFAULT FALSE"))
-                logging.info("Coluna notified_3_days adicionada")
-            except Exception: 
-                pass
+                logging.info("✅ Coluna notified_3_days adicionada")
+            except Exception as e: 
+                logging.debug(f"Coluna notified_3_days já existe ou erro: {e}")
             
             try: 
                 conn.execute(text("ALTER TABLE vip_memberships ADD COLUMN notified_1_day BOOLEAN DEFAULT FALSE"))
-                logging.info("Coluna notified_1_day adicionada")
-            except Exception: 
-                pass
+                logging.info("✅ Coluna notified_1_day adicionada")
+            except Exception as e: 
+                logging.debug(f"Coluna notified_1_day já existe ou erro: {e}")
             
             try: 
                 conn.execute(text("ALTER TABLE vip_memberships ADD COLUMN removal_scheduled BOOLEAN DEFAULT FALSE"))
-                logging.info("Coluna removal_scheduled adicionada")
-            except Exception: 
-                pass
+                logging.info("✅ Coluna removal_scheduled adicionada")
+            except Exception as e: 
+                logging.debug(f"Coluna removal_scheduled já existe ou erro: {e}")
             
             # Garantir que valores NULL sejam FALSE
             try:
@@ -313,12 +314,14 @@ def ensure_vip_notification_columns():
                 conn.execute(text("UPDATE vip_memberships SET notified_3_days = FALSE WHERE notified_3_days IS NULL"))
                 conn.execute(text("UPDATE vip_memberships SET notified_1_day = FALSE WHERE notified_1_day IS NULL"))
                 conn.execute(text("UPDATE vip_memberships SET removal_scheduled = FALSE WHERE removal_scheduled IS NULL"))
-                logging.info("Valores NULL de notificação atualizados para FALSE")
+                logging.info("✅ Valores NULL de notificação atualizados para FALSE")
             except Exception as e:
-                logging.warning(f"Erro ao atualizar valores NULL: {e}")
+                logging.debug(f"Erro ao atualizar valores NULL (pode ser normal): {e}")
+        
+        logging.info("✅ Migração das colunas VIP concluída com sucesso!")
                 
     except Exception as e:
-        logging.warning("Falha ensure_vip_notification_columns: %s", e)
+        logging.error("❌ Falha ensure_vip_notification_columns: %s", e)
 def ensure_vip_plan_column():
     try:
         with engine.begin() as conn:
@@ -1091,6 +1094,9 @@ def ensure_schema_once():
             # ensure_vip_invite_column()
             # ensure_vip_plan_column()
             # ensure_payment_fields()
+            
+            # MIGRAÇÃO CRÍTICA: Colunas de notificação VIP (necessárias para funcionamento)
+            ensure_vip_notification_columns()
             
             # Configurações básicas
             init_db()
@@ -2356,15 +2362,58 @@ async def listar_hashes_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 # Buscar VIP associado a esta hash ou usuário
                 vip_info = ""
                 if p.status == "approved":
-                    # Primeiro tentar por hash
-                    vip = s.query(VipMembership).filter(VipMembership.tx_hash == p.tx_hash).first()
+                    # Primeiro tentar por hash com tratamento de erro para colunas inexistentes
+                    vip = None
+                    try:
+                        vip = s.query(VipMembership).filter(VipMembership.tx_hash == p.tx_hash).first()
+                    except Exception as e:
+                        # Se erro for sobre colunas inexistentes, usar query básica
+                        if "does not exist" in str(e):
+                            logging.warning("Colunas VIP não encontradas, usando query básica")
+                            # Query raw sem as colunas problemáticas
+                            result = s.execute(text("""
+                                SELECT id, user_id, username, tx_hash, expires_at, active, plan 
+                                FROM vip_memberships 
+                                WHERE tx_hash = :hash
+                                LIMIT 1
+                            """), {"hash": p.tx_hash}).fetchone()
+                            
+                            if result:
+                                # Criar objeto mock com dados básicos
+                                class MockVip:
+                                    def __init__(self, row):
+                                        self.id, self.user_id, self.username, self.tx_hash, self.expires_at, self.active, self.plan = row
+                                vip = MockVip(result)
+                        else:
+                            logging.error(f"Erro inesperado na query VIP: {e}")
+                            raise
                     
                     # Se não encontrar por hash, tentar por user_id (VIP pode existir sem hash vinculada)
                     if not vip and p.user_id:
-                        vip = s.query(VipMembership).filter(
-                            VipMembership.user_id == p.user_id,
-                            VipMembership.active == True
-                        ).order_by(VipMembership.expires_at.desc()).first()
+                        try:
+                            vip = s.query(VipMembership).filter(
+                                VipMembership.user_id == p.user_id,
+                                VipMembership.active == True
+                            ).order_by(VipMembership.expires_at.desc()).first()
+                        except Exception as e:
+                            if "does not exist" in str(e):
+                                # Query raw para user_id também
+                                result = s.execute(text("""
+                                    SELECT id, user_id, username, tx_hash, expires_at, active, plan 
+                                    FROM vip_memberships 
+                                    WHERE user_id = :user_id AND active = true
+                                    ORDER BY expires_at DESC
+                                    LIMIT 1
+                                """), {"user_id": p.user_id}).fetchone()
+                                
+                                if result:
+                                    class MockVip:
+                                        def __init__(self, row):
+                                            self.id, self.user_id, self.username, self.tx_hash, self.expires_at, self.active, self.plan = row
+                                    vip = MockVip(result)
+                            else:
+                                logging.error(f"Erro inesperado na segunda query VIP: {e}")
+                                raise
                     
                     if vip:
                         now = now_utc()
