@@ -818,10 +818,10 @@ async def pagar_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🔒 Pague com qualquer criptomoeda\n"
             f"⚡ Ativação automática após confirmação\n\n"
             f"💰 <b>Planos disponíveis:</b>\n"
-            f"• 30 dias: $0.05\n"
-            f"• 60 dias: $1.00\n"
-            f"• 180 dias: $1.50\n"
-            f"• 365 dias: $2.00"
+            f"• 30 dias: $0.05 - $0.99\n"
+            f"• 60 dias: $1.00 - $1.99\n"
+            f"• 180 dias: $2.00 - $2.99\n"
+            f"• 365 dias: $3.00+"
         )
 
         sent = await send_with_retry(

@@ -24,15 +24,15 @@ def choose_plan_from_usd(amount_usd: float, prices: Dict[int, float] = None) -> 
             return None
     
     # Faixas de valor dinâmicas baseadas no valor real pago
-    if amount_usd < 0.1:  # Menos de 10 centavos - não elegível
+    if amount_usd < 0.05:  # Menos de 5 centavos - não elegível
         return None
-    elif amount_usd < 1.0:  # $0.10 - $0.99
+    elif amount_usd < 1.0:  # $0.05 - $0.99
         return 30   # 1 mês
-    elif amount_usd < 5.0:  # $1.00 - $4.99  
+    elif amount_usd < 2.0:  # $1.00 - $1.99  
         return 60   # 2 meses
-    elif amount_usd < 15.0: # $5.00 - $14.99
+    elif amount_usd < 3.0:  # $2.00 - $2.99
         return 180  # 6 meses
-    else:  # $15.00+
+    else:  # $3.00+
         return 365  # 1 ano
     
     # Fallback para compatibilidade (caso ainda existam preços fixos)
