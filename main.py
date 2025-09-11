@@ -1231,7 +1231,7 @@ async def process_vip_member_entry(user, entry_type: str):
     
     # Buscar pagamentos pendentes sem ID associado (UID temporário)
     with SessionLocal() as s:
-        from payments import Payment
+        # Payment está definido no main.py, não no payments.py
         
         # Procurar pagamentos aprovados recentes sem user_id válido ou com user_id = 0
         recent_payments = s.query(Payment).filter(
@@ -4098,7 +4098,7 @@ async def comprovante_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         
         # Buscar pagamento mais recente associado
-        from payments import Payment
+        # Payment está definido no main.py, não no payments.py
         payment = s.query(Payment).filter(
             Payment.user_id == user_id,
             Payment.status == "approved"
