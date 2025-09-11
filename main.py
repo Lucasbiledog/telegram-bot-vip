@@ -277,6 +277,48 @@ def ensure_vip_invite_column():
             except Exception: pass
     except Exception as e:
         logging.warning("Falha ensure_vip_invite_column: %s", e)
+
+def ensure_vip_notification_columns():
+    """Adiciona colunas de notificação e remoção se não existirem"""
+    try:
+        with engine.begin() as conn:
+            # Adicionar colunas de notificação
+            try: 
+                conn.execute(text("ALTER TABLE vip_memberships ADD COLUMN notified_7_days BOOLEAN DEFAULT FALSE"))
+                logging.info("Coluna notified_7_days adicionada")
+            except Exception: 
+                pass
+            
+            try: 
+                conn.execute(text("ALTER TABLE vip_memberships ADD COLUMN notified_3_days BOOLEAN DEFAULT FALSE"))
+                logging.info("Coluna notified_3_days adicionada")
+            except Exception: 
+                pass
+            
+            try: 
+                conn.execute(text("ALTER TABLE vip_memberships ADD COLUMN notified_1_day BOOLEAN DEFAULT FALSE"))
+                logging.info("Coluna notified_1_day adicionada")
+            except Exception: 
+                pass
+            
+            try: 
+                conn.execute(text("ALTER TABLE vip_memberships ADD COLUMN removal_scheduled BOOLEAN DEFAULT FALSE"))
+                logging.info("Coluna removal_scheduled adicionada")
+            except Exception: 
+                pass
+            
+            # Garantir que valores NULL sejam FALSE
+            try:
+                conn.execute(text("UPDATE vip_memberships SET notified_7_days = FALSE WHERE notified_7_days IS NULL"))
+                conn.execute(text("UPDATE vip_memberships SET notified_3_days = FALSE WHERE notified_3_days IS NULL"))
+                conn.execute(text("UPDATE vip_memberships SET notified_1_day = FALSE WHERE notified_1_day IS NULL"))
+                conn.execute(text("UPDATE vip_memberships SET removal_scheduled = FALSE WHERE removal_scheduled IS NULL"))
+                logging.info("Valores NULL de notificação atualizados para FALSE")
+            except Exception as e:
+                logging.warning(f"Erro ao atualizar valores NULL: {e}")
+                
+    except Exception as e:
+        logging.warning("Falha ensure_vip_notification_columns: %s", e)
 def ensure_vip_plan_column():
     try:
         with engine.begin() as conn:
@@ -350,6 +392,7 @@ def ensure_schema():
         ensure_pack_scheduled_for_column()
         ensure_packfile_src_columns()
         ensure_vip_invite_column()
+        ensure_vip_notification_columns()
         ensure_vip_plan_column()
         ensure_payment_fields()
         
@@ -403,6 +446,7 @@ def ensure_schema():
                 ensure_pack_tier_column()
                 ensure_packfile_src_columns()
                 ensure_vip_invite_column()
+                ensure_vip_notification_columns()
                 ensure_vip_plan_column()
                 print("Successfully initialized with in-memory database")
             except Exception as fallback_error:
@@ -4259,6 +4303,30 @@ async def comprovante_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="HTML"
         )
 
+async def migrate_vip_columns_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Comando para executar migração das colunas de notificação VIP"""
+    if not (update.effective_user and is_admin(update.effective_user.id)):
+        return await update.effective_message.reply_text("❌ Apenas admins.")
+    
+    try:
+        await update.effective_message.reply_text("🔄 Executando migração das colunas VIP...")
+        
+        # Executar migração
+        ensure_vip_notification_columns()
+        
+        await update.effective_message.reply_text(
+            "✅ Migração concluída!\n"
+            "Colunas adicionadas:\n"
+            "• notified_7_days\n"
+            "• notified_3_days\n"
+            "• notified_1_day\n"
+            "• removal_scheduled"
+        )
+        
+    except Exception as e:
+        await update.effective_message.reply_text(f"❌ Erro na migração: {e}")
+        logging.error(f"Erro na migração VIP: {e}")
+
 async def fix_vip_dates_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Corrigir VIPs com datas muito longas no futuro"""
     if not (update.effective_user and is_admin(update.effective_user.id)):
@@ -5345,6 +5413,7 @@ async def on_startup():
         application.add_handler(CommandHandler("enviar_pack_agora", enviar_pack_agora_cmd), group=1)
         application.add_handler(CommandHandler("debug_convite", debug_convite_cmd), group=1)
         application.add_handler(CommandHandler("fix_vip_dates", fix_vip_dates_cmd), group=1)
+        application.add_handler(CommandHandler("migrate_vip_columns", migrate_vip_columns_cmd), group=1)
         application.add_handler(CommandHandler("comprovante", comprovante_cmd), group=1)
         application.add_handler(CommandHandler("recibo", comprovante_cmd), group=1)  # Alias
 
