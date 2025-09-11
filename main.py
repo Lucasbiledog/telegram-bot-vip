@@ -937,7 +937,20 @@ class VipMembership(Base):
     plan = Column(String, default=VipPlan.TRIMESTRAL.value)
     created_at = Column(DateTime, default=now_utc)
     updated_at = Column(DateTime, default=now_utc, onupdate=now_utc)
-    invite_link = Column(Text, nullable=True)  # << NOVO
+    invite_link = Column(Text, nullable=True)
+    # Campos para controle de notificações
+    notified_7_days = Column(Boolean, default=False)
+    notified_3_days = Column(Boolean, default=False) 
+    notified_1_day = Column(Boolean, default=False)
+    removal_scheduled = Column(Boolean, default=False)
+
+class VipNotification(Base):
+    __tablename__ = "vip_notifications"
+    id = Column(Integer, primary_key=True)
+    user_id = Column(BigInteger, nullable=False)
+    notification_type = Column(String, nullable=False)  # '7_days', '3_days', '1_day', 'expired', 'removed'
+    sent_at = Column(DateTime, nullable=False, default=now_utc)
+    vip_expires_at = Column(DateTime, nullable=False)  # Para histórico
 
 
 
@@ -1244,19 +1257,56 @@ async def process_vip_member_entry(user, entry_type: str):
             # Pegar o pagamento mais recente
             payment = recent_payments[0]
             
+            # Verificar se é um pagamento de renovação
+            is_renewal = payment.temp_user_id and payment.temp_user_id.startswith("RENEW_")
+            
+            if is_renewal:
+                logging.info(f"[VIP-ENTRY] Processando renovação para usuário {user_id}")
+                
+                # Para renovações: desativar VIP atual e criar novo período completo
+                current_vip = s.query(VipMembership).filter(
+                    VipMembership.user_id == user_id,
+                    VipMembership.active == True
+                ).first()
+                
+                if current_vip:
+                    # Desativar VIP atual
+                    current_vip.active = False
+                    current_vip.notes = f"Substituído por renovação em {now_utc().strftime('%d/%m/%Y %H:%M')}"
+                    logging.info(f"[VIP-RENEWAL] VIP anterior desativado - expirava em {current_vip.expires_at}")
+                
+                # Criar novo VIP com período completo (a partir de agora, não somando ao anterior)
+                new_expires = now_utc() + dt.timedelta(days=payment.days_vip)
+                
+                new_vip = VipMembership(
+                    user_id=user_id,
+                    username=username,
+                    active=True,
+                    expires_at=new_expires,
+                    created_at=now_utc(),
+                    plan=payment.plan,
+                    notes=f"Renovação - substitui VIP anterior"
+                )
+                s.add(new_vip)
+                vip = new_vip
+                
+                logging.info(f"[VIP-RENEWAL] Novo VIP criado - expira em {new_expires}")
+                
+            else:
+                # Lógica normal para novos VIPs
+                # Atualizar VIP membership com o ID correto
+                vip = s.query(VipMembership).filter(
+                    VipMembership.user_id == 0
+                ).order_by(VipMembership.created_at.desc()).first()
+                
+                if vip:
+                    vip.user_id = user_id
+                    vip.username = username
+                    logging.info(f"[VIP-ENTRY] VIP associado ao usuário {user_id}")
+            
             # Associar pagamento ao usuário que entrou
             payment.user_id = user_id
             payment.username = username
-            
-            # Atualizar VIP membership com o ID correto
-            vip = s.query(VipMembership).filter(
-                VipMembership.user_id == 0
-            ).order_by(VipMembership.created_at.desc()).first()
-            
-            if vip:
-                vip.user_id = user_id
-                vip.username = username
-                logging.info(f"[VIP-ENTRY] VIP associado ao usuário {user_id}")
             
             s.commit()
             
@@ -1322,6 +1372,13 @@ async def process_vip_member_entry(user, entry_type: str):
             ).first()
             
             if existing_vip:
+                # Debug: verificar por que a data está tão longe no futuro
+                logging.info(f"[VIP-ENTRY] VIP existente para {user_id}:")
+                logging.info(f"  - Created: {existing_vip.created_at}")
+                logging.info(f"  - Expires: {existing_vip.expires_at}")
+                logging.info(f"  - Plan: {existing_vip.plan}")
+                logging.info(f"  - Active: {existing_vip.active}")
+                
                 # Enviar mensagem de boas-vindas para VIP existente
                 expires_str = existing_vip.expires_at.strftime("%d/%m/%Y às %H:%M") if existing_vip.expires_at else "N/A"
                 
@@ -1351,12 +1408,6 @@ async def process_vip_member_entry(user, entry_type: str):
                     logging.info(f"[VIP-ENTRY] Mensagem de boas-vindas enviada para VIP existente {user_id}")
                 except Exception as e:
                     logging.error(f"[VIP-ENTRY] Erro ao enviar boas-vindas: {e}")
-
-    with SessionLocal() as s:
-        vm = s.query(VipMembership).filter(VipMembership.invite_link == invite_link).first()
-        if vm:
-            vm.invite_link = None
-            if not valid and vm.expires_at and vm.expires_at <= now_utc():
                 vm.active = False
             s.commit()
 
@@ -1876,9 +1927,13 @@ async def enviar_pack_free_job(context: ContextTypes.DEFAULT_TYPE):
 # CALLBACK QUERY HANDLER
 # =========================
 async def checkout_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handler para o botão de checkout"""
+    """Handler para o botão de checkout e renovações temporárias"""
     query = update.callback_query
-    if not query or query.data != "checkout_callback":
+    if not query:
+        return
+    
+    # Permitir checkout_callback normal e checkout_temp_ para renovações
+    if query.data != "checkout_callback" and not query.data.startswith("checkout_temp_"):
         return
     
     await query.answer()  # Responde ao callback
@@ -1912,14 +1967,39 @@ async def checkout_callback_handler(update: Update, context: ContextTypes.DEFAUL
             # Garantir que o path /pay/ esteja presente
             WEBAPP_URL = f"{WEBAPP_URL.rstrip('/')}/pay/"
         
-        # Gerar ID temporário para esta sessão de pagamento - ID real será capturado quando entrar no grupo
-        import uuid
-        temp_uid = f"temp_{int(time.time())}_{str(uuid.uuid4())[:8]}"
+        # Verificar se é renovação ou checkout normal
+        is_renewal = query.data.startswith("checkout_temp_")
+        temp_uid = None
         username = user.username or user.first_name or "user"
         ts = int(time.time())
         
-        # Salvar mapeamento temporário (opcional para debug)
-        logging.info(f"[CHECKOUT] Sessão de pagamento - Temp ID: {temp_uid}, Telegram User: {user.id} ({username})")
+        if is_renewal:
+            # Extrair temp_payment_id do callback_data
+            temp_payment_id = query.data.replace("checkout_temp_", "")
+            logging.info(f"[CHECKOUT-RENEW] Processando renovação para temp_payment_id: {temp_payment_id}")
+            
+            # Buscar pagamento de renovação existente
+            with SessionLocal() as s:
+                renewal_payment = s.query(Payment).filter(
+                    Payment.temp_user_id == temp_payment_id,
+                    Payment.status == "pending_payment"
+                ).first()
+                
+                if not renewal_payment:
+                    await query.edit_message_text(
+                        "❌ Pagamento de renovação não encontrado ou expirado.\n"
+                        "Tente iniciar uma nova renovação.",
+                        parse_mode="HTML"
+                    )
+                    return
+                
+                temp_uid = temp_payment_id
+                logging.info(f"[CHECKOUT-RENEW] Renovação encontrada: {renewal_payment.days_vip} dias, ${renewal_payment.amount_usd}")
+        else:
+            # Gerar ID temporário para checkout normal - ID real será capturado quando entrar no grupo
+            import uuid
+            temp_uid = f"temp_{int(time.time())}_{str(uuid.uuid4())[:8]}"
+            logging.info(f"[CHECKOUT] Sessão de pagamento - Temp ID: {temp_uid}, Telegram User: {user.id} ({username})")
         
         # Criar URL com ID temporário - ID real será associado quando entrar no grupo VIP
         sig = make_link_sig(os.getenv("BOT_SECRET", "default"), temp_uid, ts)
@@ -1939,23 +2019,50 @@ async def checkout_callback_handler(update: Update, context: ContextTypes.DEFAUL
             )]
         ])
 
-        checkout_msg = (
-            f"💸 <b>Pagamento VIP via Cripto</b>\n\n"
-            f"👤 <b>Usuário:</b> {username}\n"
-            f"✅ Pagamento será associado quando você entrar no grupo VIP\n"
-            f"🔒 Pague com qualquer criptomoeda\n"
-            f"⚡ Ativação automática do VIP\n\n"
-            f"💰 <b>Planos:</b>\n"
-            f"• 30 dias: $0.05\n"
-            f"• 60 dias: $1.00\n"
-            f"• 180 dias: $1.50\n"
-            f"• 365 dias: $2.00\n\n"
-            f"📋 <b>Como funciona:</b>\n"
-            f"1. Clique no botão abaixo para pagar\n"
-            f"2. Após o pagamento, aguarde a confirmação\n"
-            f"3. Use o link de convite que será enviado\n"
-            f"4. Entre no grupo VIP - seu pagamento será automaticamente associado!"
-        )
+        if is_renewal:
+            # Mensagem específica para renovação
+            with SessionLocal() as s:
+                renewal_payment = s.query(Payment).filter(
+                    Payment.temp_user_id == temp_payment_id,
+                    Payment.status == "pending_payment"
+                ).first()
+                
+                plan_name = renewal_payment.plan.replace("_", " ").title() if renewal_payment.plan else f"{renewal_payment.days_vip} dias"
+                
+                checkout_msg = (
+                    f"🔄 <b>Renovação VIP via Cripto</b>\n\n"
+                    f"👤 <b>Usuário:</b> {username}\n"
+                    f"📦 <b>Plano:</b> {plan_name} ({renewal_payment.days_vip} dias)\n"
+                    f"💰 <b>Valor:</b> ${renewal_payment.amount_usd:.2f} USD\n"
+                    f"🔄 <b>Tipo:</b> Renovação (substitui VIP atual)\n\n"
+                    f"✅ Pagamento será processado automaticamente\n"
+                    f"🔒 Pague com qualquer criptomoeda\n"
+                    f"⚡ Ativação imediata após confirmação\n\n"
+                    f"📋 <b>Como funciona:</b>\n"
+                    f"1. Clique no botão abaixo para pagar\n"
+                    f"2. Após o pagamento, aguarde a confirmação\n"
+                    f"3. Seu VIP será renovado automaticamente\n"
+                    f"4. Você receberá um novo período completo!"
+                )
+        else:
+            # Mensagem padrão para checkout normal
+            checkout_msg = (
+                f"💸 <b>Pagamento VIP via Cripto</b>\n\n"
+                f"👤 <b>Usuário:</b> {username}\n"
+                f"✅ Pagamento será associado quando você entrar no grupo VIP\n"
+                f"🔒 Pague com qualquer criptomoeda\n"
+                f"⚡ Ativação automática do VIP\n\n"
+                f"💰 <b>Planos:</b>\n"
+                f"• 30 dias: $0.05\n"
+                f"• 60 dias: $1.00\n"
+                f"• 180 dias: $1.50\n"
+                f"• 365 dias: $2.00\n\n"
+                f"📋 <b>Como funciona:</b>\n"
+                f"1. Clique no botão abaixo para pagar\n"
+                f"2. Após o pagamento, aguarde a confirmação\n"
+                f"3. Use o link de convite que será enviado\n"
+                f"4. Entre no grupo VIP - seu pagamento será automaticamente associado!"
+            )
 
         # Editar a mensagem existente para trocar o callback por URL
         try:
@@ -4152,6 +4259,46 @@ async def comprovante_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="HTML"
         )
 
+async def fix_vip_dates_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Corrigir VIPs com datas muito longas no futuro"""
+    if not (update.effective_user and is_admin(update.effective_user.id)):
+        return await update.effective_message.reply_text("Apenas admins.")
+    
+    now = now_utc()
+    max_future = now + dt.timedelta(days=400)  # Máximo 400 dias no futuro
+    
+    with SessionLocal() as s:
+        # Buscar VIPs com datas muito longas
+        problematic_vips = s.query(VipMembership).filter(
+            VipMembership.expires_at > max_future
+        ).all()
+        
+        if not problematic_vips:
+            return await update.effective_message.reply_text("✅ Nenhum VIP com data problemática encontrado.")
+        
+        report = []
+        for vip in problematic_vips:
+            old_date = vip.expires_at
+            # Resetar para 30 dias a partir de agora
+            new_date = now + dt.timedelta(days=30)
+            vip.expires_at = new_date
+            
+            report.append(
+                f"ID {vip.user_id}: {old_date.strftime('%Y-%m-%d')} \u2192 {new_date.strftime('%Y-%m-%d')}"
+            )
+        
+        s.commit()
+        
+        report_text = (
+            f"🔧 <b>VIPs corrigidos: {len(problematic_vips)}</b>\n\n" +
+            "\n".join(report[:10])  # Mostrar apenas os primeiros 10
+        )
+        
+        if len(report) > 10:
+            report_text += f"\n\n... e mais {len(report) - 10}"
+        
+        await update.effective_message.reply_text(report_text, parse_mode="HTML")
+
 async def debug_convite_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Comando de debug para testar criação de convites"""
     if not (update.effective_user and is_admin(update.effective_user.id)):
@@ -4540,18 +4687,388 @@ async def api_validate(request: Request):
 
 
 async def vip_expiration_warn_job(context: ContextTypes.DEFAULT_TYPE):
+    """Sistema completo de avisos de expiração com botões de renovação"""
     now = now_utc()
+    
     with SessionLocal() as s:
-        membros = (
-            s.query(VipMembership)
-             .filter(VipMembership.active == True, VipMembership.expires_at > now)
-             .all()
+        # Buscar VIPs ativos que ainda não expiraram
+        membros = s.query(VipMembership).filter(
+            VipMembership.active == True, 
+            VipMembership.expires_at > now
+        ).all()
+        
+        for m in membros:
+            # Corrigir timezone se necessário
+            expires_at = m.expires_at
+            if expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=dt.timezone.utc)
+                m.expires_at = expires_at
+                s.commit()
+            
+            days_left = (expires_at - now).days
+            hours_left = (expires_at - now).total_seconds() / 3600
+            
+            # Aviso 7 dias
+            if days_left <= 7 and not m.notified_7_days:
+                await send_expiration_warning(m, 7, days_left)
+                m.notified_7_days = True
+                s.commit()
+                
+            # Aviso 3 dias
+            elif days_left <= 3 and not m.notified_3_days:
+                await send_expiration_warning(m, 3, days_left)
+                m.notified_3_days = True
+                s.commit()
+                
+            # Aviso 1 dia (24 horas)
+            elif hours_left <= 24 and not m.notified_1_day:
+                await send_expiration_warning(m, 1, days_left, hours_left)
+                m.notified_1_day = True
+                s.commit()
+        
+        # Processar VIPs expirados
+        expired_vips = s.query(VipMembership).filter(
+            VipMembership.active == True,
+            VipMembership.expires_at <= now,
+            VipMembership.removal_scheduled == False
+        ).all()
+        
+        for expired_vip in expired_vips:
+            await process_expired_vip(expired_vip, s)
+
+async def send_expiration_warning(vip_member: 'VipMembership', warning_days: int, days_left: int, hours_left: float = None):
+    """Envia aviso de expiração com botão de renovação"""
+    user_id = vip_member.user_id
+    username = vip_member.username or f"user_{user_id}"
+    
+    # Criar botão de renovação
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton(
+            "🔄 RENOVAR VIP AGORA", 
+            callback_data="renew_vip_callback"
+        )],
+        [InlineKeyboardButton(
+            "ℹ️ Ver Planos", 
+            callback_data="checkout_callback"
+        )]
+    ])
+    
+    # Determinar urgência da mensagem
+    if warning_days == 7:
+        emoji = "⚠️"
+        urgency = "⏰ <b>LEMBRETE</b>"
+        time_msg = f"em {days_left} dias"
+    elif warning_days == 3:
+        emoji = "🚨"
+        urgency = "⚠️ <b>ATENÇÃO!</b>"
+        time_msg = f"em apenas {days_left} dias"
+    else:  # 1 dia
+        emoji = "🚨"
+        urgency = "🚨 <b>URGENTE!</b>"
+        if hours_left <= 24:
+            hours = int(hours_left)
+            time_msg = f"em {hours} horas" if hours > 1 else "em menos de 1 hora"
+        else:
+            time_msg = "amanhã"
+    
+    expires_str = vip_member.expires_at.strftime("%d/%m/%Y às %H:%M")
+    
+    message = (
+        f"{emoji} {urgency}\n\n"
+        f"👤 Olá, {username}!\n\n"
+        f"🔔 <b>Seu VIP expira {time_msg}!</b>\n"
+        f"📅 <b>Data de expiração:</b> {expires_str}\n\n"
+        f"💡 <b>Para continuar aproveitando:</b>\n"
+        f"• Conteúdo exclusivo\n"
+        f"• Acesso prioritário\n"
+        f"• Suporte VIP\n\n"
+        f"🔥 <b>Renove agora e não perca acesso!</b>\n"
+        f"Clique no botão abaixo para renovar:"
+    )
+    
+    try:
+        await application.bot.send_message(
+            chat_id=user_id,
+            text=message,
+            parse_mode="HTML",
+            reply_markup=keyboard
         )
-    for m in membros:
-        dias = (m.expires_at - now).days
-        if dias in (3, 1):
-            texto = f"⚠️ Seu VIP expira em {dias} dia{'s' if dias > 1 else ''}. Renove através do botão de pagamento que aparece junto às imagens."
-            await dm(m.user_id, texto)
+        
+        # Registrar notificação enviada
+        with SessionLocal() as s:
+            notification = VipNotification(
+                user_id=user_id,
+                notification_type=f"{warning_days}_days",
+                vip_expires_at=vip_member.expires_at
+            )
+            s.add(notification)
+            s.commit()
+            
+        logging.info(f"[VIP-WARNING] Aviso {warning_days} dias enviado para {user_id}")
+        
+    except Exception as e:
+        logging.error(f"[VIP-WARNING] Erro ao enviar aviso para {user_id}: {e}")
+
+async def renew_vip_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handler para botão de renovação VIP"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = query.from_user.id
+    username = query.from_user.username
+    
+    logging.info(f"[VIP-RENEW] Usuário {user_id} ({username}) clicou em renovar VIP")
+    
+    try:
+        with SessionLocal() as s:
+            # Verificar se usuário tem VIP ativo/expirado
+            vip_member = s.query(VipMembership).filter(
+                VipMembership.user_id == user_id
+            ).first()
+            
+            if not vip_member:
+                await query.edit_message_text(
+                    "❌ Você não possui um VIP cadastrado.\n"
+                    "Use /checkout para adquirir seu primeiro VIP.",
+                    parse_mode="HTML"
+                )
+                return
+            
+            # Criar mensagem explicativa sobre renovação
+            expires_at = vip_member.expires_at
+            if expires_at:
+                expires_str = expires_at.strftime("%d/%m/%Y às %H:%M")
+                if expires_at.tzinfo is None:
+                    expires_at = expires_at.replace(tzinfo=timezone.utc)
+                
+                now = now_utc()
+                is_expired = expires_at <= now
+                
+                if is_expired:
+                    status_msg = f"❌ <b>VIP EXPIRADO</b> em {expires_str}"
+                    renewal_msg = "✨ <b>RENOVAÇÃO:</b> Você receberá um novo período VIP completo!"
+                else:
+                    days_left = (expires_at - now).days
+                    status_msg = f"✅ <b>VIP ATIVO</b> até {expires_str} ({days_left} dias)"
+                    renewal_msg = "✨ <b>RENOVAÇÃO:</b> Seu VIP atual será substituído por um novo período completo!"
+            else:
+                status_msg = "⚠️ <b>Status indefinido</b>"
+                renewal_msg = "✨ <b>RENOVAÇÃO:</b> Você receberá um novo período VIP!"
+            
+            # Criar botões para planos
+            keyboard = InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton("💎 1 MÊS - $0.50", callback_data="renew_plan_30"),
+                    InlineKeyboardButton("💎 2 MESES - $1.50", callback_data="renew_plan_60")
+                ],
+                [
+                    InlineKeyboardButton("💎 6 MESES - $2.50", callback_data="renew_plan_180"),
+                    InlineKeyboardButton("💎 1 ANO - $4.00", callback_data="renew_plan_365")
+                ],
+                [InlineKeyboardButton("❌ Cancelar", callback_data="cancel_renewal")]
+            ])
+            
+            renewal_text = (
+                f"🔄 <b>RENOVAÇÃO DE VIP</b>\n\n"
+                f"👤 <b>Usuário:</b> {username or 'N/A'}\n"
+                f"🆔 <b>ID:</b> <code>{user_id}</code>\n\n"
+                f"{status_msg}\n\n"
+                f"{renewal_msg}\n"
+                f"❗ <b>IMPORTANTE:</b> A renovação substitui completamente seu VIP atual.\n\n"
+                f"💰 <b>Escolha seu novo plano:</b>"
+            )
+            
+            await query.edit_message_text(
+                text=renewal_text,
+                parse_mode="HTML",
+                reply_markup=keyboard
+            )
+            
+    except Exception as e:
+        logging.error(f"[VIP-RENEW] Erro ao processar renovação para {user_id}: {e}")
+        await query.edit_message_text(
+            "❌ Erro interno. Tente novamente ou contate o suporte.",
+            parse_mode="HTML"
+        )
+
+async def renew_plan_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handler para seleção de plano de renovação"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = query.from_user.id
+    username = query.from_user.username
+    
+    # Extrair dias do callback_data (renew_plan_30, renew_plan_60, etc.)
+    callback_data = query.data
+    if not callback_data.startswith("renew_plan_"):
+        await query.edit_message_text("❌ Dados inválidos.")
+        return
+    
+    try:
+        days = int(callback_data.split("renew_plan_")[1])
+    except (ValueError, IndexError):
+        await query.edit_message_text("❌ Plano inválido.")
+        return
+    
+    # Mapeamento de dias para preços e descrições
+    plan_info = {
+        30: {"price": 0.50, "name": "1 Mês"},
+        60: {"price": 1.50, "name": "2 Meses"}, 
+        180: {"price": 2.50, "name": "6 Meses"},
+        365: {"price": 4.00, "name": "1 Ano"}
+    }
+    
+    if days not in plan_info:
+        await query.edit_message_text("❌ Plano não encontrado.")
+        return
+    
+    plan = plan_info[days]
+    logging.info(f"[VIP-RENEW] Usuário {user_id} selecionou renovação: {plan['name']} - ${plan['price']}")
+    
+    try:
+        with SessionLocal() as s:
+            # Marcar VIP atual como inativo (será substituído)
+            current_vip = s.query(VipMembership).filter(
+                VipMembership.user_id == user_id
+            ).first()
+            
+            if current_vip:
+                # Manter dados do VIP atual para referência
+                old_expires = current_vip.expires_at.strftime("%d/%m/%Y") if current_vip.expires_at else "N/A"
+                current_vip.active = False
+                current_vip.notes = f"Substituído por renovação em {now_utc().strftime('%d/%m/%Y %H:%M')}"
+            
+            # Criar novo pagamento temporário para renovação
+            temp_payment_id = f"RENEW_{user_id}_{int(time.time())}"
+            
+            new_payment = Payment(
+                user_id=None,  # Será associado quando o pagamento for confirmado
+                temp_user_id=temp_payment_id,
+                username=username,
+                amount_usd=plan['price'],
+                amount_crypto=0.0,  # Será preenchido no pagamento
+                crypto_symbol="BNB",  # Default
+                network="bsc",  # Default 
+                wallet_address="",  # Será preenchido
+                status="pending_payment",
+                created_at=now_utc(),
+                days_vip=days,
+                plan=plan['name'].lower().replace(" ", "_")
+            )
+            
+            s.add(new_payment)
+            s.commit()
+            
+            # Criar mensagem de confirmação com instruções
+            confirmation_text = (
+                f"✅ <b>RENOVAÇÃO CONFIRMADA</b>\n\n"
+                f"📦 <b>Plano Selecionado:</b> {plan['name']}\n"
+                f"💰 <b>Valor:</b> ${plan['price']:.2f} USD\n"
+                f"🔄 <b>Tipo:</b> Renovação (substitui VIP atual)\n\n"
+                f"⚡ <b>PRÓXIMOS PASSOS:</b>\n"
+                f"1️⃣ Clique em 'Pagar Agora' abaixo\n"
+                f"2️⃣ Escolha a criptomoeda (BNB, ETH, USDT, etc.)\n"
+                f"3️⃣ Faça o pagamento no valor exato mostrado\n"
+                f"4️⃣ Seu VIP será ativado automaticamente!\n\n"
+                f"❗ <b>IMPORTANTE:</b> Este pagamento substituirá completamente seu VIP atual."
+            )
+            
+            keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton("💳 PAGAR AGORA", callback_data=f"checkout_temp_{temp_payment_id}")],
+                [InlineKeyboardButton("❌ Cancelar", callback_data="cancel_renewal")]
+            ])
+            
+            await query.edit_message_text(
+                text=confirmation_text,
+                parse_mode="HTML",
+                reply_markup=keyboard
+            )
+            
+    except Exception as e:
+        logging.error(f"[VIP-RENEW] Erro ao processar plano para {user_id}: {e}")
+        await query.edit_message_text(
+            "❌ Erro interno. Tente novamente ou contate o suporte.",
+            parse_mode="HTML"
+        )
+
+async def cancel_renewal_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handler para cancelamento de renovação"""
+    query = update.callback_query
+    await query.answer()
+    
+    await query.edit_message_text(
+        "❌ <b>Renovação cancelada.</b>\n\n"
+        "Para renovar depois, use o comando /status e clique em 'Renovar VIP'.",
+        parse_mode="HTML"
+    )
+
+async def process_expired_vip(expired_vip: 'VipMembership', session):
+    """Processa VIP expirado - desativa e remove do grupo"""
+    user_id = expired_vip.user_id
+    username = expired_vip.username or f"user_{user_id}"
+    
+    try:
+        # 1. Desativar VIP
+        expired_vip.active = False
+        expired_vip.removal_scheduled = True
+        
+        # 2. Enviar notificação de expiração
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton(
+                "🔄 REATIVAR VIP", 
+                callback_data="renew_vip_callback"
+            )]
+        ])
+        
+        expire_msg = (
+            f"❌ <b>SEU VIP EXPIROU!</b>\n\n"
+            f"👤 {username}\n"
+            f"📅 Expirou em: {expired_vip.expires_at.strftime('%d/%m/%Y às %H:%M')}\n\n"
+            f"🚨 <b>Você será removido do grupo VIP em alguns minutos.</b>\n\n"
+            f"💡 <b>Para reativar:</b>\n"
+            f"• Clique no botão abaixo\n"
+            f"• Escolha seu plano\n"
+            f"• Faça o pagamento\n"
+            f"• Retorne automaticamente ao grupo!\n\n"
+            f"🔥 <b>Reative agora com desconto especial!</b>"
+        )
+        
+        await application.bot.send_message(
+            chat_id=user_id,
+            text=expire_msg,
+            parse_mode="HTML",
+            reply_markup=keyboard
+        )
+        
+        # 3. Remover do grupo VIP
+        try:
+            await application.bot.ban_chat_member(
+                chat_id=GROUP_VIP_ID,
+                user_id=user_id
+            )
+            # Desbanir imediatamente (só para remover, não bloquear permanentemente)
+            await application.bot.unban_chat_member(
+                chat_id=GROUP_VIP_ID,
+                user_id=user_id
+            )
+            logging.info(f"[VIP-EXPIRED] Usuário {user_id} removido do grupo VIP")
+        except Exception as remove_error:
+            logging.error(f"[VIP-EXPIRED] Erro ao remover {user_id} do grupo: {remove_error}")
+        
+        # 4. Registrar notificação
+        notification = VipNotification(
+            user_id=user_id,
+            notification_type="expired",
+            vip_expires_at=expired_vip.expires_at
+        )
+        session.add(notification)
+        session.commit()
+        
+        logging.info(f"[VIP-EXPIRED] VIP {user_id} processado: desativado e removido do grupo")
+        
+    except Exception as e:
+        logging.error(f"[VIP-EXPIRED] Erro ao processar VIP expirado {user_id}: {e}")
 
 
 async def keepalive_job(context: ContextTypes.DEFAULT_TYPE):
@@ -4827,6 +5344,7 @@ async def on_startup():
         application.add_handler(CommandHandler("listar_jobs", listar_jobs_cmd), group=1)
         application.add_handler(CommandHandler("enviar_pack_agora", enviar_pack_agora_cmd), group=1)
         application.add_handler(CommandHandler("debug_convite", debug_convite_cmd), group=1)
+        application.add_handler(CommandHandler("fix_vip_dates", fix_vip_dates_cmd), group=1)
         application.add_handler(CommandHandler("comprovante", comprovante_cmd), group=1)
         application.add_handler(CommandHandler("recibo", comprovante_cmd), group=1)  # Alias
 
@@ -4850,8 +5368,11 @@ async def on_startup():
             group=0
         )
         
-        # ===== Callback Query Handler
+        # ===== Callback Query Handler - Checkout e Renovação
         application.add_handler(CallbackQueryHandler(checkout_callback_handler, pattern="checkout_callback"), group=1)
+        application.add_handler(CallbackQueryHandler(renew_vip_callback_handler, pattern="renew_vip_callback"), group=1)
+        application.add_handler(CallbackQueryHandler(renew_plan_callback_handler, pattern="renew_plan_"), group=1)
+        application.add_handler(CallbackQueryHandler(cancel_renewal_callback_handler, pattern="cancel_renewal"), group=1)
 
         # Jobs
         await _reschedule_daily_packs()
