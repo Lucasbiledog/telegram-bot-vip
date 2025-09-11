@@ -1201,6 +1201,155 @@ async def vip_join_request_handler(update: Update, context: ContextTypes.DEFAULT
     except Exception:
         pass
 
+async def vip_member_joined_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handler para quando usuário realmente ENTRA no grupo VIP (após aprovação)"""
+    # Verificar se é no grupo VIP
+    if not update.effective_chat or update.effective_chat.id != GROUP_VIP_ID:
+        return
+    
+    # Handler para novos membros que entraram
+    if update.message and update.message.new_chat_members:
+        for new_member in update.message.new_chat_members:
+            await process_vip_member_entry(new_member, "new_member")
+    
+    # Handler para chat_member update (quando status muda para 'member')
+    elif update.chat_member:
+        chat_member_update = update.chat_member
+        # Verificar se o status mudou para 'member' (entrou no grupo)
+        if (chat_member_update.new_chat_member.status == 'member' and 
+            chat_member_update.old_chat_member.status in ['restricted', 'left', 'kicked']):
+            await process_vip_member_entry(chat_member_update.new_chat_member.user, "status_change")
+
+async def process_vip_member_entry(user, entry_type: str):
+    """Processa entrada real de um membro no grupo VIP e associa com pagamento pendente"""
+    user_id = user.id
+    username = user.username or user.first_name
+    
+    logging.info(f"[VIP-ENTRY] Usuário {username} (ID: {user_id}) entrou no grupo VIP via {entry_type}")
+    
+    # Buscar pagamentos pendentes sem ID associado (UID temporário)
+    with SessionLocal() as s:
+        from payments import Payment
+        
+        # Procurar pagamentos aprovados recentes sem user_id válido ou com user_id = 0
+        recent_payments = s.query(Payment).filter(
+            Payment.status == "approved",
+            Payment.user_id.in_([0, None]),  # Pagamentos sem ID válido
+            Payment.created_at >= now_utc() - dt.timedelta(hours=24)  # Últimas 24h
+        ).order_by(Payment.created_at.desc()).all()
+        
+        if recent_payments:
+            # Pegar o pagamento mais recente
+            payment = recent_payments[0]
+            
+            # Associar pagamento ao usuário que entrou
+            payment.user_id = user_id
+            payment.username = username
+            
+            # Atualizar VIP membership com o ID correto
+            vip = s.query(VipMembership).filter(
+                VipMembership.user_id == 0
+            ).order_by(VipMembership.created_at.desc()).first()
+            
+            if vip:
+                vip.user_id = user_id
+                vip.username = username
+                logging.info(f"[VIP-ENTRY] VIP associado ao usuário {user_id}")
+            
+            s.commit()
+            
+            # Enviar comprovante completo no privado
+            try:
+                # Calcular data de expiração do VIP
+                vip_expires = vip.expires_at if vip else None
+                expires_str = vip_expires.strftime("%d/%m/%Y às %H:%M") if vip_expires else "N/A"
+                
+                # Criar comprovante detalhado
+                comprovante = (
+                    f"📜 <b>COMPROVANTE DE PAGAMENTO VIP</b> 📜\n"
+                    f"{'='*35}\n\n"
+                    
+                    f"📅 <b>Data:</b> {now_utc().strftime('%d/%m/%Y às %H:%M')}\n"
+                    f"👤 <b>Usuário:</b> {username}\n"
+                    f"🆔 <b>ID Telegram:</b> <code>{user_id}</code>\n\n"
+                    
+                    f"💰 <b>DETALHES DO PAGAMENTO</b>\n"
+                    f"• <b>Valor Pago:</b> ${payment.usd_value}\n"
+                    f"• <b>Criptomoeda:</b> {payment.token_symbol or 'N/A'}\n"
+                    f"• <b>Quantidade:</b> {payment.amount}\n"
+                    f"• <b>Hash:</b> <code>{payment.tx_hash[:16]}...{payment.tx_hash[-8:]}</code>\n\n"
+                    
+                    f"👑 <b>VIP ATIVADO</b>\n"
+                    f"• <b>Duração:</b> {payment.vip_days} dias\n"
+                    f"• <b>Válido até:</b> {expires_str}\n"
+                    f"• <b>Status:</b> ✅ Ativo\n\n"
+                    
+                    f"📁 <b>REGRAS DO GRUPO VIP</b>\n"
+                    f"• Respeite todos os membros\n"
+                    f"• Proibido spam ou conteúdo inapropriado\n"
+                    f"• Não compartilhe links de convite\n"
+                    f"• Mantenha conversa relevante ao tema\n"
+                    f"• Proibido revenda de conteúdo\n"
+                    f"• Respeite os administradores\n\n"
+                    
+                    f"⚠️ <b>IMPORTANTE:</b>\n"
+                    f"• Seu VIP expira automaticamente na data indicada\n"
+                    f"• Você receberá avisos 3 e 1 dia antes do vencimento\n"
+                    f"• Para renovar, use o mesmo botão de pagamento\n"
+                    f"• Em caso de dúvidas, contate o suporte\n\n"
+                    
+                    f"🎉 <b>Bem-vindo ao grupo VIP!</b>\n"
+                    f"Aproveite o conteúdo exclusivo!"
+                )
+                
+                await application.bot.send_message(
+                    chat_id=user_id,
+                    text=comprovante,
+                    parse_mode="HTML"
+                )
+                logging.info(f"[VIP-ENTRY] Comprovante enviado para {user_id}")
+            except Exception as e:
+                logging.error(f"[VIP-ENTRY] Erro ao enviar comprovante: {e}")
+        else:
+            logging.info(f"[VIP-ENTRY] Nenhum pagamento pendente encontrado para associar ao usuário {user_id}")
+            
+            # Verificar se usuário já tem VIP ativo (pagamento antigo)
+            existing_vip = s.query(VipMembership).filter(
+                VipMembership.user_id == user_id,
+                VipMembership.active == True
+            ).first()
+            
+            if existing_vip:
+                # Enviar mensagem de boas-vindas para VIP existente
+                expires_str = existing_vip.expires_at.strftime("%d/%m/%Y às %H:%M") if existing_vip.expires_at else "N/A"
+                
+                welcome_msg = (
+                    f"🎉 <b>Bem-vindo de volta ao grupo VIP!</b>\n\n"
+                    f"👤 <b>Usuário:</b> {username}\n"
+                    f"🆔 <b>ID:</b> <code>{user_id}</code>\n\n"
+                    f"👑 <b>Seu VIP está ativo até:</b> {expires_str}\n\n"
+                    
+                    f"📁 <b>LEMBRE-SE DAS REGRAS:</b>\n"
+                    f"• Respeite todos os membros\n"
+                    f"• Proibido spam ou conteúdo inapropriado\n"
+                    f"• Não compartilhe links de convite\n"
+                    f"• Mantenha conversa relevante ao tema\n"
+                    f"• Proibido revenda de conteúdo\n"
+                    f"• Respeite os administradores\n\n"
+                    
+                    f"Aproveite o conteúdo exclusivo!"
+                )
+                
+                try:
+                    await application.bot.send_message(
+                        chat_id=user_id,
+                        text=welcome_msg,
+                        parse_mode="HTML"
+                    )
+                    logging.info(f"[VIP-ENTRY] Mensagem de boas-vindas enviada para VIP existente {user_id}")
+                except Exception as e:
+                    logging.error(f"[VIP-ENTRY] Erro ao enviar boas-vindas: {e}")
+
     with SessionLocal() as s:
         vm = s.query(VipMembership).filter(VipMembership.invite_link == invite_link).first()
         if vm:
@@ -1761,20 +1910,24 @@ async def checkout_callback_handler(update: Update, context: ContextTypes.DEFAUL
             # Garantir que o path /pay/ esteja presente
             WEBAPP_URL = f"{WEBAPP_URL.rstrip('/')}/pay/"
         
-        # Capturar dados do usuário automaticamente - SEMPRE usar o ID do usuário que clicou
-        uid = user.id  # ID do usuário que clicou no botão
-        username = user.username or user.first_name or f"user_{uid}"
+        # Gerar ID temporário para esta sessão de pagamento - ID real será capturado quando entrar no grupo
+        import uuid
+        temp_uid = f"temp_{int(time.time())}_{str(uuid.uuid4())[:8]}"
+        username = user.username or user.first_name or "user"
         ts = int(time.time())
-        sig = make_link_sig(os.getenv("BOT_SECRET", "default"), uid, ts)
         
-        # Criar URL com parâmetros do usuário CORRETO (quem clicou)
+        # Salvar mapeamento temporário (opcional para debug)
+        logging.info(f"[CHECKOUT] Sessão de pagamento - Temp ID: {temp_uid}, Telegram User: {user.id} ({username})")
+        
+        # Criar URL com ID temporário - ID real será associado quando entrar no grupo VIP
+        sig = make_link_sig(os.getenv("BOT_SECRET", "default"), temp_uid, ts)
         base_url = os.getenv("WEBAPP_URL", "https://telegram-bot-vip-hfn7.onrender.com")
         if base_url.endswith('/pay/') or base_url.endswith('/pay'):
-            checkout_url = f"{base_url.rstrip('/')}/?uid={uid}&username={username}&ts={ts}&sig={sig}"
+            checkout_url = f"{base_url.rstrip('/')}/?uid={temp_uid}&username={username}&ts={ts}&sig={sig}"
         else:
-            checkout_url = f"{base_url.rstrip('/')}/pay/?uid={uid}&username={username}&ts={ts}&sig={sig}"
+            checkout_url = f"{base_url.rstrip('/')}/pay/?uid={temp_uid}&username={username}&ts={ts}&sig={sig}"
         
-        logging.info(f"[CHECKOUT] Usuário que clicou - ID: {uid}, Username: {username}, URL: {checkout_url[:100]}...")
+        logging.info(f"[CHECKOUT] URL gerada com temp ID: {checkout_url[:100]}...")
         
         # Botão que abre diretamente com o user ID capturado
         keyboard = InlineKeyboardMarkup([
@@ -1786,15 +1939,20 @@ async def checkout_callback_handler(update: Update, context: ContextTypes.DEFAUL
 
         checkout_msg = (
             f"💸 <b>Pagamento VIP via Cripto</b>\n\n"
-            f"👤 <b>Usuário:</b> {username} (ID: {uid})\n"
-            f"✅ Link personalizado para SEU ID\n"
+            f"👤 <b>Usuário:</b> {username}\n"
+            f"✅ Pagamento será associado quando você entrar no grupo VIP\n"
             f"🔒 Pague com qualquer criptomoeda\n"
             f"⚡ Ativação automática do VIP\n\n"
             f"💰 <b>Planos:</b>\n"
             f"• 30 dias: $0.05\n"
             f"• 60 dias: $1.00\n"
             f"• 180 dias: $1.50\n"
-            f"• 365 dias: $2.00"
+            f"• 365 dias: $2.00\n\n"
+            f"📋 <b>Como funciona:</b>\n"
+            f"1. Clique no botão abaixo para pagar\n"
+            f"2. Após o pagamento, aguarde a confirmação\n"
+            f"3. Use o link de convite que será enviado\n"
+            f"4. Entre no grupo VIP - seu pagamento será automaticamente associado!"
         )
 
         # Editar a mensagem existente para trocar o callback por URL
@@ -1841,6 +1999,8 @@ async def comandos_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• /comandos — esta lista",
         "• /listar_comandos — (alias)",
         "• /getid — mostra seus IDs",
+        "• /comprovante — ver comprovante do VIP",
+        "• /status — ver status do VIP",
         "",
         "💬 Envio imediato:",
         "• /say_vip <texto> — envia AGORA no VIP",
@@ -2438,6 +2598,7 @@ async def atualizar_comandos_cmd(update: Update, context: ContextTypes.DEFAULT_T
             BotCommand("start", "Iniciar o bot e ver instruções"),
             BotCommand("help", "Ajuda e lista de comandos"),
             BotCommand("status", "Ver seu status VIP atual"),
+            BotCommand("comprovante", "Ver comprovante detalhado do VIP"),
             
             # Comandos de pagamento
             BotCommand("checkout", "Acessar página de pagamento"),
@@ -3912,6 +4073,83 @@ async def excluir_todos_packs_confirm(update: Update, context: ContextTypes.DEFA
     
     return ConversationHandler.END
 
+async def comprovante_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Comando para mostrar comprovante de pagamento VIP do usuário"""
+    user = update.effective_user
+    if not user:
+        return
+    
+    user_id = user.id
+    username = user.username or user.first_name or f"user_{user_id}"
+    
+    with SessionLocal() as s:
+        # Buscar VIP ativo do usuário
+        vip = s.query(VipMembership).filter(
+            VipMembership.user_id == user_id,
+            VipMembership.active == True
+        ).first()
+        
+        if not vip:
+            return await update.effective_message.reply_text(
+                "❌ Você não possui VIP ativo.\n"
+                "Use o botão de pagamento para adquirir seu VIP!"
+            )
+        
+        # Buscar pagamento mais recente associado
+        from payments import Payment
+        payment = s.query(Payment).filter(
+            Payment.user_id == user_id,
+            Payment.status == "approved"
+        ).order_by(Payment.created_at.desc()).first()
+        
+        # Dados do VIP
+        expires_str = vip.expires_at.strftime("%d/%m/%Y às %H:%M") if vip.expires_at else "N/A"
+        created_str = vip.created_at.strftime("%d/%m/%Y às %H:%M") if vip.created_at else "N/A"
+        
+        # Criar comprovante
+        comprovante = (
+            f"📜 <b>SEU COMPROVANTE VIP</b> 📜\n"
+            f"{'='*30}\n\n"
+            
+            f"👤 <b>Usuário:</b> {username}\n"
+            f"🆔 <b>ID:</b> <code>{user_id}</code>\n\n"
+        )
+        
+        if payment:
+            comprovante += (
+                f"💰 <b>Último Pagamento:</b>\n"
+                f"• <b>Valor:</b> ${payment.usd_value}\n"
+                f"• <b>Cripto:</b> {payment.token_symbol or 'N/A'}\n"
+                f"• <b>Quantidade:</b> {payment.amount}\n"
+                f"• <b>Data:</b> {payment.created_at.strftime('%d/%m/%Y') if payment.created_at else 'N/A'}\n\n"
+            )
+        
+        comprovante += (
+            f"👑 <b>STATUS VIP</b>\n"
+            f"• <b>Ativo desde:</b> {created_str}\n"
+            f"• <b>Válido até:</b> {expires_str}\n"
+            f"• <b>Status:</b> ✅ Ativo\n\n"
+            
+            f"📁 <b>REGRAS DO GRUPO VIP</b>\n"
+            f"• Respeite todos os membros\n"
+            f"• Proibido spam ou conteúdo inapropriado\n"
+            f"• Não compartilhe links de convite\n"
+            f"• Mantenha conversa relevante\n"
+            f"• Proibido revenda de conteúdo\n"
+            f"• Respeite os administradores\n\n"
+            
+            f"📱 <b>Comandos Úteis:</b>\n"
+            f"• /comprovante - Ver este comprovante\n"
+            f"• /status - Ver status do VIP\n\n"
+            
+            f"🎉 Obrigado por ser VIP!"
+        )
+        
+        await update.effective_message.reply_text(
+            comprovante,
+            parse_mode="HTML"
+        )
+
 async def debug_convite_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Comando de debug para testar criação de convites"""
     if not (update.effective_user and is_admin(update.effective_user.id)):
@@ -4037,58 +4275,80 @@ async def crypto_webhook(request: Request):
      # Se aprovado, renova VIP conforme plano e manda convite
     if approved:
         try:
-            # melhor esforço para obter username atual do usuário específico
-            username = None
-            try:
-                u = await application.bot.get_chat(int(uid))
-                username = u.username or u.first_name or f"user_{uid}"
-                logging.info(f"Username obtido para UID {uid}: {username}")
-            except Exception as e:
-                logging.warning(f"Erro ao obter dados do usuário {uid}: {e}")
-                username = f"user_{uid}"
-
-            # Garantir que VIP seja atribuído ao usuário correto
-            user_id_final = int(uid)
-            vip_upsert_start_or_extend(user_id_final, username, tx_hash, plan)
-            
-            # Tentar gerar convite com fallback robusto
-            invite_link = None
-            try:
-                invite_link = await create_and_store_personal_invite(user_id_final)
-                logging.info(f"[WEBHOOK] Convite gerado com sucesso para {user_id_final}")
-            except Exception as e:
-                logging.error(f"[WEBHOOK] Falha ao gerar convite pessoal: {e}")
-                # Fallback: usar função alternativa
+            # Obter username apenas se for ID real
+            if not is_temp_uid:
                 try:
-                    from utils import create_one_time_invite
-                    invite_link = await create_one_time_invite(
-                        application.bot, GROUP_VIP_ID, 
-                        expire_seconds=7200, member_limit=1
-                    )
-                    logging.info(f"[WEBHOOK] Convite fallback gerado para {user_id_final}")
-                except Exception as e2:
-                    logging.error(f"[WEBHOOK] Falha no fallback de convite: {e2}")
-                    invite_link = f"https://t.me/+LINK_MANUAL_VIP_{user_id_final}"
+                    u = await application.bot.get_chat(int(uid))
+                    username = u.username or u.first_name or f"user_{uid}"
+                    logging.info(f"Username obtido para UID {uid}: {username}")
+                except Exception as e:
+                    logging.warning(f"Erro ao obter dados do usuário {uid}: {e}")
+                    username = f"user_{uid}"
+            # Para temp UID, manter username do payload
+
+            # Verificar se é ID temporário ou real
+            is_temp_uid = isinstance(uid, str) and uid.startswith("temp_")
             
-            # Notificar o usuário específico que fez o pagamento
-            if invite_link and not invite_link.startswith("https://t.me/+LINK_MANUAL"):
-                message_text = (
-                    f"✅ Pagamento confirmado para {username}!\n"
-                    f"Seu VIP foi ativado por {PLAN_DAYS[plan]} dias.\n"
-                    f"Entre no VIP: {invite_link}"
+            if is_temp_uid:
+                # Pagamento com ID temporário - será associado quando usuário entrar no grupo
+                logging.info(f"[WEBHOOK] Pagamento aprovado com UID temporário: {uid}")
+                # Criar VIP com user_id = 0 (será atualizado quando entrar no grupo)
+                vip_upsert_start_or_extend(0, username, tx_hash, plan)
+                user_id_final = 0
+            else:
+                # ID real fornecido
+                user_id_final = int(uid)
+                vip_upsert_start_or_extend(user_id_final, username, tx_hash, plan)
+                logging.info(f"[WEBHOOK] Pagamento aprovado para usuário {user_id_final}")
+            
+            # Gerar convite apenas se for ID real
+            invite_link = None
+            if not is_temp_uid:
+                try:
+                    invite_link = await create_and_store_personal_invite(user_id_final)
+                    logging.info(f"[WEBHOOK] Convite gerado com sucesso para {user_id_final}")
+                except Exception as e:
+                    logging.error(f"[WEBHOOK] Falha ao gerar convite pessoal: {e}")
+                    # Fallback: usar função alternativa
+                    try:
+                        from utils import create_one_time_invite
+                        invite_link = await create_one_time_invite(
+                            application.bot, GROUP_VIP_ID, 
+                            expire_seconds=7200, member_limit=1
+                        )
+                        logging.info(f"[WEBHOOK] Convite fallback gerado para {user_id_final}")
+                    except Exception as e2:
+                        logging.error(f"[WEBHOOK] Falha no fallback de convite: {e2}")
+            else:
+                # Para ID temporário, gerar link genérico do grupo
+                try:
+                    invite_link = await application.bot.export_chat_invite_link(GROUP_VIP_ID)
+                    logging.info(f"[WEBHOOK] Link genérico do grupo gerado para temp UID")
+                except Exception as e:
+                    logging.error(f"[WEBHOOK] Falha ao gerar link genérico: {e}")
+            
+            # Notificar apenas se for ID real
+            if not is_temp_uid and user_id_final > 0:
+                if invite_link:
+                    message_text = (
+                        f"✅ Pagamento confirmado para {username}!\n"
+                        f"Seu VIP foi ativado por {PLAN_DAYS[plan]} dias.\n"
+                        f"Entre no VIP: {invite_link}"
+                    )
+                else:
+                    message_text = (
+                        f"✅ Pagamento confirmado para {username}!\n"
+                        f"Seu VIP foi ativado por {PLAN_DAYS[plan]} dias.\n"
+                        f"\u26a0️ Entre em contato com o suporte para receber seu convite VIP."
+                    )
+                
+                await application.bot.send_message(
+                    chat_id=user_id_final,
+                    text=message_text
                 )
             else:
-                message_text = (
-                    f"✅ Pagamento confirmado para {username}!\n"
-                    f"Seu VIP foi ativado por {PLAN_DAYS[plan]} dias.\n"
-                    f"\u26a0️ Erro ao gerar convite automático.\n"
-                    f"Entre em contato com o suporte para receber seu convite VIP."
-                )
-            
-            await application.bot.send_message(
-                chat_id=user_id_final,
-                text=message_text
-            )
+                # Para ID temporário, apenas logar
+                logging.info(f"[WEBHOOK] Pagamento processado com temp UID {uid}. Aguardando entrada no grupo para associação.")
             logging.info(f"[WEBHOOK] VIP ativado para usuário {user_id_final} ({username})")
             
             # Log adicional para debug
@@ -4565,7 +4825,30 @@ async def on_startup():
         application.add_handler(CommandHandler("listar_jobs", listar_jobs_cmd), group=1)
         application.add_handler(CommandHandler("enviar_pack_agora", enviar_pack_agora_cmd), group=1)
         application.add_handler(CommandHandler("debug_convite", debug_convite_cmd), group=1)
+        application.add_handler(CommandHandler("comprovante", comprovante_cmd), group=1)
+        application.add_handler(CommandHandler("recibo", comprovante_cmd), group=1)  # Alias
 
+        # ===== Member Join Handlers - para capturar ID quando usuário ENTRA no grupo
+        from telegram.ext import MessageHandler, ChatMemberHandler
+        
+        # Handler para novos membros (new_chat_members)
+        application.add_handler(
+            MessageHandler(
+                filters.StatusUpdate.NEW_CHAT_MEMBERS & filters.Chat(GROUP_VIP_ID),
+                vip_member_joined_handler
+            ), 
+            group=0  # Prioridade alta
+        )
+        
+        # Handler para mudanças de status de membro (chat_member)
+        application.add_handler(
+            ChatMemberHandler(
+                vip_member_joined_handler,
+                ChatMemberHandler.CHAT_MEMBER
+            ),
+            group=0
+        )
+        
         # ===== Callback Query Handler
         application.add_handler(CallbackQueryHandler(checkout_callback_handler, pattern="checkout_callback"), group=1)
 
