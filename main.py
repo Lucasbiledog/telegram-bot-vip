@@ -1408,8 +1408,8 @@ async def process_vip_member_entry(user, entry_type: str):
                     logging.info(f"[VIP-ENTRY] Mensagem de boas-vindas enviada para VIP existente {user_id}")
                 except Exception as e:
                     logging.error(f"[VIP-ENTRY] Erro ao enviar boas-vindas: {e}")
-                vm.active = False
-            s.commit()
+            
+        s.commit()
 
 def create_pack(
     title: str,
