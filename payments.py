@@ -26,6 +26,7 @@ ALLOW_ANY_TO = os.getenv("ALLOW_ANY_TO", "0") == "1"  # aceita destino diferente
 
 COINGECKO_API_KEY = os.getenv("COINGECKO_API_KEY", "").strip()
 PRICE_TTL_SECONDS = int(os.getenv("PRICE_TTL_SECONDS", "1800"))  # 30min (1800s) para reduzir rate limiting
+PRICE_EXTENDED_TTL_SECONDS = int(os.getenv("PRICE_EXTENDED_TTL_SECONDS", "3600"))  # 1h para casos de rate limit severo
 PRICE_MAX_RETRIES = int(os.getenv("PRICE_MAX_RETRIES", "2"))    # Reduzido de 3 para 2
 PRICE_RETRY_BASE_DELAY = float(os.getenv("PRICE_RETRY_BASE_DELAY", "5.0"))  # 5s base delay para rate limiting
 
@@ -205,31 +206,55 @@ _update_thread.start()
 LOG.info("[PERIODIC] Thread de atualização automática de preços iniciada")
 
 
-def _price_cache_get(key: str, force_refresh: bool = False) -> Optional[float]:
-    if force_refresh:
+def _price_cache_get(key: str, force_refresh: bool = False, allow_extended: bool = False) -> Optional[float]:
+    """Obter preço do cache com TTL configurável"""
+    if force_refresh and not allow_extended:
         return None
     item = _PRICE_CACHE.get(key)
     if not item:
         return None
     price, ts = item
-    if time.time() - ts <= PRICE_TTL_SECONDS:
+    age = time.time() - ts
+    
+    # TTL normal (30 min)
+    if age <= PRICE_TTL_SECONDS:
+        LOG.info(f"[CACHE-HIT] {key}: ${price:.2f} (idade: {int(age/60)}min)")
         return price
+    
+    # TTL extendido para casos de rate limit (1 hora)
+    if allow_extended and age <= PRICE_EXTENDED_TTL_SECONDS:
+        LOG.info(f"[CACHE-EXTENDED] {key}: ${price:.2f} (idade: {int(age/60)}min)")
+        return price
+    
     return None
 
-
-def _price_cache_put(key: str, price: float) -> None:
+def _price_cache_put(key: str, price: float, from_backup: bool = False) -> None:
+    """Armazenar preço no cache com timestamp"""
     _PRICE_CACHE[key] = (price, time.time())
+    source = "backup-api" if from_backup else "coingecko"
+    LOG.info(f"[CACHE-PUT] {key}: ${price:.2f} (fonte: {source})")
 
 
 # =========================
-# Chains suportadas
+# Chains suportadas com RPCs de backup
 # =========================
-# Adicione mais entradas conforme precisar.
-CHAINS: Dict[str, Dict[str, str]] = {
-    # Principais EVMs
-    "0x1": {"rpc": "https://rpc.ankr.com/eth", "sym": "ETH", "cg_native": "ethereum", "cg_platform": "ethereum"},
-    "0x38": {"rpc": "https://bsc-dataseed.binance.org", "sym": "BNB", "cg_native": "binancecoin", "cg_platform": "binance-smart-chain"},
-    "0x89": {"rpc": "https://polygon-rpc.com", "sym": "MATIC", "cg_native": "polygon-pos", "cg_platform": "polygon-pos"},
+CHAINS: Dict[str, Dict[str, Any]] = {
+    # Principais EVMs com RPCs de backup
+    "0x1": {
+        "rpc": "https://rpc.ankr.com/eth", 
+        "backup_rpcs": ["https://eth.llamarpc.com", "https://ethereum.publicnode.com"],
+        "sym": "ETH", "cg_native": "ethereum", "cg_platform": "ethereum"
+    },
+    "0x38": {
+        "rpc": "https://bsc-dataseed.binance.org", 
+        "backup_rpcs": ["https://bsc.publicnode.com", "https://rpc.ankr.com/bsc"],
+        "sym": "BNB", "cg_native": "binancecoin", "cg_platform": "binance-smart-chain"
+    },
+    "0x89": {
+        "rpc": "https://polygon-rpc.com", 
+        "backup_rpcs": ["https://polygon.llamarpc.com", "https://rpc.ankr.com/polygon"],
+        "sym": "MATIC", "cg_native": "polygon-pos", "cg_platform": "polygon-pos"
+    },
     "0xa4b1": {"rpc": "https://arb1.arbitrum.io/rpc", "sym": "ETH", "cg_native": "ethereum", "cg_platform": "arbitrum-one"},
     "0xa": {"rpc": "https://mainnet.optimism.io", "sym": "ETH", "cg_native": "ethereum", "cg_platform": "optimistic-ethereum"},
     "0x2105": {"rpc": "https://mainnet.base.org", "sym": "ETH", "cg_native": "ethereum", "cg_platform": "base"},
@@ -289,7 +314,48 @@ KNOWN_TOKEN_SYMBOLS = {
 # Utilitários Web3
 # =========================
 def _w3(rpc: str) -> Web3:
-    return Web3(Web3.HTTPProvider(rpc))
+    """Cria instância Web3 com timeout configurado"""
+    from web3.middleware import geth_poa_middleware
+    
+    # HTTPProvider com timeout menor para RPCs lentos
+    provider = Web3.HTTPProvider(rpc, request_kwargs={'timeout': 12})
+    w3 = Web3(provider)
+    
+    # Middleware para chains PoA (BSC, Polygon, etc)
+    if any(chain in rpc.lower() for chain in ['bsc', 'polygon', 'bnb', 'binance']):
+        w3.middleware_onion.inject(geth_poa_middleware, layer=0)
+    
+    return w3
+
+async def _try_get_transaction_with_backup(chain_id: str, tx_hash: str) -> Optional[Any]:
+    """Tenta buscar transação no RPC principal e backups"""
+    meta = CHAINS[chain_id]
+    rpcs_to_try = [meta['rpc']] + meta.get('backup_rpcs', [])
+    chain_name = human_chain(chain_id)
+    
+    for i, rpc in enumerate(rpcs_to_try):
+        try:
+            rpc_type = "principal" if i == 0 else f"backup-{i}"
+            LOG.info(f"[{chain_name}] Tentando RPC {rpc_type}: {rpc[:50]}...")
+            
+            w3 = _w3(rpc)
+            tx = await asyncio.wait_for(
+                asyncio.to_thread(w3.eth.get_transaction, tx_hash),
+                timeout=8.0  # 8s por RPC para ser mais rápido
+            )
+            
+            if tx and hasattr(tx, 'hash') and tx.hash:
+                LOG.info(f"[{chain_name}] ✅ Transação encontrada via RPC {rpc_type}!")
+                return tx, w3
+                
+        except asyncio.TimeoutError:
+            LOG.warning(f"[{chain_name}] Timeout RPC {rpc_type} (>8s)")
+        except Exception as e:
+            error_str = str(e).lower()
+            if "transaction not found" not in error_str and "not found" not in error_str:
+                LOG.warning(f"[{chain_name}] Erro RPC {rpc_type}: {str(e)[:80]}")
+    
+    return None
 
 
 def _topic_addr(topic_hex: str) -> str:
@@ -307,8 +373,44 @@ async def _get_confirmations(w3: Web3, block_number: Optional[int]) -> int:
 
 
 # =========================
-# CoinGecko (com retry/backoff + cache)
+# CoinGecko + APIs de backup (com retry/backoff + cache)
 # =========================
+
+# APIs de backup para preços de crypto
+BACKUP_APIS = {
+    "binanceapi": {
+        "url": "https://api.binance.com/api/v3/ticker/price?symbol=BNBUSDT",
+        "parser": lambda x: float(x["price"]) if x and "price" in x else None,
+        "asset": "binancecoin"
+    },
+    "coinbase": {
+        "url": "https://api.coinbase.com/v2/exchange-rates?currency=BNB",
+        "parser": lambda x: float(x["data"]["rates"]["USD"]) if x and "data" in x and "rates" in x["data"] and "USD" in x["data"]["rates"] else None,
+        "asset": "binancecoin"
+    }
+}
+
+async def _try_backup_apis(asset: str) -> Optional[float]:
+    """Tenta obter preço de APIs de backup"""
+    for api_name, config in BACKUP_APIS.items():
+        if config["asset"] != asset:
+            continue
+        
+        try:
+            LOG.info(f"[BACKUP-API] Tentando {api_name} para {asset}...")
+            async with httpx.AsyncClient(timeout=10) as cli:
+                r = await cli.get(config["url"])
+                if r.status_code == 200:
+                    data = r.json()
+                    price = config["parser"](data)
+                    if price and price > 0:
+                        LOG.info(f"[BACKUP-API] ✅ {api_name}: ${price:.2f}")
+                        return price
+        except Exception as e:
+            LOG.warning(f"[BACKUP-API] Erro em {api_name}: {e}")
+    
+    return None
+
 async def _cg_get(url: str) -> Optional[dict]:
     headers = {}
     if COINGECKO_API_KEY:
@@ -317,11 +419,11 @@ async def _cg_get(url: str) -> Optional[dict]:
     delay = PRICE_RETRY_BASE_DELAY
     last_err = None
     
-    # Adicionar delay inicial para evitar rate limiting
-    if not COINGECKO_API_KEY:  # Free tier - delay mais longo
-        await asyncio.sleep(5.0)  # 5s delay inicial para evitar 429
+    # Delay inicial inteligente baseado na situação da API
+    if not COINGECKO_API_KEY:  # Free tier - muito conservativo
+        await asyncio.sleep(10.0)  # 10s inicial
     else:
-        await asyncio.sleep(1.0)  # Delay menor para API key
+        await asyncio.sleep(3.0)  # API key ainda conservativo
     
     for attempt in range(1, PRICE_MAX_RETRIES + 1):
         try:
@@ -331,18 +433,19 @@ async def _cg_get(url: str) -> Optional[dict]:
                 return r.json()
             if r.status_code == 429:
                 LOG.warning("Coingecko 429 (rate-limit). attempt=%d url=%s", attempt, url)
-                # Delay progressivo mais longo para rate limiting
-                rate_limit_delay = delay * (2 ** attempt)  # Exponencial: 5s, 10s, 20s...
+                # Backoff exponencial agressivo para rate limiting
+                base_delay = 15 if COINGECKO_API_KEY else 30  # API key vs free tier
+                rate_limit_delay = min(120, base_delay * (2 ** attempt))  # Cap de 2 minutos
+                LOG.warning(f"[RATE-LIMIT] Rate limited! Aguardando {rate_limit_delay}s (attempt {attempt}/{PRICE_MAX_RETRIES})")
                 await asyncio.sleep(rate_limit_delay)
-                delay *= 4  # Aumenta ainda mais agressivamente
                 continue
-            last_err = f"{r.status_code} {r.text[:140]}"
-            await asyncio.sleep(delay)
-            delay *= 1.5
+            last_err = f"{r.status_code} {r.text[:100]}"
+            await asyncio.sleep(min(delay, 30))  # Cap de 30s
+            delay *= 2
         except Exception as e:
-            last_err = str(e)
-            await asyncio.sleep(delay)
-            delay *= 1.5
+            last_err = str(e)[:100]
+            await asyncio.sleep(min(delay, 20))  # Cap menor para outros erros
+            delay *= 2
 
     LOG.warning("Coingecko GET falhou após retries: %s", last_err)
     return None
@@ -352,17 +455,27 @@ async def _usd_native(chain_id: str, amount_native: float, force_refresh: bool =
     cg_id = CHAINS[chain_id]["cg_native"]
     cache_key = f"native:{cg_id}"
     
-    # Tentar cache primeiro se não force_refresh, depois buscar preços atuais
-    if not force_refresh:
-        cached = _price_cache_get(cache_key, force_refresh)
-        if cached is not None:
-            px = float(cached)
-            usd_value = amount_native * px
-            LOG.info(f"[CACHE-HIT] {cg_id}: ${px:.2f} | {amount_native} unidades = ${usd_value:.2f}")
-            return px, usd_value
+    # SEMPRE tentar cache primeiro para evitar rate limits (mesmo com force_refresh)
+    cached = _price_cache_get(cache_key, force_refresh=False, allow_extended=True)
+    if cached is not None:
+        px = float(cached)
+        usd_value = amount_native * px
+        return px, usd_value
     
     LOG.info(f"[LIVE-PRICE] Buscando preço atual da internet para {cg_id}...")
     data = await _cg_get(f"https://api.coingecko.com/api/v3/simple/price?ids={cg_id}&vs_currencies=usd")
+    
+    # Se CoinGecko falhou, tentar APIs de backup
+    if not data or cg_id not in data or "usd" not in data[cg_id]:
+        LOG.warning(f"[BACKUP] CoinGecko falhou para {cg_id}, tentando APIs de backup...")
+        backup_price = await _try_backup_apis(cg_id)
+        if backup_price:
+            px = backup_price
+            usd_value = amount_native * px
+            LOG.info(f"[BACKUP-SUCCESS] ✅ {cg_id}: ${px:.2f} | {amount_native} unidades = ${usd_value:.2f}")
+            _price_cache_put(cache_key, px, from_backup=True)  # Cache o preço de backup
+            return px, usd_value
+    
     if not data or cg_id not in data or "usd" not in data[cg_id]:
         # Tentar cache expirado primeiro
         stale = _PRICE_CACHE.get(cache_key)
@@ -738,17 +851,52 @@ async def resolve_payment_usd_autochain(
     Percorre as chains configuradas. Ao achar a tx em alguma delas,
     resolve nela e retorna (ok, mensagem, usd, detalhes).
     """
-    for chain_id, meta in CHAINS.items():
-        w3 = _w3(meta["rpc"])
-        with suppress(Exception):
-            tx = w3.eth.get_transaction(tx_hash)
-            if tx:
+    LOG.info(f"[AUTOCHAIN] Procurando transação {tx_hash} em {len(CHAINS)} chains...")
+    
+    # Normalizar hash (remover 0x e garantir lowercase)
+    clean_hash = tx_hash.lower().replace('0x', '')
+    if len(clean_hash) != 64:
+        LOG.error(f"[AUTOCHAIN] Hash inválido: {tx_hash} (tamanho: {len(clean_hash)})")
+        return False, "Hash de transação inválido (deve ter 64 caracteres hex).", None, {}
+    
+    normalized_hash = '0x' + clean_hash
+    
+    failed_chains = []
+    for chain_id in CHAINS.keys():
+        chain_name = human_chain(chain_id)
+        try:
+            LOG.info(f"[AUTOCHAIN] Procurando em {chain_name}...")
+            
+            # Tentar RPC principal + backups
+            result = await _try_get_transaction_with_backup(chain_id, normalized_hash)
+            
+            if result:
+                tx, w3 = result
+                LOG.info(f"[AUTOCHAIN] ✅ Transação encontrada em {chain_name}!")
                 ok, msg, usd, details = await _resolve_on_chain(
-                    w3, chain_id, tx_hash, force_refresh=force_refresh
+                    w3, chain_id, normalized_hash, force_refresh=force_refresh
                 )
-                LOG.info("[result %s] ok=%s msg=%s usd=%s details=%s", human_chain(chain_id), ok, msg, usd, details)
+                details['found_on_chain'] = chain_name
+                LOG.info(f"[RESULT {chain_name}] ok={ok} msg={msg} usd=${usd}")
                 return ok, msg, usd, details
-    return False, "Transação não encontrada nas chains suportadas.", None, {}
+            else:
+                failed_chains.append(f"{chain_name}:not_found")
+                
+        except Exception as e:
+            error_msg = str(e)[:80]
+            LOG.warning(f"[AUTOCHAIN] Erro geral em {chain_name}: {error_msg}")
+            failed_chains.append(f"{chain_name}:error")
+    
+    # Melhor mensagem de erro com detalhes
+    chains_tried = ', '.join([human_chain(cid) for cid in CHAINS.keys()])
+    LOG.error(f"[AUTOCHAIN] Transação {tx_hash} não encontrada. Chains testadas: {chains_tried}")
+    
+    return False, f"Transação não encontrada nas {len(CHAINS)} chains suportadas: {chains_tried}.", None, {
+        'searched_chains': list(CHAINS.keys()),
+        'failed_chains': failed_chains,
+        'tx_hash': normalized_hash,
+        'total_rpcs_tried': sum(1 + len(meta.get('backup_rpcs', [])) for meta in CHAINS.values())
+    }
 
 
 # =========================
