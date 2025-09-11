@@ -136,14 +136,28 @@ async function validatePayment() {
   
   // Usar UID se disponível, caso contrário usar ID fornecido pelo usuário ou valor padrão
   let userID = uid;
+  console.log("[validate] UID inicial:", userID);
+  
   if (!userID) {
     const userInput = $("userid")?.value?.trim();
-    if (userInput && !isNaN(userInput)) {
+    console.log("[validate] Input do usuário:", userInput);
+    
+    if (userInput && !isNaN(userInput) && userInput.length > 0) {
       userID = userInput;
+      console.log("[validate] Usando ID fornecido pelo usuário:", userID);
     } else {
-      // Gerar um ID temporário baseado no hash para permitir validação
-      userID = "temp_" + Math.abs(hash.split('').reduce((a,b) => (((a << 5) - a) + b.charCodeAt(0))|0, 0));
+      // Tentar obter do Telegram WebApp novamente
+      if (window.Telegram?.WebApp?.initDataUnsafe?.user?.id) {
+        userID = window.Telegram.WebApp.initDataUnsafe.user.id.toString();
+        console.log("[validate] UID obtido do WebApp no momento da validação:", userID);
+      } else {
+        // Gerar um ID temporário baseado no hash para permitir validação
+        userID = "temp_" + Math.abs(hash.split('').reduce((a,b) => (((a << 5) - a) + b.charCodeAt(0))|0, 0));
+        console.log("[validate] Gerando UID temporário:", userID);
+      }
     }
+  } else {
+    console.log("[validate] Usando UID da URL:", userID);
   }
 
   const btn = $("validarBtn");

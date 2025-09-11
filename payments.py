@@ -25,9 +25,9 @@ DEBUG_PAYMENTS = os.getenv("DEBUG_PAYMENTS", "0") == "1"
 ALLOW_ANY_TO = os.getenv("ALLOW_ANY_TO", "0") == "1"  # aceita destino diferente (somente testes)
 
 COINGECKO_API_KEY = os.getenv("COINGECKO_API_KEY", "").strip()
-PRICE_TTL_SECONDS = int(os.getenv("PRICE_TTL_SECONDS", "60"))  # 30min (aumentado de 10min)
+PRICE_TTL_SECONDS = int(os.getenv("PRICE_TTL_SECONDS", "1800"))  # 30min (1800s) para reduzir rate limiting
 PRICE_MAX_RETRIES = int(os.getenv("PRICE_MAX_RETRIES", "2"))    # Reduzido de 3 para 2
-PRICE_RETRY_BASE_DELAY = float(os.getenv("PRICE_RETRY_BASE_DELAY", "2.0"))  # Aumentado de 0.6 para 2.0
+PRICE_RETRY_BASE_DELAY = float(os.getenv("PRICE_RETRY_BASE_DELAY", "5.0"))  # 5s base delay para rate limiting
 
 # Cache simples em memória: key -> (price, ts)
 _PRICE_CACHE: Dict[str, Tuple[float, float]] = {}
@@ -318,8 +318,10 @@ async def _cg_get(url: str) -> Optional[dict]:
     last_err = None
     
     # Adicionar delay inicial para evitar rate limiting
-    if not COINGECKO_API_KEY:  # Apenas para free tier
-        await asyncio.sleep(2.0)  # 2s delay inicial para evitar 429
+    if not COINGECKO_API_KEY:  # Free tier - delay mais longo
+        await asyncio.sleep(5.0)  # 5s delay inicial para evitar 429
+    else:
+        await asyncio.sleep(1.0)  # Delay menor para API key
     
     for attempt in range(1, PRICE_MAX_RETRIES + 1):
         try:
@@ -329,8 +331,10 @@ async def _cg_get(url: str) -> Optional[dict]:
                 return r.json()
             if r.status_code == 429:
                 LOG.warning("Coingecko 429 (rate-limit). attempt=%d url=%s", attempt, url)
-                await asyncio.sleep(delay)
-                delay *= 3  # Aumenta mais agressivamente o delay
+                # Delay progressivo mais longo para rate limiting
+                rate_limit_delay = delay * (2 ** attempt)  # Exponencial: 5s, 10s, 20s...
+                await asyncio.sleep(rate_limit_delay)
+                delay *= 4  # Aumenta ainda mais agressivamente
                 continue
             last_err = f"{r.status_code} {r.text[:140]}"
             await asyncio.sleep(delay)
@@ -348,7 +352,15 @@ async def _usd_native(chain_id: str, amount_native: float, force_refresh: bool =
     cg_id = CHAINS[chain_id]["cg_native"]
     cache_key = f"native:{cg_id}"
     
-    # SEMPRE forçar busca de preços atuais na internet (conforme solicitado)
+    # Tentar cache primeiro se não force_refresh, depois buscar preços atuais
+    if not force_refresh:
+        cached = _price_cache_get(cache_key, force_refresh)
+        if cached is not None:
+            px = float(cached)
+            usd_value = amount_native * px
+            LOG.info(f"[CACHE-HIT] {cg_id}: ${px:.2f} | {amount_native} unidades = ${usd_value:.2f}")
+            return px, usd_value
+    
     LOG.info(f"[LIVE-PRICE] Buscando preço atual da internet para {cg_id}...")
     data = await _cg_get(f"https://api.coingecko.com/api/v3/simple/price?ids={cg_id}&vs_currencies=usd")
     if not data or cg_id not in data or "usd" not in data[cg_id]:
@@ -359,23 +371,21 @@ async def _usd_native(chain_id: str, amount_native: float, force_refresh: bool =
             LOG.info("[price-fallback] usando cache expirado p/ %s: %f", cache_key, px)
             return px, amount_native * px
         
-        # Usar preço estático apenas se COINGECKO_API_KEY não estiver configurado
-        if not COINGECKO_API_KEY or COINGECKO_API_KEY == "CG-DEMO-API-KEY":
-            fallback_price = FALLBACK_PRICES.get(cg_id)
-            if fallback_price:
-                px = float(fallback_price)
-                meta = FALLBACK_PRICE_META.get(cg_id, {})
-                ts = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(meta.get("ts", 0)))
-                src = meta.get("source", "manual")
-                LOG.warning(
-                    "[price-static-fallback] CoinGecko indisponível, usando preço estático p/ %s: %f (source=%s ts=%s)",
-                    cg_id,
-                    px,
-                    src,
-                    ts,
+        # Usar preço de fallback quando API indisponível (rate limiting, etc)
+        fallback_price = FALLBACK_PRICES.get(cg_id)
+        if fallback_price:
+            px = float(fallback_price)
+            usd_value = amount_native * px
+            meta = FALLBACK_PRICE_META.get(cg_id, {})
+            ts = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(meta.get("ts", 0)))
+            src = meta.get("source", "manual")
+            LOG.warning(
+                "[RATE-LIMIT-FALLBACK] CoinGecko indisponível (rate limit?), usando preço fallback p/ %s: ${:.2f} | {} unidades = ${:.2f} (source={} ts={})".format(
+                    cg_id, px, amount_native, usd_value, src, ts
                 )
-                _price_cache_put(cache_key, px)  # Cache o preço estático
-                return px, amount_native * px
+            )
+            _price_cache_put(cache_key, px)  # Cache o preço de fallback por um tempo
+            return px, usd_value
         
         LOG.error("[price-fail] Falha ao obter preço para %s - configure COINGECKO_API_KEY", cg_id)
         return None
@@ -411,23 +421,21 @@ async def _usd_token(
             _price_cache_put(cache_key, px)
             return px, usd_value
         
-        # Fallback estático apenas sem API key
-        if not COINGECKO_API_KEY or COINGECKO_API_KEY == "CG-DEMO-API-KEY":
-            fallback_price = FALLBACK_PRICES.get(alt_cgid)
-            if fallback_price:
-                px = float(fallback_price)
-                meta = FALLBACK_PRICE_META.get(alt_cgid, {})
-                ts = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(meta.get("ts", 0)))
-                src = meta.get("source", "manual")
-                LOG.warning(
-                    "[price-static-fallback] usando preço estático p/ alt_cgid %s: %f (source=%s ts=%s)",
-                    alt_cgid,
-                    px,
-                    src,
-                    ts,
+        # Fallback para rate limiting ou API indisponível
+        fallback_price = FALLBACK_PRICES.get(alt_cgid)
+        if fallback_price:
+            px = float(fallback_price)
+            usd_value = amount * px
+            meta = FALLBACK_PRICE_META.get(alt_cgid, {})
+            ts = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(meta.get("ts", 0)))
+            src = meta.get("source", "manual")
+            LOG.warning(
+                "[RATE-LIMIT-FALLBACK] Token fallback p/ alt_cgid %s: ${:.2f} | {} unidades = ${:.2f} (source={} ts={})".format(
+                    alt_cgid, px, amount, usd_value, src, ts
                 )
-                _price_cache_put(cache_key, px)
-                return px, amount * px
+            )
+            _price_cache_put(cache_key, px)
+            return px, usd_value
             
         LOG.info("[price] falhou alt_cgid=%s p/ token %s; tentando plataforma CG...", alt_cgid, token_addr_lc)
 
@@ -457,24 +465,22 @@ async def _usd_token(
         LOG.info("[price-fallback] usando cache expirado p/ %s: %f", cache_key, px)
         return px, amount * px
 
-    # 4) Fallback estático apenas sem API key
-    if not COINGECKO_API_KEY or COINGECKO_API_KEY == "CG-DEMO-API-KEY":
-        token_key = f"{chain_id}:{token_addr_lc}"
-        fallback_price = FALLBACK_PRICES.get(token_key)
-        if fallback_price:
-            px = float(fallback_price)
-            meta = FALLBACK_PRICE_META.get(token_key, {})
-            ts = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(meta.get("ts", 0)))
-            src = meta.get("source", "manual")
-            LOG.warning(
-                "[price-static-fallback] usando preço estático p/ token %s: %f (source=%s ts=%s)",
-                token_key,
-                px,
-                src,
-                ts,
+    # 4) Fallback para rate limiting ou API indisponível
+    token_key = f"{chain_id}:{token_addr_lc}"
+    fallback_price = FALLBACK_PRICES.get(token_key)
+    if fallback_price:
+        px = float(fallback_price)
+        usd_value = amount * px
+        meta = FALLBACK_PRICE_META.get(token_key, {})
+        ts = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(meta.get("ts", 0)))
+        src = meta.get("source", "manual")
+        LOG.warning(
+            "[RATE-LIMIT-FALLBACK] Token fallback p/ %s: ${:.2f} | {} unidades = ${:.2f} (source={} ts={})".format(
+                token_key, px, amount, usd_value, src, ts
             )
-            _price_cache_put(cache_key, px)
-            return px, amount * px
+        )
+        _price_cache_put(cache_key, px)
+        return px, usd_value
 
     LOG.error("[price-fail] Falha ao obter preço para token %s:%s - configure COINGECKO_API_KEY", chain_id, token_addr_lc)
     return None
@@ -1098,7 +1104,25 @@ async def rejeitar_tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # =========================
 async def approve_by_usd_and_invite(tg_id, username: Optional[str], tx_hash: str, notify_user: bool = True):
     """Valida transação e gera convite VIP - aceita UIDs temporários"""
-    from main import SessionLocal, Payment, GROUP_VIP_ID, application
+    try:
+        from main import SessionLocal, Payment, GROUP_VIP_ID, application
+        bot_available = True
+    except Exception as e:
+        LOG.warning(f"Bot não disponível (normal se BOT_TOKEN não configurado): {e}")
+        # Imports essenciais sem bot
+        try:
+            import sys
+            import os
+            sys.path.append(os.path.dirname(__file__))
+            from models import Payment
+            from db import SessionLocal
+            GROUP_VIP_ID = -1002791988432  # Valor padrão
+            application = None
+            bot_available = False
+        except Exception as e2:
+            LOG.error(f"Falha ao importar dependências básicas: {e2}")
+            return False, f"Erro de configuração: {e2}", {"error": "config_error"}
+    
     from utils import create_one_time_invite, vip_upsert_and_get_until, choose_plan_from_usd
     import datetime as dt
     
@@ -1128,20 +1152,30 @@ async def approve_by_usd_and_invite(tg_id, username: Optional[str], tx_hash: str
     until = None
     link = None
     
+    LOG.info(f"[INVITE-DEBUG] UID recebido: '{tg_id}' (tipo: {type(tg_id)}) | is_temp_uid: {is_temp_uid}")
+    
     if not is_temp_uid:
         try:
             actual_tg_id = int(tg_id)
+            LOG.info(f"[INVITE-DEBUG] UID convertido para int: {actual_tg_id}")
+            
             # Estender VIP apenas se for ID real
             until = await vip_upsert_and_get_until(actual_tg_id, username, days)
+            LOG.info(f"[INVITE-DEBUG] VIP estendido até: {until}")
             
             # Gerar convite de 1 uso
-            try:
-                link = await create_one_time_invite(application.bot, GROUP_VIP_ID, expire_seconds=7200, member_limit=1)
-            except Exception as e:
-                LOG.warning(f"Falha ao gerar convite automático: {e}")
-                # Continuar sem convite - será tratado no retorno
+            if bot_available and application and application.bot:
+                try:
+                    link = await create_one_time_invite(application.bot, GROUP_VIP_ID, expire_seconds=7200, member_limit=1)
+                    LOG.info(f"[INVITE-DEBUG] Convite gerado: {link is not None}")
+                except Exception as e:
+                    LOG.warning(f"[INVITE-DEBUG] Falha ao gerar convite automático: {e}")
+                    link = None
+            else:
+                LOG.info(f"[INVITE-DEBUG] Bot não disponível, pulando geração de convite")
                 link = None
-        except (ValueError, TypeError):
+        except (ValueError, TypeError) as e:
+            LOG.warning(f"[INVITE-DEBUG] Erro ao processar UID, tratando como temporário: {e}")
             is_temp_uid = True
 
     # Salvar pagamento
@@ -1165,6 +1199,8 @@ async def approve_by_usd_and_invite(tg_id, username: Optional[str], tx_hash: str
         s.add(p)
         s.commit()
 
+    LOG.info(f"[INVITE-DEBUG] Finalizando: is_temp_uid={is_temp_uid}, link={link is not None if link else False}")
+    
     if is_temp_uid:
         msg = f"✅ Pagamento confirmado (${usd:.2f})!\nPlano: {days} dias\n\n⚠️ Para receber o convite do grupo VIP, forneça seu ID do Telegram válido."
         return True, msg, {"usd": usd, "days": days, "temp_uid": True}
@@ -1172,15 +1208,17 @@ async def approve_by_usd_and_invite(tg_id, username: Optional[str], tx_hash: str
         if link:
             msg = f"✅ Pagamento confirmado (${usd:.2f})!\nPlano: {days} dias\nConvite VIP: {link}"
             payload = {"invite": link, "until": until.isoformat(), "usd": usd, "days": days}
+            LOG.info(f"[INVITE-DEBUG] Retornando com convite automático")
         else:
             msg = f"✅ Pagamento confirmado (${usd:.2f})!\nPlano: {days} dias\n\n⚠️ VIP ativado! Entre em contato para receber o convite do grupo."
             payload = {"no_auto_invite": True, "until": until.isoformat(), "usd": usd, "days": days}
+            LOG.info(f"[INVITE-DEBUG] Retornando sem convite automático")
         
-        if notify_user and actual_tg_id:
+        if notify_user and actual_tg_id and bot_available and application and application.bot:
             try:
                 await application.bot.send_message(chat_id=actual_tg_id, text=msg)
-            except Exception:
-                pass
+            except Exception as e:
+                LOG.warning(f"[INVITE-DEBUG] Falha ao notificar usuário: {e}")
 
         return True, msg, payload
 
