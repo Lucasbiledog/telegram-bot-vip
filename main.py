@@ -644,24 +644,52 @@ async def create_and_store_personal_invite(user_id: int) -> str:
     Cria um link exclusivo (1 uso) que expira junto do VIP e salva em VipMembership.invite_link.
     Retorna a URL do convite.
     """
+    logging.info(f"[INVITE-DEBUG] Iniciando criação de convite para user_id: {user_id}")
+    
     m = vip_get(user_id)
-    if not m or not m.active or not m.expires_at:
-        # só cria se o VIP estiver ativo
-        raise RuntimeError("VIP inativo ou sem data de expiração")
+    if not m:
+        raise RuntimeError(f"VIP não encontrado para user_id: {user_id}")
+    if not m.active:
+        raise RuntimeError(f"VIP inativo para user_id: {user_id}")
+    if not m.expires_at:
+        raise RuntimeError(f"VIP sem data de expiração para user_id: {user_id}")
 
     expire_ts = int(m.expires_at.timestamp())
+    logging.info(f"[INVITE-DEBUG] VIP válido até: {m.expires_at} (timestamp: {expire_ts})")
 
-    invite = await application.bot.create_chat_invite_link(
-        chat_id=GROUP_VIP_ID,
-        expire_date=expire_ts,
-        member_limit=1
-    )
+    try:
+        # Verificar se o bot tem permissões no grupo
+        try:
+            chat_member = await application.bot.get_chat_member(GROUP_VIP_ID, application.bot.id)
+            if not chat_member.can_invite_users:
+                logging.error(f"[INVITE-DEBUG] Bot não tem permissão para convidar usuários no grupo {GROUP_VIP_ID}")
+        except Exception as perm_error:
+            logging.warning(f"[INVITE-DEBUG] Não foi possível verificar permissões: {perm_error}")
+        
+        invite = await application.bot.create_chat_invite_link(
+            chat_id=GROUP_VIP_ID,
+            expire_date=expire_ts,
+            member_limit=1
+        )
+        logging.info(f"[INVITE-DEBUG] Convite criado: {invite.invite_link}")
+    except Exception as e:
+        logging.error(f"[INVITE-DEBUG] Erro ao criar convite no Telegram: {e}")
+        logging.error(f"[INVITE-DEBUG] GROUP_VIP_ID: {GROUP_VIP_ID}")
+        raise RuntimeError(f"Falha ao criar convite no Telegram: {e}")
 
-    with SessionLocal() as s:
-        vm = s.query(VipMembership).filter(VipMembership.user_id == user_id).first()
-        if vm:
-            vm.invite_link = invite.invite_link
-            s.commit()
+    # Salvar no banco
+    try:
+        with SessionLocal() as s:
+            vm = s.query(VipMembership).filter(VipMembership.user_id == user_id).first()
+            if vm:
+                vm.invite_link = invite.invite_link
+                s.commit()
+                logging.info(f"[INVITE-DEBUG] Convite salvo no banco para user_id: {user_id}")
+            else:
+                logging.warning(f"[INVITE-DEBUG] VipMembership não encontrado no banco para user_id: {user_id}")
+    except Exception as e:
+        logging.error(f"[INVITE-DEBUG] Erro ao salvar convite no banco: {e}")
+        # Não falhar aqui, o convite já foi criado
 
     return invite.invite_link
 
@@ -3867,6 +3895,49 @@ async def excluir_todos_packs_confirm(update: Update, context: ContextTypes.DEFA
     
     return ConversationHandler.END
 
+async def debug_convite_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Comando de debug para testar criação de convites"""
+    if not (update.effective_user and is_admin(update.effective_user.id)):
+        return await update.effective_message.reply_text("Apenas admins.")
+    
+    user_id = update.effective_user.id
+    try:
+        # Primeiro verificar se o usuário tem VIP
+        m = vip_get(user_id)
+        if not m:
+            return await update.effective_message.reply_text(
+                f"❌ Você não tem VIP cadastrado. Use /vip_set {user_id} 30 primeiro."
+            )
+        
+        if not m.active:
+            return await update.effective_message.reply_text(
+                f"❌ Seu VIP está inativo. Status: {m.active}, Expira: {m.expires_at}"
+            )
+        
+        # Tentar criar convite
+        await update.effective_message.reply_text("🔄 Testando criação de convite...")
+        
+        invite_link = await create_and_store_personal_invite(user_id)
+        
+        await update.effective_message.reply_text(
+            f"✅ Convite criado com sucesso!\n\n"
+            f"🔗 Link: {invite_link}\n"
+            f"👤 Para: {update.effective_user.first_name} (ID: {user_id})\n"
+            f"⏰ Expira em: {m.expires_at}\n"
+            f"📁 GROUP_VIP_ID: {GROUP_VIP_ID}"
+        )
+        
+    except Exception as e:
+        import traceback
+        error_details = traceback.format_exc()
+        await update.effective_message.reply_text(
+            f"❌ Erro ao criar convite:\n\n"
+            f"<code>{str(e)}</code>\n\n"
+            f"Detalhes nos logs.", 
+            parse_mode="HTML"
+        )
+        logging.error(f"[DEBUG-CONVITE] Erro completo: {error_details}")
+
 # =========================
 # Error handler global
 # =========================
@@ -3962,14 +4033,44 @@ async def crypto_webhook(request: Request):
             # Garantir que VIP seja atribuído ao usuário correto
             user_id_final = int(uid)
             vip_upsert_start_or_extend(user_id_final, username, tx_hash, plan)
-            invite_link = await create_and_store_personal_invite(user_id_final)
+            
+            # Tentar gerar convite com fallback robusto
+            invite_link = None
+            try:
+                invite_link = await create_and_store_personal_invite(user_id_final)
+                logging.info(f"[WEBHOOK] Convite gerado com sucesso para {user_id_final}")
+            except Exception as e:
+                logging.error(f"[WEBHOOK] Falha ao gerar convite pessoal: {e}")
+                # Fallback: usar função alternativa
+                try:
+                    from utils import create_one_time_invite
+                    invite_link = await create_one_time_invite(
+                        application.bot, GROUP_VIP_ID, 
+                        expire_seconds=7200, member_limit=1
+                    )
+                    logging.info(f"[WEBHOOK] Convite fallback gerado para {user_id_final}")
+                except Exception as e2:
+                    logging.error(f"[WEBHOOK] Falha no fallback de convite: {e2}")
+                    invite_link = f"https://t.me/+LINK_MANUAL_VIP_{user_id_final}"
             
             # Notificar o usuário específico que fez o pagamento
+            if invite_link and not invite_link.startswith("https://t.me/+LINK_MANUAL"):
+                message_text = (
+                    f"✅ Pagamento confirmado para {username}!\n"
+                    f"Seu VIP foi ativado por {PLAN_DAYS[plan]} dias.\n"
+                    f"Entre no VIP: {invite_link}"
+                )
+            else:
+                message_text = (
+                    f"✅ Pagamento confirmado para {username}!\n"
+                    f"Seu VIP foi ativado por {PLAN_DAYS[plan]} dias.\n"
+                    f"\u26a0️ Erro ao gerar convite automático.\n"
+                    f"Entre em contato com o suporte para receber seu convite VIP."
+                )
+            
             await application.bot.send_message(
                 chat_id=user_id_final,
-                text=(f"✅ Pagamento confirmado para {username}!\n"
-                      f"Seu VIP foi ativado por {PLAN_DAYS[plan]} dias.\n"
-                      f"Entre no VIP: {invite_link}")
+                text=message_text
             )
             logging.info(f"[WEBHOOK] VIP ativado para usuário {user_id_final} ({username})")
             
@@ -4446,6 +4547,7 @@ async def on_startup():
         application.add_handler(CommandHandler("set_pack_horario_free", set_pack_horario_free_cmd), group=1)
         application.add_handler(CommandHandler("listar_jobs", listar_jobs_cmd), group=1)
         application.add_handler(CommandHandler("enviar_pack_agora", enviar_pack_agora_cmd), group=1)
+        application.add_handler(CommandHandler("debug_convite", debug_convite_cmd), group=1)
 
         # ===== Callback Query Handler
         application.add_handler(CallbackQueryHandler(checkout_callback_handler, pattern="checkout_callback"), group=1)
