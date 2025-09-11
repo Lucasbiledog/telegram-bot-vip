@@ -3855,20 +3855,26 @@ async def excluir_todos_packs_confirm(update: Update, context: ContextTypes.DEFA
     free_count = context.user_data.get("excluir_todos_free", 0)
     
     try:
+        # Usar SQL direto para evitar conflitos de ORM
         with SessionLocal() as session:
-            # Excluir todos os packs (cascade deleta PackFiles automaticamente)
-            all_packs = session.query(Pack).all()
+            from sqlalchemy import text
             
-            if not all_packs:
+            # Verificar se existem packs
+            pack_count = session.query(Pack).count()
+            if pack_count == 0:
                 await update.effective_message.reply_text("❌ Nenhum pack encontrado para excluir.")
                 return ConversationHandler.END
             
-            # Excluir todos
-            for pack in all_packs:
-                session.delete(pack)
+            # Excluir usando SQL direto (mais seguro para evitar conflitos)
+            # Primeiro PackFiles (FK constraint)
+            session.execute(text("DELETE FROM pack_files"))
             
-            # Reorganizar IDs (resetar sequência)
-            _reorganize_pack_ids(session)
+            # Depois Packs
+            session.execute(text("DELETE FROM packs"))
+            
+            # Resetar sequências
+            session.execute(text("ALTER SEQUENCE packs_id_seq RESTART WITH 1"))
+            session.execute(text("ALTER SEQUENCE pack_files_id_seq RESTART WITH 1"))
             
             session.commit()
             
