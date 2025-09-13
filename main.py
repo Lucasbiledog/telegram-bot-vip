@@ -362,11 +362,10 @@ class VipPlan(str, Enum):
     MENSAL = "MENSAL"
 
 PLAN_DAYS = {
-    VipPlan.TRIMESTRAL: 90,
+    VipPlan.MENSAL: 30,
+    VipPlan.TRIMESTRAL: 60,     # Renomeado para 60 dias
     VipPlan.SEMESTRAL: 180,
     VipPlan.ANUAL: 365,
-    VipPlan.MENSAL: 30,
-
 }
 
 def init_db():
@@ -1778,7 +1777,7 @@ async def _try_send_document_like(context: ContextTypes.DEFAULT_TYPE, target_cha
         return await _try_copy_message(context, target_chat_id, pf, caption=caption)
 
 
-async def _send_preview_media(context: ContextTypes.DEFAULT_TYPE, target_chat_id: int, previews: List[PackFile]) -> Dict[str, int]:
+async def _send_preview_media(context: ContextTypes.DEFAULT_TYPE, target_chat_id: int, previews: List[PackFile], is_crosspost: bool = False) -> Dict[str, int]:
     counts = {"photos": 0, "videos": 0, "animations": 0}
     photo_items = [pf for pf in previews if pf.file_type == "photo"]
     if photo_items:
@@ -1830,8 +1829,8 @@ async def _send_preview_media(context: ContextTypes.DEFAULT_TYPE, target_chat_id
         if await _try_send_video_or_animation(context, target_chat_id, pf, caption=None):
             counts["videos" if pf.file_type == "video" else "animations"] += 1
     
-    # Adicionar botão de checkout automaticamente após as imagens (apenas no grupo FREE)
-    if target_chat_id == GROUP_FREE_ID and (counts["photos"] > 0 or counts["videos"] > 0 or counts["animations"] > 0):
+    # Adicionar botão de checkout apenas quando é crosspost VIP->FREE (não em envios diretos do pack FREE)
+    if target_chat_id == GROUP_FREE_ID and is_crosspost and (counts["photos"] > 0 or counts["videos"] > 0 or counts["animations"] > 0):
         # Enviar apenas o botão simples - a mensagem completa virá do callback
         from telegram import InlineKeyboardButton, InlineKeyboardMarkup
         
@@ -1848,11 +1847,11 @@ async def _send_preview_media(context: ContextTypes.DEFAULT_TYPE, target_chat_id
             "✅ Clique no botão abaixo para abrir a página de pagamento\n"
             "🔒 Pague com qualquer criptomoeda\n"
             "⚡ Ativação automática\n\n"
-            "💰 <b>Planos:</b>\n"
-            "• 30 dias: $0.05\n"
-            "• 60 dias: $1.00\n"
-            "• 180 dias: $1.50\n"
-            "• 365 dias: $2.00"
+            "💰 <b>Planos (Ranges):</b>\n"
+            "• 30 dias: $0.05 - $0.99\n"
+            "• 60 dias: $1.00 - $1.49\n"
+            "• 180 dias: $1.50 - $1.99\n"
+            "• 365 dias: $2.00+"
         )
         
         try:
@@ -1952,7 +1951,7 @@ async def enviar_pack_job(context: ContextTypes.DEFAULT_TYPE, tier: str, target_
         if tier == "vip" and previews:
             try:
                 logging.info(f"Enviando previews do pack VIP '{p.title}' também para o grupo FREE")
-                await _send_preview_media(context, GROUP_FREE_ID, previews)
+                await _send_preview_media(context, GROUP_FREE_ID, previews, is_crosspost=True)
                 logging.info(f"✅ Previews enviadas com sucesso para o grupo FREE")
             except Exception as e:
                 logging.warning(f"Falha no crosspost VIP->FREE: {e}")
@@ -2102,11 +2101,11 @@ async def checkout_callback_handler(update: Update, context: ContextTypes.DEFAUL
                 f"✅ Pagamento será associado quando você entrar no grupo VIP\n"
                 f"🔒 Pague com qualquer criptomoeda\n"
                 f"⚡ Ativação automática do VIP\n\n"
-                f"💰 <b>Planos:</b>\n"
-                f"• 30 dias: $0.05\n"
-                f"• 60 dias: $1.00\n"
-                f"• 180 dias: $1.50\n"
-                f"• 365 dias: $2.00\n\n"
+                f"💰 <b>Planos (Ranges):</b>\n"
+                f"• 30 dias: $0.05 - $0.99\n"
+                f"• 60 dias: $1.00 - $1.49\n"
+                f"• 180 dias: $1.50 - $1.99\n"
+                f"• 365 dias: $2.00+\n\n"
                 f"📋 <b>Como funciona:</b>\n"
                 f"1. Clique no botão abaixo para pagar\n"
                 f"2. Após o pagamento, aguarde a confirmação\n"
@@ -3607,17 +3606,32 @@ def _to_wei(amount_native: float, decimals: int = 18) -> int:
 PRICE_TOLERANCE = float(os.getenv("PRICE_TOLERANCE", "0.01"))  # 1%
 
 PLAN_PRICE_USD = {
-    VipPlan.TRIMESTRAL: 70.0,
-    VipPlan.SEMESTRAL: 110.0,
-    VipPlan.ANUAL: 179.0,
-    VipPlan.MENSAL: 30.0,
+    VipPlan.MENSAL: 0.05,      # 30 dias
+    VipPlan.TRIMESTRAL: 1.00,  # 60 dias (foi renomeado de TRIMESTRAL para 60 dias)
+    VipPlan.SEMESTRAL: 1.50,   # 180 dias
+    VipPlan.ANUAL: 2.00,       # 365 dias
 }
 
 def plan_from_amount(amount_usd: float) -> Optional[VipPlan]:
-    for plan, price in PLAN_PRICE_USD.items():
-        if abs(amount_usd - price) <= price * PRICE_TOLERANCE:
-            return plan
-    return None
+    """
+    Determina o plano VIP baseado no valor pago usando ranges ao invés de valores exatos.
+    
+    Ranges:
+    - $0.05 - $0.99: VIP 30 dias (MENSAL)
+    - $1.00 - $1.49: VIP 60 dias (TRIMESTRAL) 
+    - $1.50 - $1.99: VIP 180 dias (SEMESTRAL)
+    - $2.00+: VIP 365 dias (ANUAL)
+    """
+    if amount_usd < 0.05:
+        return None  # Valor muito baixo
+    elif amount_usd < 1.00:
+        return VipPlan.MENSAL      # 30 dias
+    elif amount_usd < 1.50:
+        return VipPlan.TRIMESTRAL  # 60 dias
+    elif amount_usd < 2.00:
+        return VipPlan.SEMESTRAL   # 180 dias
+    else:
+        return VipPlan.ANUAL       # 365 dias
 
 async def fetch_price_usd() -> Optional[float]:
     try:
@@ -4668,10 +4682,10 @@ async def get_vip_pricing():
     return {
         "wallet_address": WALLET_ADDRESS,
         "value_tiers": {
-            "$0.10 - $0.99": "30 dias",
-            "$1.00 - $4.99": "60 dias", 
-            "$5.00 - $14.99": "180 dias",
-            "$15.00+": "365 dias"
+            "$0.05 - $0.99": "30 dias",
+            "$1.00 - $1.49": "60 dias", 
+            "$1.50 - $1.99": "180 dias",
+            "$2.00+": "365 dias"
         },
         "min_confirmations": 3
     }
@@ -4725,10 +4739,10 @@ async def api_config(uid: str = None, ts: str = None, sig: str = None):
         
         # Obter configurações (sempre disponível) - preços mínimos para compatibilidade com webapp
         value_tiers = {
-            "30": 0.10,   # Mínimo para 1 mês
+            "30": 0.05,   # Mínimo para 1 mês
             "60": 1.00,   # Mínimo para 2 meses
-            "180": 5.00,  # Mínimo para 6 meses
-            "365": 15.00  # Mínimo para 1 ano
+            "180": 1.50,  # Mínimo para 6 meses
+            "365": 2.00   # Mínimo para 1 ano
         }
         
         return {
