@@ -1294,13 +1294,15 @@ async def process_vip_member_entry(user, entry_type: str):
     # Buscar pagamentos pendentes sem ID associado (UID temporário)
     with SessionLocal() as s:
         # Payment está definido no main.py, não no payments.py
-        
+
         # Procurar pagamentos aprovados recentes sem user_id válido ou com user_id = 0
         recent_payments = s.query(Payment).filter(
             Payment.status == "approved",
             Payment.user_id.in_([0, None]),  # Pagamentos sem ID válido
             Payment.created_at >= now_utc() - dt.timedelta(hours=24)  # Últimas 24h
         ).order_by(Payment.created_at.desc()).all()
+
+        logging.info(f"[VIP-ENTRY] Buscando pagamentos pendentes para {user_id} - encontrados {len(recent_payments)} pagamentos")
         
         if recent_payments:
             # Pegar o pagamento mais recente

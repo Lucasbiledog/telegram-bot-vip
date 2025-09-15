@@ -1357,9 +1357,12 @@ async def approve_by_usd_and_invite(tg_id, username: Optional[str], tx_hash: str
         token_symbol = details.get("token_symbol", "Unknown")
         token_amount = details.get("amount_human", details.get("amount", "N/A"))
         
+        user_id_to_save = actual_tg_id if actual_tg_id else 0
+        LOG.info(f"[PAYMENT-SAVE] Salvando pagamento - actual_tg_id: {actual_tg_id}, user_id_to_save: {user_id_to_save}, is_temp_uid: {is_temp_uid}")
+
         p = Payment(
             tx_hash=tx_hash,
-            user_id=actual_tg_id if actual_tg_id else 0,  # 0 para pagamentos sem ID válido
+            user_id=user_id_to_save,  # 0 para pagamentos sem ID válido
             username=username,
             chain=details.get("chain_id", "unknown"),
             amount=str(token_amount),
@@ -1375,6 +1378,19 @@ async def approve_by_usd_and_invite(tg_id, username: Optional[str], tx_hash: str
     LOG.info(f"[INVITE-DEBUG] Finalizando: is_temp_uid={is_temp_uid}, link={link is not None if link else False}")
     
     if is_temp_uid:
+        # Para UIDs temporários, ainda gerar convite automático
+        # O ID será capturado quando o usuário entrar no grupo
+        if bot_available and application and application.bot:
+            try:
+                link = await create_one_time_invite(application.bot, GROUP_VIP_ID, expire_seconds=7200, member_limit=1)
+                LOG.info(f"[INVITE-DEBUG] Convite temporário gerado: {link is not None}")
+                if link:
+                    msg = f"✅ Pagamento confirmado (${usd:.2f})!\nPlano: {days} dias\nConvite VIP: {link}"
+                    return True, msg, {"invite": link, "usd": usd, "days": days, "temp_uid": True}
+            except Exception as e:
+                LOG.warning(f"[INVITE-DEBUG] Falha ao gerar convite temporário: {e}")
+
+        # Fallback se não conseguir gerar convite
         msg = f"✅ Pagamento confirmado (${usd:.2f})!\nPlano: {days} dias\n\n⚠️ Para receber o convite do grupo VIP, forneça seu ID do Telegram válido."
         return True, msg, {"usd": usd, "days": days, "temp_uid": True}
     else:
