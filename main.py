@@ -4567,8 +4567,15 @@ async def crypto_webhook(request: Request):
                     username = f"user_{uid}"
             # Para temp UID, manter username do payload
 
-            # Verificar se é ID temporário ou real
-            is_temp_uid = isinstance(uid, str) and uid.startswith("temp_")
+            # Verificar se é ID temporário ou real (formato antigo "temp_*" ou novo timestamp)
+            is_temp_uid = False
+            if isinstance(uid, str) and uid.startswith("temp_"):
+                is_temp_uid = True
+            elif isinstance(uid, (int, str)):
+                # Verificar se é um timestamp (UID temporário numérico)
+                uid_num = int(uid) if isinstance(uid, str) else uid
+                if 1600000000 <= uid_num <= 2000000000:
+                    is_temp_uid = True
             
             if is_temp_uid:
                 # Pagamento com ID temporário - será associado quando usuário entrar no grupo

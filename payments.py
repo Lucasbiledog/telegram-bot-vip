@@ -1308,8 +1308,19 @@ async def approve_by_usd_and_invite(tg_id, username: Optional[str], tx_hash: str
     if not days:
         return False, f"Valor insuficiente (${usd:.2f})", {"details": details, "usd": usd}
 
-    # Verificar se é UID temporário
-    is_temp_uid = isinstance(tg_id, str) and tg_id.startswith("temp_")
+    # Verificar se é UID temporário (formato antigo "temp_*" ou novo timestamp)
+    is_temp_uid = False
+    if isinstance(tg_id, str) and tg_id.startswith("temp_"):
+        is_temp_uid = True
+    elif isinstance(tg_id, (int, str)):
+        # Verificar se é um timestamp (UID temporário numérico)
+        # UIDs do Telegram são tipicamente menores que 2^31 (2147483647)
+        # Timestamps são maiores que 1600000000 (2020) e menores que 2000000000 (2033)
+        uid_num = int(tg_id) if isinstance(tg_id, str) else tg_id
+        if 1600000000 <= uid_num <= 2000000000:
+            is_temp_uid = True
+            LOG.info(f"[INVITE-DEBUG] UID detectado como timestamp temporário: {uid_num}")
+
     actual_tg_id = None
     until = None
     link = None
