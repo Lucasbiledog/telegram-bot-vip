@@ -2047,7 +2047,8 @@ async def checkout_callback_handler(update: Update, context: ContextTypes.DEFAUL
         else:
             # Gerar ID temporário para checkout normal - ID real será capturado quando entrar no grupo
             import uuid
-            temp_uid = f"temp_{int(time.time())}_{str(uuid.uuid4())[:8]}"
+            # Usar apenas números para compatibilidade com validação de UID
+            temp_uid = int(time.time())
             logging.info(f"[CHECKOUT] Sessão de pagamento - Temp ID: {temp_uid}, Telegram User: {user.id} ({username})")
         
         # Criar URL com ID temporário - ID real será associado quando entrar no grupo VIP
@@ -4721,7 +4722,12 @@ async def api_config(uid: str = None, ts: str = None, sig: str = None):
         if uid and ts and sig:
             # Se parâmetros fornecidos, validar
             try:
-                uid_int = int(uid)
+                # Permitir UIDs temporários no formato antigo
+                if isinstance(uid, str) and uid.startswith("temp_"):
+                    uid_int = uid  # Manter como string para UIDs temporários
+                    logging.info(f"[API-CONFIG] UID temporário aceito: {uid}")
+                else:
+                    uid_int = int(uid)
                 ts_int = int(ts)
             except ValueError:
                 raise HTTPException(status_code=400, detail="uid/ts devem ser números")
@@ -4775,9 +4781,14 @@ async def api_validate(request: Request):
         if not uid or not hash:
             raise HTTPException(status_code=400, detail="uid e hash são obrigatórios")
         
-        # Garantir que UID seja numérico
+        # Garantir que UID seja numérico ou temporário válido
         try:
-            uid_int = int(uid)
+            # Permitir UIDs temporários no formato antigo
+            if isinstance(uid, str) and uid.startswith("temp_"):
+                uid_int = uid  # Manter como string para UIDs temporários
+                logging.info(f"[API-VALIDATE] UID temporário aceito: {uid}")
+            else:
+                uid_int = int(uid)
         except (ValueError, TypeError):
             logging.error(f"[API-VALIDATE] UID inválido: {uid}")
             raise HTTPException(status_code=400, detail="UID deve ser um número válido")
