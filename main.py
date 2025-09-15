@@ -976,7 +976,7 @@ async def dm(user_id: int, text: str, parse_mode: Optional[str] = "HTML") -> boo
 # ENV / CONFIG
 # =========================
 load_dotenv()
-BOT_TOKEN   = os.getenv("BOT_TOKEN")
+BOT_TOKEN   = os.getenv("BOT_TOKEN") or os.getenv("TELEGRAM_BOT_TOKEN")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 SELF_URL    = os.getenv("SELF_URL")
 
@@ -5757,9 +5757,10 @@ async def on_startup():
     logging.info(f"   WALLET_ADDRESS: {'✅ Set' if WALLET_ADDRESS else '❌ Missing'}")
     
     # Verificar se BOT_TOKEN está configurado
-    if not BOT_TOKEN or BOT_TOKEN == "test_token":
-        logging.error("❌ BOT_TOKEN não está configurado corretamente!")
-        logging.error("   Configure BOT_TOKEN no Render com o token do seu bot do Telegram")
+    if not BOT_TOKEN:
+        logging.error("❌ BOT_TOKEN não está configurado!")
+        logging.error("   Configure BOT_TOKEN ou TELEGRAM_BOT_TOKEN nas variáveis de ambiente")
+        logging.error("   No Render: Settings → Environment → Add BOT_TOKEN")
         return
     
     # Retry logic for bot initialization (common on cloud platforms)
