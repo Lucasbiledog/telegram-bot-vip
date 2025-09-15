@@ -1410,6 +1410,7 @@ class Payment(Base):
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(BigInteger, nullable=False)
     username = Column(String, nullable=True)
+    first_name = Column(String, nullable=True)  # Nome real do usuário
     tx_hash = Column(String, unique=True, index=True)
     chain = Column(String, default="unknown")
     amount = Column(String, nullable=True)  # Quantidade do token
@@ -1424,6 +1425,7 @@ class VipMembership(Base):
     id = Column(Integer, primary_key=True)
     user_id = Column(BigInteger, index=True, unique=True)
     username = Column(String, nullable=True)
+    first_name = Column(String, nullable=True)  # Nome real do usuário
     tx_hash = Column(String, nullable=True)
     start_at = Column(DateTime, nullable=False, default=now_utc)
     expires_at = Column(DateTime, nullable=False)
@@ -2830,7 +2832,13 @@ async def listar_hashes_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             for p in page_payments:
                 status_emoji = {"pending": "⏳", "approved": "✅", "rejected": "❌"}.get(p.status, "❓")
-                username_info = f"@{p.username}" if p.username else f"ID:{p.user_id}"
+                # Prioridade: nome > @username > ID
+                if hasattr(p, 'first_name') and p.first_name:
+                    username_info = p.first_name
+                elif p.username:
+                    username_info = f"@{p.username}"
+                else:
+                    username_info = f"ID:{p.user_id}"
                 
                 # Converter UTC para horário local brasileiro
                 if p.created_at:
@@ -3039,7 +3047,13 @@ async def excluir_hash_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
             
             # Confirmar exclusão
-            username_info = f"@{payment.username}" if payment.username else f"ID:{payment.user_id}"
+            # Prioridade: nome > @username > ID
+            if hasattr(payment, 'first_name') and payment.first_name:
+                username_info = payment.first_name
+            elif payment.username:
+                username_info = f"@{payment.username}"
+            else:
+                username_info = f"ID:{payment.user_id}"
             
             # Converter horário para BRT
             if payment.created_at:
@@ -3108,7 +3122,13 @@ async def listar_vips_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             expired_count = 0
             
             for vip in page_vips:
-                username_info = f"@{vip.username}" if vip.username else f"ID:{vip.user_id}"
+                # Prioridade: nome > @username > ID
+                if hasattr(vip, 'first_name') and vip.first_name:
+                    username_info = vip.first_name
+                elif vip.username:
+                    username_info = f"@{vip.username}"
+                else:
+                    username_info = f"ID:{vip.user_id}"
                 
                 # Converter horários para BRT
                 if vip.expires_at:
@@ -3208,7 +3228,13 @@ async def processar_confirmacao_exclusao(update: Update, context: ContextTypes.D
                         
                         s.commit()
                         
-                        username_info = f"@{username}" if username else f"ID:{user_id}"
+                        # Prioridade: nome real > @username > ID
+                        if hasattr(payment, 'first_name') and payment.first_name:
+                            username_info = payment.first_name
+                        elif username:
+                            username_info = f"@{username}"
+                        else:
+                            username_info = f"ID:{user_id}"
                         await update.effective_message.reply_text(
                             f"✅ <b>HASH EXCLUÍDA COM SUCESSO</b>\n\n"
                             f"🆔 ID: #{payment_id}\n"
@@ -3398,7 +3424,13 @@ async def reavaliar_pagamentos_cmd(update: Update, context: ContextTypes.DEFAULT
                         old_usd = float(payment.usd_value) if payment.usd_value else 0
                         
                         short_hash = payment.tx_hash[:12] + "..."
-                        username_info = f"@{payment.username}" if payment.username else f"ID:{payment.user_id}"
+                        # Prioridade: nome > @username > ID
+                        if hasattr(payment, 'first_name') and payment.first_name:
+                            username_info = payment.first_name
+                        elif payment.username:
+                            username_info = f"@{payment.username}"
+                        else:
+                            username_info = f"ID:{payment.user_id}"
                         
                         if new_days and new_days > current_days:
                             # Upgrade disponível!

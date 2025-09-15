@@ -24,16 +24,17 @@ def choose_plan_from_usd(amount_usd: float, prices: Dict[int, float] = None) -> 
             return None
     
     # Faixas de valor dinâmicas baseadas no valor real pago
+    # CORRIGIDO: Agora consistente com plan_from_amount em main.py
     if amount_usd < 0.05:  # Menos de 5 centavos - não elegível
         return None
     elif amount_usd < 1.0:  # $0.05 - $0.99
-        return 30   # 1 mês
-    elif amount_usd < 2.0:  # $1.00 - $1.99  
-        return 60   # 2 meses
-    elif amount_usd < 3.0:  # $2.00 - $2.99
-        return 180  # 6 meses
-    else:  # $3.00+
-        return 365  # 1 ano
+        return 30   # 1 mês (MENSAL)
+    elif amount_usd < 1.5:  # $1.00 - $1.49
+        return 60   # 2 meses (TRIMESTRAL - nome confuso mas é 60 dias)
+    elif amount_usd < 2.0:  # $1.50 - $1.99
+        return 180  # 6 meses (SEMESTRAL)
+    else:  # $2.00+
+        return 365  # 1 ano (ANUAL)
     
     # Fallback para compatibilidade (caso ainda existam preços fixos)
     if prices:
@@ -48,7 +49,7 @@ def choose_plan_from_usd(amount_usd: float, prices: Dict[int, float] = None) -> 
     
     return None
 
-async def vip_upsert_and_get_until(tg_id: int, username: Optional[str], days: int) -> datetime:
+async def vip_upsert_and_get_until(tg_id: int, username: Optional[str], days: int, first_name: Optional[str] = None) -> datetime:
     """Create or extend VIP membership and return the new expiry."""
     from main import SessionLocal, VipMembership, now_utc
     
@@ -63,6 +64,7 @@ async def vip_upsert_and_get_until(tg_id: int, username: Optional[str], days: in
             m = VipMembership(
                 user_id=tg_id,
                 username=username,
+                first_name=first_name,
                 active=True,
                 expires_at=new_until,
                 created_at=now
@@ -87,6 +89,8 @@ async def vip_upsert_and_get_until(tg_id: int, username: Optional[str], days: in
             m.active = True
             if username:
                 m.username = username
+            if first_name:
+                m.first_name = first_name
         
         s.commit()
         return m.expires_at
@@ -191,7 +195,7 @@ async def create_vip_invite_and_notify(bot: Bot, user_id: int, username: Optiona
     """Cria convite VIP e notifica usuário sobre aprovação."""
     try:
         # Extend VIP membership
-        vip_until = await vip_upsert_and_get_until(user_id, username, days)
+        vip_until = await vip_upsert_and_get_until(user_id, username, days, None)
         
         # Create invite link (you'll need to import GROUP_VIP_ID from main or make it configurable)
         invite_link = await create_one_time_invite(bot, -1002432143718, expire_seconds=7200)  # Placeholder ID

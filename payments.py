@@ -1112,7 +1112,7 @@ async def tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 
                 # Criar/estender VIP
                 from utils import vip_upsert_and_get_until
-                vip_until = await vip_upsert_and_get_until(user.id, user.username, plan_days)
+                vip_until = await vip_upsert_and_get_until(user.id, user.username, plan_days, user.first_name)
                 
                 return await msg.reply_text(
                     f"✅ Pagamento confirmado: ${usd_paid:.2f}\n"
@@ -1182,7 +1182,9 @@ async def aprovar_tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         try:
             # Extend VIP
-            vip_until = await vip_upsert_and_get_until(p.user_id, p.username, p.days)
+            # Usar first_name se disponível no payment, senão usar None
+            first_name = getattr(p, 'first_name', None)
+            vip_until = await vip_upsert_and_get_until(p.user_id, p.username, p.days, first_name)
             p.status = "approved"
             p.vip_until = vip_until
             s.commit()
@@ -1333,7 +1335,7 @@ async def approve_by_usd_and_invite(tg_id, username: Optional[str], tx_hash: str
             LOG.info(f"[INVITE-DEBUG] UID convertido para int: {actual_tg_id}")
             
             # Estender VIP apenas se for ID real
-            until = await vip_upsert_and_get_until(actual_tg_id, username, days)
+            until = await vip_upsert_and_get_until(actual_tg_id, username, days, None)
             LOG.info(f"[INVITE-DEBUG] VIP estendido até: {until}")
             
             # Gerar convite de 1 uso
