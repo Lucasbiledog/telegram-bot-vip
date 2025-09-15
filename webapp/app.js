@@ -14,6 +14,37 @@ function clearAlert() {
   alertBox.innerHTML = "";
 }
 
+// --- controle de progresso ---
+const progressContainer = $("progressContainer");
+const progressFill = $("progressFill");
+const progressPercent = $("progressPercent");
+const progressLog = $("progressLog");
+
+function showProgress() {
+  progressContainer.style.display = "block";
+  progressFill.style.width = "0%";
+  progressPercent.textContent = "0%";
+  progressLog.innerHTML = "";
+}
+
+function updateProgress(percent, message, type = "info") {
+  progressFill.style.width = `${percent}%`;
+  progressPercent.textContent = `${percent}%`;
+
+  if (message) {
+    const logEntry = document.createElement("div");
+    logEntry.className = `log-entry ${type}`;
+    const timestamp = new Date().toLocaleTimeString();
+    logEntry.textContent = `[${timestamp}] ${message}`;
+    progressLog.appendChild(logEntry);
+    progressLog.scrollTop = progressLog.scrollHeight;
+  }
+}
+
+function hideProgress() {
+  progressContainer.style.display = "none";
+}
+
 // --- pega uid/ts/sig/username da query ---
 const q = new URLSearchParams(location.search);
 let uid = q.get("uid");
@@ -42,12 +73,18 @@ if (!uid && window.Telegram && window.Telegram.WebApp) {
 
 // --- render de planos ---
 function renderPlans(plansObj) {
+  console.log("[renderPlans] Chamada com dados:", plansObj);
   const el = $("plans");
+  if (!el) {
+    console.error("[renderPlans] Elemento 'plans' não encontrado!");
+    return;
+  }
   el.innerHTML = "";
   // Espera { "30": 19.99, "90": 49.99, ... }
   const entries = Object.entries(plansObj || {}).map(([days, price]) => [Number(days), Number(price)]);
   // ordenar por dias crescente
   entries.sort((a, b) => a[0] - b[0]);
+  console.log("[renderPlans] Renderizando", entries.length, "planos");
   for (const [days, price] of entries) {
     const pill = document.createElement("div");
     pill.className = "pill";
@@ -119,7 +156,8 @@ async function loadConfig() {
     }
   } catch (err) {
     console.error(err);
-    showAlert("Erro ao carregar configurações. Tente abrir o /checkout novamente.", false);
+    console.log("[loadConfig] Erro na API, carregando configurações básicas");
+    loadBasicInfo();
   }
 }
 
@@ -130,45 +168,59 @@ async function validatePayment() {
     console.log("Validação já em andamento, ignorando clique...");
     return;
   }
-  
+
   isValidating = true;
   clearAlert();
+  showProgress();
+  updateProgress(10, "Iniciando validação do pagamento...");
+
   const hash = $("txhash").value.trim();
   if (!hash) {
+    updateProgress(0, "Erro: Hash da transação não fornecido", "error");
+    hideProgress();
     showAlert("Informe o hash da transação (ex.: 0xabc...)", false);
     isValidating = false;
     return;
   }
+
+  updateProgress(20, `Verificando hash: ${hash.substring(0, 20)}...`);
   
   // Usar UID se disponível e válido (numérico), caso contrário usar ID fornecido pelo usuário ou valor padrão
   let userID = uid;
   console.log("[validate] UID inicial:", userID);
 
+  updateProgress(30, "Processando identificação do usuário...");
+
   // Validar se o UID da URL é realmente numérico
   if (userID && (isNaN(userID) || userID.toString().includes('x') || userID.toString().length > 15)) {
     console.warn("[validate] UID da URL não é válido (não numérico ou muito longo):", userID);
+    updateProgress(35, "UID da URL inválido, buscando alternativas...", "info");
     userID = null; // Forçar busca de ID alternativo
   }
-  
+
   if (!userID) {
     const userInput = $("userid")?.value?.trim();
     console.log("[validate] Input do usuário:", userInput);
-    
+
     if (userInput && !isNaN(userInput) && userInput.length > 0) {
       userID = userInput;
+      updateProgress(40, `Usando ID fornecido pelo usuário: ${userID}`, "success");
       console.log("[validate] Usando ID fornecido pelo usuário:", userID);
     } else {
       // Tentar obter do Telegram WebApp novamente
       if (window.Telegram?.WebApp?.initDataUnsafe?.user?.id) {
         userID = window.Telegram.WebApp.initDataUnsafe.user.id.toString();
+        updateProgress(40, `ID obtido do Telegram WebApp: ${userID}`, "success");
         console.log("[validate] UID obtido do WebApp no momento da validação:", userID);
       } else {
         // Gerar um ID temporário numérico baseado no hash para permitir validação
         userID = Math.abs(hash.split('').reduce((a,b) => (((a << 5) - a) + b.charCodeAt(0))|0, 0)).toString();
+        updateProgress(40, `ID temporário gerado: ${userID}`, "info");
         console.log("[validate] Gerando UID temporário numérico:", userID);
       }
     }
   } else {
+    updateProgress(40, `Usando ID da URL: ${userID}`, "success");
     console.log("[validate] Usando UID da URL:", userID);
   }
 
@@ -178,39 +230,60 @@ async function validatePayment() {
   pasteBtn.disabled = true;
   btn.textContent = "Validando…";
 
+  updateProgress(50, "Conectando com o servidor...");
+
   try {
+    updateProgress(60, "Enviando dados para validação...");
+
     const r = await fetch("/api/validate", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ uid: userID, username: null, hash }),
     });
 
+    updateProgress(70, "Processando resposta do servidor...");
+
     const j = await r.json().catch(() => ({}));
     if (!r.ok) {
+      updateProgress(0, `Erro do servidor ${r.status}: ${j.detail || "Falha na validação"}`, "error");
+      hideProgress();
       showAlert(`Erro ${r.status}: ${j.detail || "Falha na validação"}`, false);
       return;
     }
 
+    updateProgress(80, "Validação concluída, processando resultado...");
+
     if (j.ok) {
+      updateProgress(90, "Pagamento confirmado! ✅", "success");
+
       // mostra mensagem e redireciona para o convite se existir
       showAlert(j.message || "Pagamento confirmado!", true);
 
       if (j.invite) {
+        updateProgress(100, "Redirecionando para o grupo VIP...", "success");
         // redireciona imediatamente
         setTimeout(() => {
           window.location.href = j.invite;
-        }, 600); // pequeno delay para o usuário ver a mensagem
+        }, 1500); // delay maior para ver o progresso completo
       } else if (j.no_auto_invite) {
+        updateProgress(100, "VIP ativado! Entre em contato para receber o convite.", "success");
         // VIP ativado mas sem convite automático
         showAlert((j.message || "Pagamento confirmado!") + "<br><br><strong>🎉 VIP Ativado!</strong><br>Entre em contato no bot para receber o convite do grupo.", true);
+        setTimeout(hideProgress, 3000);
       } else {
+        updateProgress(95, "Pagamento confirmado, mas sem link de convite", "info");
         showAlert((j.message || "Pagamento confirmado!") + "<br><br>Não recebemos o link de convite. Tente novamente.", true);
+        setTimeout(hideProgress, 3000);
       }
     } else {
+      updateProgress(0, "Pagamento não reconhecido ou inválido", "error");
+      hideProgress();
       showAlert(j.message || "Pagamento não reconhecido.", false);
     }
   } catch (err) {
     console.error(err);
+    updateProgress(0, `Erro de rede: ${err.message}`, "error");
+    hideProgress();
     showAlert("Erro de rede. Tente novamente em alguns segundos.", false);
   } finally {
     btn.disabled = false;
@@ -267,10 +340,11 @@ function showHowToGetId() {
 
 // --- carrega informações básicas sem autenticação ---
 async function loadBasicInfo() {
+  console.log("[loadBasicInfo] Carregando configurações básicas...");
   try {
     // Mostrar carteira padrão (pode ser obtida da API)
     $("addr").value = "0x40dDBD27F878d07808339F9965f013F1CBc2F812";
-    
+
     // Mostrar planos padrão - valores mínimos atualizados
     const defaultPlans = {
       "30": 0.05,
@@ -278,6 +352,7 @@ async function loadBasicInfo() {
       "180": 2.00,  // Atualizado de 1.50 para 2.00
       "365": 3.00   // Atualizado de 2.00 para 3.00
     };
+    console.log("[loadBasicInfo] Renderizando planos padrão:", defaultPlans);
     renderPlans(defaultPlans);
     
     // Página totalmente funcional
@@ -293,4 +368,5 @@ async function loadBasicInfo() {
 }
 
 // start
+console.log("[startup] Iniciando webapp...");
 loadConfig();
