@@ -21,6 +21,12 @@ const ts  = q.get("ts");
 const sig = q.get("sig");
 const username = q.get("username");
 
+// Validar se o UID da URL é numérico - se não for, ignorar
+if (uid && (isNaN(uid) || uid.includes('x') || uid.length > 15)) {
+  console.warn("[url-params] UID inválido na URL, ignorando:", uid);
+  uid = null;
+}
+
 // --- fallback para obter UID via Telegram WebApp ---
 if (!uid && window.Telegram && window.Telegram.WebApp) {
   try {
@@ -134,9 +140,15 @@ async function validatePayment() {
     return;
   }
   
-  // Usar UID se disponível, caso contrário usar ID fornecido pelo usuário ou valor padrão
+  // Usar UID se disponível e válido (numérico), caso contrário usar ID fornecido pelo usuário ou valor padrão
   let userID = uid;
   console.log("[validate] UID inicial:", userID);
+
+  // Validar se o UID da URL é realmente numérico
+  if (userID && (isNaN(userID) || userID.toString().includes('x') || userID.toString().length > 15)) {
+    console.warn("[validate] UID da URL não é válido (não numérico ou muito longo):", userID);
+    userID = null; // Forçar busca de ID alternativo
+  }
   
   if (!userID) {
     const userInput = $("userid")?.value?.trim();
