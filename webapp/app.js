@@ -163,9 +163,9 @@ async function validatePayment() {
         userID = window.Telegram.WebApp.initDataUnsafe.user.id.toString();
         console.log("[validate] UID obtido do WebApp no momento da validação:", userID);
       } else {
-        // Gerar um ID temporário baseado no hash para permitir validação
-        userID = "temp_" + Math.abs(hash.split('').reduce((a,b) => (((a << 5) - a) + b.charCodeAt(0))|0, 0));
-        console.log("[validate] Gerando UID temporário:", userID);
+        // Gerar um ID temporário numérico baseado no hash para permitir validação
+        userID = Math.abs(hash.split('').reduce((a,b) => (((a << 5) - a) + b.charCodeAt(0))|0, 0)).toString();
+        console.log("[validate] Gerando UID temporário numérico:", userID);
       }
     }
   } else {
