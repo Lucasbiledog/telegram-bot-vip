@@ -3,6 +3,7 @@ import os
 import logging
 import asyncio
 import datetime as dt
+import time
 from enum import Enum
 from typing import Optional, List, Dict, Any, Tuple
 
@@ -66,6 +67,66 @@ from utils import (
     make_link_sig,                              # assinatura de link compartilhada
     send_with_retry,
     reply_with_retry,
+)
+
+# Cache system para alta performance
+from cache import (
+    cache,
+    cache_admin_list,
+    get_cached_admin_list,
+    cache_price,
+    get_cached_price,
+    cache_user_vip_status,
+    get_cached_vip_status,
+    invalidate_user_cache,
+)
+
+# Sistema de filas assíncronas para alta concorrência
+from queue_system import (
+    queue_manager,
+    init_queue_system,
+    queue_payment_validation,
+    queue_pack_sending,
+    queue_vip_notification,
+    QueuePriority,
+)
+
+# Rate limiting inteligente para alta performance
+from rate_limiter import (
+    telegram_limiter,
+    api_limiter,
+    with_telegram_rate_limit,
+    with_api_rate_limit,
+    smart_delay,
+    batch_with_rate_limit,
+)
+
+# Circuit Breaker pattern para proteção contra cascata de falhas
+from circuit_breaker import (
+    breaker_manager,
+    get_database_breaker,
+    get_telegram_api_breaker,
+    get_coingecko_breaker,
+    get_blockchain_rpc_breaker,
+    get_payment_validation_breaker,
+    with_circuit_breaker,
+    with_database_protection,
+    with_api_protection,
+    health_check_with_breakers,
+    CircuitBreakerError,
+)
+
+# Operações otimizadas em batch para alta performance
+from batch_operations import (
+    batch_processor,
+    batch_send_messages,
+    batch_validate_payments,
+    batch_update_vip_status,
+    bulk_notify_vip_expiration,
+    bulk_process_pending_payments,
+    bulk_cleanup_expired_data,
+    get_batch_processor_stats,
+    DatabaseBatchProcessor,
 )
 
 
@@ -209,13 +270,19 @@ if url.get_backend_name() == "sqlite":
         url = url.set(drivername="sqlite")
 
 engine = create_engine(
-    url, 
-    pool_pre_ping=True, 
+    url,
+    pool_pre_ping=True,
     future=True,
-    pool_size=5,  # Conexões simultâneas
-    max_overflow=10,  # Conexões extras quando necessário
-    pool_timeout=30,  # Timeout para obter conexão
-    pool_recycle=3600,  # Reciclar conexões a cada hora
+    pool_size=50,  # Conexões simultâneas aumentadas para alta concorrência
+    max_overflow=100,  # Total máximo: 150 conexões
+    pool_timeout=5,  # Timeout reduzido para falhar rápido
+    pool_recycle=1800,  # Reciclar a cada 30min para evitar timeouts
+    echo=False,  # Desabilitar logs SQL em produção
+    # Otimizações adicionais para alta performance
+    connect_args={
+        "application_name": "telegram_bot",
+        "connect_timeout": 10,
+    } if url.drivername.startswith("postgresql") else {}
 )
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 Base = declarative_base()
@@ -384,9 +451,58 @@ def init_db():
     if not cfg_get("daily_pack_vip_hhmm"):  cfg_set("daily_pack_vip_hhmm", "09:00")
     if not cfg_get("daily_pack_free_hhmm"): cfg_set("daily_pack_free_hhmm", "09:30")
 
+def ensure_critical_indexes():
+    """Criar índices críticos para performance em larga escala"""
+    try:
+        with engine.begin() as conn:
+            # Índices críticos para alta performance
+            indexes = [
+                # Payments - busca por hash é muito frequente
+                "CREATE INDEX IF NOT EXISTS idx_payments_tx_hash ON payments(tx_hash)",
+                "CREATE INDEX IF NOT EXISTS idx_payments_user_status ON payments(user_id, status)",
+                "CREATE INDEX IF NOT EXISTS idx_payments_temp_user_id ON payments(temp_user_id)",
+                "CREATE INDEX IF NOT EXISTS idx_payments_created_at ON payments(created_at DESC)",
+
+                # VIP memberships - consultas frequentes por usuário e expiração
+                "CREATE INDEX IF NOT EXISTS idx_vip_user_expires ON vip_memberships(user_id, expires_at)",
+                "CREATE INDEX IF NOT EXISTS idx_vip_active_expires ON vip_memberships(active, expires_at) WHERE active = true",
+                "CREATE INDEX IF NOT EXISTS idx_vip_expires_at ON vip_memberships(expires_at DESC)",
+
+                # Packs - envio por tier e status
+                "CREATE INDEX IF NOT EXISTS idx_packs_tier_sent ON packs(tier, sent, created_at)",
+                "CREATE INDEX IF NOT EXISTS idx_packs_header_message ON packs(header_message_id)",
+                "CREATE INDEX IF NOT EXISTS idx_packs_scheduled_for ON packs(scheduled_for)",
+
+                # Pack files - busca por pack
+                "CREATE INDEX IF NOT EXISTS idx_pack_files_pack_id ON pack_files(pack_id, id)",
+                "CREATE INDEX IF NOT EXISTS idx_pack_files_src_msg ON pack_files(src_chat_id, src_message_id)",
+
+                # Admins - verificação de admin é muito frequente
+                "CREATE INDEX IF NOT EXISTS idx_admins_user_id ON admins(user_id)",
+
+                # VIP notifications - evitar duplicatas
+                "CREATE INDEX IF NOT EXISTS idx_vip_notifications_user_type ON vip_notifications(user_id, notification_type, created_at)",
+
+                # Scheduled messages - execução por horário
+                "CREATE INDEX IF NOT EXISTS idx_scheduled_messages_enabled_tier ON scheduled_messages(enabled, tier, hhmm)",
+            ]
+
+            for index_sql in indexes:
+                try:
+                    conn.execute(text(index_sql))
+                    logging.debug(f"Índice criado/verificado: {index_sql.split('idx_')[1].split(' ')[0] if 'idx_' in index_sql else 'unknown'}")
+                except Exception as idx_error:
+                    # Índice já existe ou erro, continuar
+                    logging.debug(f"Erro ao criar índice: {idx_error}")
+                    pass
+
+    except Exception as e:
+        logging.warning(f"Erro ao criar índices críticos: {e}")
+        pass
+
 def ensure_schema():
     global engine, SessionLocal, url, DB_URL
-    
+
     try:
         Base.metadata.create_all(bind=engine)
         ensure_bigint_columns()
@@ -397,6 +513,7 @@ def ensure_schema():
         ensure_vip_notification_columns()
         ensure_vip_plan_column()
         ensure_payment_fields()
+        ensure_critical_indexes()  # Criar índices para alta performance
         
         # Show appropriate success message based on database type
         db_type = "PostgreSQL" if url.get_backend_name() == "postgresql" else "SQLite"
@@ -432,13 +549,19 @@ def ensure_schema():
             DB_URL = "sqlite:///:memory:"
             url = make_url(DB_URL)
             engine = create_engine(
-    url, 
-    pool_pre_ping=True, 
+    url,
+    pool_pre_ping=True,
     future=True,
-    pool_size=5,  # Conexões simultâneas
-    max_overflow=10,  # Conexões extras quando necessário
-    pool_timeout=30,  # Timeout para obter conexão
-    pool_recycle=3600,  # Reciclar conexões a cada hora
+    pool_size=50,  # Conexões simultâneas aumentadas para alta concorrência
+    max_overflow=100,  # Total máximo: 150 conexões
+    pool_timeout=5,  # Timeout reduzido para falhar rápido
+    pool_recycle=1800,  # Reciclar a cada 30min para evitar timeouts
+    echo=False,  # Desabilitar logs SQL em produção
+    # Otimizações adicionais para alta performance
+    connect_args={
+        "application_name": "telegram_bot",
+        "connect_timeout": 10,
+    } if url.drivername.startswith("postgresql") else {}
 )
             SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
             
@@ -874,13 +997,338 @@ JOB_PREFIX_SM = "scheduled_msg_"
 # =========================
 # FASTAPI + PTB
 # =========================
-app = FastAPI()
+
+# Timestamp de início para métricas de uptime
+start_time = time.time()
+
+app = FastAPI(
+    title="Telegram VIP Bot API",
+    description="Bot Telegram para gerenciamento de conteúdo VIP com pagamentos em cripto",
+    version="2.0.0"
+)
+
+@app.on_event("startup")
+async def startup_event():
+    """Inicialização de sistemas críticos"""
+    global start_time
+    start_time = time.time()
+
+    try:
+        # Inicializar cache Redis
+        await cache.init_redis()
+
+        # Inicializar sistema de filas
+        await init_queue_system()
+
+        # Atualizar cache de admins
+        await refresh_admin_cache()
+
+        logging.info("✅ Sistemas de alta performance inicializados com sucesso")
+
+    except Exception as e:
+        logging.error(f"❌ Erro na inicialização dos sistemas: {e}")
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Limpeza na finalização"""
+    try:
+        # Parar sistema de filas
+        await queue_manager.stop()
+        logging.info("✅ Sistemas finalizados com sucesso")
+    except Exception as e:
+        logging.error(f"❌ Erro na finalização: {e}")
 
 # Montar arquivos estáticos da webapp
 import os
 webapp_dir = os.path.join(os.path.dirname(__file__), "webapp")
 if os.path.exists(webapp_dir):
     app.mount("/webapp", StaticFiles(directory=webapp_dir), name="webapp")
+
+# =========================
+# HEALTH CHECK & MONITORING ENDPOINTS
+# =========================
+
+@app.get("/health")
+async def health_check():
+    """Health check endpoint para load balancers e monitoring"""
+    try:
+        # Verificar conectividade do banco
+        db_status = "healthy"
+        try:
+            with SessionLocal() as s:
+                s.execute(text("SELECT 1"))
+        except Exception as e:
+            db_status = f"unhealthy: {str(e)[:100]}"
+
+        # Verificar cache Redis
+        cache_status = "healthy"
+        try:
+            await cache.set("health_check", "ok", 10)
+            cache_result = await cache.get("health_check")
+            if cache_result != "ok":
+                cache_status = "unhealthy: cache test failed"
+        except Exception as e:
+            cache_status = f"fallback: {str(e)[:50]}"
+
+        # Status do bot
+        bot_status = "healthy" if application and application.bot else "unhealthy"
+
+        # Status das filas
+        queue_stats = queue_manager.get_stats() if queue_manager else {"error": "not initialized"}
+
+        health_data = {
+            "status": "healthy",
+            "timestamp": datetime.now().isoformat(),
+            "version": "2.0.0",
+            "services": {
+                "database": db_status,
+                "cache": cache_status,
+                "bot": bot_status,
+                "queues": queue_stats
+            },
+            "uptime_seconds": time.time() - start_time if 'start_time' in globals() else 0
+        }
+
+        # Se qualquer serviço crítico estiver down, retornar erro
+        if db_status != "healthy" or bot_status != "healthy":
+            health_data["status"] = "degraded"
+            return JSONResponse(content=health_data, status_code=503)
+
+        return JSONResponse(content=health_data, status_code=200)
+
+    except Exception as e:
+        return JSONResponse(
+            content={
+                "status": "unhealthy",
+                "error": str(e),
+                "timestamp": datetime.now().isoformat()
+            },
+            status_code=503
+        )
+
+@app.get("/metrics")
+async def metrics_endpoint():
+    """Endpoint de métricas para Prometheus/monitoring"""
+    try:
+        with SessionLocal() as s:
+            # Estatísticas do banco
+            total_users = s.query(VipMembership).count()
+            active_vips = s.query(VipMembership).filter(
+                VipMembership.active == True,
+                VipMembership.expires_at > now_utc()
+            ).count()
+            total_packs = s.query(Pack).count()
+            pending_packs = s.query(Pack).filter(Pack.sent == False).count()
+            total_payments = s.query(Payment).count()
+            pending_payments = s.query(Payment).filter(Payment.status == 'pending').count()
+
+        # Métricas das filas
+        queue_stats = queue_manager.get_stats() if queue_manager else {}
+
+        # Métricas do pool de conexões
+        pool_stats = {
+            "pool_size": engine.pool.size(),
+            "checked_in": engine.pool.checkedin(),
+            "checked_out": engine.pool.checkedout(),
+            "overflow": engine.pool.overflow(),
+            "invalid": engine.pool.invalid(),
+        } if engine and hasattr(engine.pool, 'size') else {}
+
+        metrics = {
+            "database": {
+                "total_users": total_users,
+                "active_vips": active_vips,
+                "total_packs": total_packs,
+                "pending_packs": pending_packs,
+                "total_payments": total_payments,
+                "pending_payments": pending_payments
+            },
+            "queues": queue_stats,
+            "connection_pool": pool_stats,
+            "system": {
+                "timestamp": datetime.now().isoformat(),
+                "uptime_seconds": time.time() - start_time if 'start_time' in globals() else 0
+            }
+        }
+
+        return JSONResponse(content=metrics, status_code=200)
+
+    except Exception as e:
+        return JSONResponse(
+            content={"error": str(e), "timestamp": datetime.now().isoformat()},
+            status_code=500
+        )
+
+@app.get("/ready")
+async def readiness_check():
+    """Readiness check para Kubernetes"""
+    try:
+        # Verificar se todos os sistemas críticos estão prontos
+        ready = True
+        services = {}
+
+        # Banco de dados
+        try:
+            with SessionLocal() as s:
+                s.execute(text("SELECT 1"))
+            services["database"] = "ready"
+        except Exception as e:
+            services["database"] = f"not ready: {e}"
+            ready = False
+
+        # Bot
+        if application and application.bot:
+            services["bot"] = "ready"
+        else:
+            services["bot"] = "not ready"
+            ready = False
+
+        # Queue system
+        if queue_manager and queue_manager.running:
+            services["queues"] = "ready"
+        else:
+            services["queues"] = "not ready"
+            ready = False
+
+        response_data = {
+            "ready": ready,
+            "services": services,
+            "timestamp": datetime.now().isoformat()
+        }
+
+        status_code = 200 if ready else 503
+        return JSONResponse(content=response_data, status_code=status_code)
+
+    except Exception as e:
+        return JSONResponse(
+            content={
+                "ready": False,
+                "error": str(e),
+                "timestamp": datetime.now().isoformat()
+            },
+            status_code=503
+        )
+
+@app.get("/stats")
+async def stats_endpoint():
+    """Endpoint de estatísticas detalhadas"""
+    try:
+        with SessionLocal() as s:
+            # Estatísticas mais detalhadas
+            stats = {
+                "vip_members": {
+                    "total": s.query(VipMembership).count(),
+                    "active": s.query(VipMembership).filter(
+                        VipMembership.active == True,
+                        VipMembership.expires_at > now_utc()
+                    ).count(),
+                    "expired": s.query(VipMembership).filter(
+                        VipMembership.expires_at <= now_utc()
+                    ).count(),
+                },
+                "packs": {
+                    "total": s.query(Pack).count(),
+                    "vip": s.query(Pack).filter(Pack.tier == "vip").count(),
+                    "free": s.query(Pack).filter(Pack.tier == "free").count(),
+                    "pending": s.query(Pack).filter(Pack.sent == False).count(),
+                },
+                "payments": {
+                    "total": s.query(Payment).count(),
+                    "approved": s.query(Payment).filter(Payment.status == 'approved').count(),
+                    "pending": s.query(Payment).filter(Payment.status == 'pending').count(),
+                    "rejected": s.query(Payment).filter(Payment.status == 'rejected').count(),
+                },
+                "system": {
+                    "uptime_seconds": time.time() - start_time if 'start_time' in globals() else 0,
+                    "queue_stats": queue_manager.get_stats() if queue_manager else {},
+                    "timestamp": datetime.now().isoformat()
+                }
+            }
+
+        return JSONResponse(content=stats, status_code=200)
+
+    except Exception as e:
+        return JSONResponse(
+            content={"error": str(e), "timestamp": datetime.now().isoformat()},
+            status_code=500
+        )
+
+@app.get("/circuit-breakers")
+async def circuit_breakers_status():
+    """Status de todos os circuit breakers"""
+    try:
+        breaker_stats = await health_check_with_breakers()
+        return JSONResponse(content=breaker_stats, status_code=200)
+    except Exception as e:
+        return JSONResponse(
+            content={"error": str(e), "timestamp": datetime.now().isoformat()},
+            status_code=500
+        )
+
+@app.post("/circuit-breakers/{breaker_name}/reset")
+async def reset_circuit_breaker(breaker_name: str):
+    """Reseta um circuit breaker específico"""
+    try:
+        success = breaker_manager.reset_breaker(breaker_name)
+        if success:
+            return JSONResponse(
+                content={
+                    "message": f"Circuit breaker '{breaker_name}' resetado com sucesso",
+                    "timestamp": datetime.now().isoformat()
+                },
+                status_code=200
+            )
+        else:
+            return JSONResponse(
+                content={
+                    "error": f"Circuit breaker '{breaker_name}' não encontrado",
+                    "timestamp": datetime.now().isoformat()
+                },
+                status_code=404
+            )
+    except Exception as e:
+        return JSONResponse(
+            content={"error": str(e), "timestamp": datetime.now().isoformat()},
+            status_code=500
+        )
+
+@app.get("/batch-operations/stats")
+async def batch_operations_stats():
+    """Estatísticas das operações em batch"""
+    try:
+        stats = get_batch_processor_stats()
+        return JSONResponse(content=stats, status_code=200)
+    except Exception as e:
+        return JSONResponse(
+            content={"error": str(e), "timestamp": datetime.now().isoformat()},
+            status_code=500
+        )
+
+@app.post("/batch-operations/cleanup")
+async def run_batch_cleanup(days_old: int = 30):
+    """Executa limpeza em lote de dados antigos"""
+    try:
+        if days_old < 7:
+            return JSONResponse(
+                content={"error": "days_old deve ser pelo menos 7 dias"},
+                status_code=400
+            )
+
+        result = await bulk_cleanup_expired_data(days_old)
+        return JSONResponse(
+            content={
+                "message": "Limpeza concluída com sucesso",
+                "results": result,
+                "timestamp": datetime.now().isoformat()
+            },
+            status_code=200
+        )
+    except Exception as e:
+        return JSONResponse(
+            content={"error": str(e), "timestamp": datetime.now().isoformat()},
+            status_code=500
+        )
+
 # Configure timeouts para produção (mais tolerantes para cloud)
 from telegram.request import HTTPXRequest
 request = HTTPXRequest(
@@ -1132,18 +1580,51 @@ def list_admin_ids() -> List[int]:
         return [a.user_id for a in s.query(Admin).order_by(Admin.added_at.asc()).all()]
 
 
-# --- ADMIN helper com cache simples (evita ida ao banco toda hora)
+# --- ADMIN helper com cache Redis + fallback local para alta performance
 _ADMIN_CACHE: set[int] = set()
 _ADMIN_CACHE_TS: float = 0.0
 
+async def refresh_admin_cache():
+    """Atualiza cache de admins no Redis e localmente"""
+    with SessionLocal() as s:
+        admin_ids = [a.user_id for a in s.query(Admin).all()]
+        await cache_admin_list(admin_ids)
+        global _ADMIN_CACHE, _ADMIN_CACHE_TS
+        _ADMIN_CACHE = set(admin_ids)
+        _ADMIN_CACHE_TS = dt.datetime.utcnow().timestamp()
+
 def is_admin(user_id: int) -> bool:
+    """Verifica se usuário é admin usando cache (síncrono para compatibilidade)"""
     global _ADMIN_CACHE, _ADMIN_CACHE_TS
     now = dt.datetime.utcnow().timestamp()
-    if now - _ADMIN_CACHE_TS > 60:
-        with SessionLocal() as s:
-            _ADMIN_CACHE = {a.user_id for a in s.query(Admin).all()}
+
+    # Se cache local está válido (< 5min), usar ele
+    if now - _ADMIN_CACHE_TS < 300 and _ADMIN_CACHE:
+        return int(user_id) in _ADMIN_CACHE
+
+    # Cache local expirado, consultar banco e atualizar
+    with SessionLocal() as s:
+        admin_ids = [a.user_id for a in s.query(Admin).all()]
+        _ADMIN_CACHE = set(admin_ids)
         _ADMIN_CACHE_TS = now
+        # Atualizar Redis em background (não bloquear)
+        try:
+            asyncio.create_task(cache_admin_list(admin_ids))
+        except RuntimeError:
+            pass  # Loop não existe ainda
+
     return int(user_id) in _ADMIN_CACHE
+
+async def is_admin_async(user_id: int) -> bool:
+    """Versão assíncrona otimizada com Redis"""
+    cached_admins = await get_cached_admin_list()
+    if cached_admins:
+        return int(user_id) in cached_admins
+
+    # Cache miss, buscar do banco e cachear
+    await refresh_admin_cache()
+    cached_admins = await get_cached_admin_list()
+    return int(user_id) in cached_admins if cached_admins else False
 
 
     

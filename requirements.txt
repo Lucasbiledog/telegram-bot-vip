@@ -10,4 +10,7 @@ python-telegram-bot==22.3
 pytz
 eth-account>=0.10.0
 psycopg2-binary
+# Cache e performance
+aioredis>=2.0.1
+redis>=4.6.0
 
