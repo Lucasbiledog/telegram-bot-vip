@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-🎯 Teste de Stress Completo para Pagamentos VIP
-Testa o fluxo completo de assinatura VIP com moedas reais da página de checkout
+Sistema de Validação de Pagamentos VIP
+Valida a integridade e performance dos sistemas de pagamento
 """
 
 import asyncio
@@ -17,10 +17,10 @@ from telegram.ext import ContextTypes
 
 # Configurar logging
 logging.basicConfig(level=logging.INFO)
-LOG = logging.getLogger("VIP_PAYMENT_TEST")
+LOG = logging.getLogger("PAYMENT_VALIDATOR")
 
-class VipPaymentStressTest:
-    """Testa pagamentos VIP com moedas reais e valores da página de checkout"""
+class PaymentValidator:
+    """Sistema de validação de pagamentos VIP e integridade de transações"""
 
     def __init__(self, base_url: str = "https://telegram-bot-vip-hfn7.onrender.com"):
         self.base_url = base_url

@@ -35,29 +35,30 @@ from telegram.ext import (
     ChatMemberHandler,
 )
 # === Imports ===
-# Comandos de stress test para admin
+# Comandos de monitoramento para admin
 try:
     from admin_stress_commands import (
-        stress_test_quick_cmd,
-        stress_test_connectivity_cmd,
+        system_check_cmd,
+        connectivity_check_cmd,
         stress_test_tokens_cmd,
-        stress_test_status_cmd
+        stress_test_status_cmd,
+        register_monitoring_commands
     )
-    STRESS_COMMANDS_AVAILABLE = True
+    MONITORING_COMMANDS_AVAILABLE = True
 except ImportError:
-    STRESS_COMMANDS_AVAILABLE = False
-    logging.warning("Comandos de stress test não disponíveis")
+    MONITORING_COMMANDS_AVAILABLE = False
+    logging.warning("Comandos de monitoramento não disponíveis")
 
-# Comandos de teste VIP para admin
+# Comandos de validação de pagamentos para admin
 try:
     from vip_payment_stress_test import (
         vip_payment_test_cmd,
         vip_payment_quick_cmd
     )
-    VIP_TEST_COMMANDS_AVAILABLE = True
+    PAYMENT_VALIDATION_AVAILABLE = True
 except ImportError:
-    VIP_TEST_COMMANDS_AVAILABLE = False
-    logging.warning("Comandos de teste VIP não disponíveis")
+    PAYMENT_VALIDATION_AVAILABLE = False
+    logging.warning("Sistema de validação de pagamentos não disponível")
 
 from sqlalchemy import (
     create_engine,
@@ -1012,6 +1013,7 @@ STORAGE_GROUP_ID       = int(os.getenv("STORAGE_GROUP_ID", "-4806334341"))
 GROUP_VIP_ID           = int(os.getenv("Group_VIP_ID", os.getenv("GROUP_VIP_ID", "-1002791988432")))
 STORAGE_GROUP_FREE_ID  = int(os.getenv("STORAGE_GROUP_FREE_ID", "-1002509364079"))
 GROUP_FREE_ID          = int(os.getenv("GROUP_FREE_ID", "-1002932075976"))
+PACK_ADMIN_CHAT_ID     = int(os.getenv("PACK_ADMIN_CHAT_ID", "-1003080645605"))
 
 PORT = int(os.getenv("PORT", 8000))
 
@@ -2078,7 +2080,7 @@ def header_key(chat_id: int, message_id: int) -> int:
 
 async def storage_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.effective_message
-    if not msg or msg.chat.id not in {STORAGE_GROUP_ID, STORAGE_GROUP_FREE_ID}: return
+    if not msg or msg.chat.id not in {STORAGE_GROUP_ID, STORAGE_GROUP_FREE_ID, PACK_ADMIN_CHAT_ID}: return
     if msg.reply_to_message: return
 
     title = (msg.text or "").strip()
@@ -2097,7 +2099,26 @@ async def storage_text_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     if update.effective_user and not is_admin(update.effective_user.id): return
 
     hkey = header_key(msg.chat.id, msg.message_id)
-    tier = "vip" if msg.chat.id == STORAGE_GROUP_ID else "free"
+
+    # Determinar tier baseado no chat
+    if msg.chat.id == STORAGE_GROUP_ID:
+        tier = "vip"
+    elif msg.chat.id == STORAGE_GROUP_FREE_ID:
+        tier = "free"
+    elif msg.chat.id == PACK_ADMIN_CHAT_ID:
+        # No chat de administração, permitir especificar o tier no título
+        title_lower = title.lower()
+        if "[vip]" in title_lower or "#vip" in title_lower:
+            tier = "vip"
+            title = title.replace("[vip]", "").replace("[VIP]", "").replace("#vip", "").replace("#VIP", "").strip()
+        elif "[free]" in title_lower or "#free" in title_lower:
+            tier = "free"
+            title = title.replace("[free]", "").replace("[FREE]", "").replace("#free", "").replace("#FREE", "").strip()
+        else:
+            # Padrão: VIP se não especificado
+            tier = "vip"
+    else:
+        tier = "free"  # Fallback
     
     # Otimização: usar uma única sessão de database para verificar e criar
     with SessionLocal() as s:
@@ -2125,7 +2146,7 @@ async def storage_text_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 
 async def storage_media_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.effective_message
-    if not msg or msg.chat.id not in {STORAGE_GROUP_ID, STORAGE_GROUP_FREE_ID}: return
+    if not msg or msg.chat.id not in {STORAGE_GROUP_ID, STORAGE_GROUP_FREE_ID, PACK_ADMIN_CHAT_ID}: return
 
     # Apenas admins podem anexar mídias aos packs
     if not (update.effective_user and is_admin(update.effective_user.id)):
@@ -2653,6 +2674,26 @@ async def checkout_callback_handler(update: Update, context: ContextTypes.DEFAUL
 # =========================
 async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.effective_message
+    chat = update.effective_chat
+
+    # Mensagem especial para o chat de administração de packs
+    if chat and chat.id == PACK_ADMIN_CHAT_ID:
+        text = (
+            "🎯 **Chat de Administração de Packs**\n\n"
+            "📝 **Como usar:**\n"
+            "1. Envie o título do pack\n"
+            "2. Adicione `[VIP]` ou `[FREE]` no título para especificar o tier\n"
+            "3. Envie os arquivos (fotos, vídeos, documentos)\n\n"
+            "📋 **Exemplos:**\n"
+            "• `Pack Especial [VIP]` - Criará um pack VIP\n"
+            "• `Pack Grátis [FREE]` - Criará um pack FREE\n"
+            "• `Meu Pack` - Criará um pack VIP (padrão)\n\n"
+            "✅ **Chat configurado e funcionando!**"
+        )
+        if msg: await msg.reply_text(text, parse_mode="Markdown")
+        return
+
+    # Mensagem padrão para outros chats
     text = ("Fala! Eu gerencio packs VIP/FREE, pagamentos via MetaMask e mensagens agendadas.\nOs pagamentos são automáticos quando as imagens são enviadas.")
     if msg: await msg.reply_text(text)
 
@@ -2667,6 +2708,8 @@ async def comandos_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• /comandos — esta lista",
         "• /listar_comandos — (alias)",
         "• /getid — mostra seus IDs",
+        "• /debug_grupos — debug grupos configurados",
+        "• /debug_packs — debug packs no banco",
         "• /comprovante — ver comprovante do VIP",
         "• /status — ver status do VIP",
         "",
@@ -2747,6 +2790,7 @@ Grupos configurados:
 • GROUP_FREE_ID: {GROUP_FREE_ID}
 • STORAGE_GROUP_ID: {STORAGE_GROUP_ID}
 • STORAGE_GROUP_FREE_ID: {STORAGE_GROUP_FREE_ID}
+• PACK_ADMIN_CHAT_ID: {PACK_ADMIN_CHAT_ID}
 
 Chat atual: {update.effective_chat.id}
 
@@ -2755,6 +2799,42 @@ Variáveis ENV:
 • GROUP_VIP_ID: {os.getenv('GROUP_VIP_ID', 'não definido')}"""
     
     await update.effective_message.reply_text(info)
+
+async def debug_packs_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Comando para debug detalhado dos packs no banco"""
+    user = update.effective_user
+    if not user or not is_admin(user.id):
+        return await update.effective_message.reply_text("Apenas admins.")
+
+    with SessionLocal() as s:
+        all_packs = s.query(Pack).order_by(Pack.id.asc()).all()
+
+        if not all_packs:
+            await update.effective_message.reply_text("Nenhum pack no banco.")
+            return
+
+        lines = ["🔧 **DEBUG PACKS NO BANCO:**\n"]
+
+        for p in all_packs:
+            files_count = s.query(PackFile).filter(PackFile.pack_id == p.id).count()
+            lines.append(
+                f"**Pack ID {p.id}:**\n"
+                f"• Título: {esc(p.title)}\n"
+                f"• Tier: {p.tier}\n"
+                f"• Status: {'ENVIADO' if p.sent else 'PENDENTE'}\n"
+                f"• Header ID: {p.header_message_id}\n"
+                f"• Arquivos: {files_count}\n"
+                f"• Criado: {p.created_at.strftime('%d/%m %H:%M')}\n"
+            )
+
+        text = "\n".join(lines)
+        if len(text) > 4000:  # Telegram limit
+            # Split into chunks
+            chunks = [text[i:i+4000] for i in range(0, len(text), 4000)]
+            for chunk in chunks:
+                await update.effective_message.reply_text(chunk, parse_mode="Markdown")
+        else:
+            await update.effective_message.reply_text(text, parse_mode="Markdown")
 
 async def say_vip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not (update.effective_user and is_admin(update.effective_user.id)): return await update.effective_message.reply_text("Apenas admins.")
@@ -3944,7 +4024,7 @@ async def hint_files(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.effective_message.reply_text("Agora envie ARQUIVOS (📄 documento / 🎵 áudio / 🎙 voice) ou use /finalizar para revisar e salvar.")
 
 def _is_allowed_group(chat_id: int) -> bool:
-    return chat_id in {STORAGE_GROUP_ID, STORAGE_GROUP_FREE_ID}
+    return chat_id in {STORAGE_GROUP_ID, STORAGE_GROUP_FREE_ID, PACK_ADMIN_CHAT_ID}
 
 async def novopack_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not _require_admin(update):
@@ -4687,13 +4767,13 @@ async def listar_packs_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Seção VIP
         if vip_packs:
             lines.append(f"👑 <b>VIP ({len(vip_packs)} packs):</b>")
-            for idx, p in enumerate(vip_packs, 1):
+            for p in vip_packs:
                 previews = s.query(PackFile).filter(PackFile.pack_id == p.id, PackFile.role == "preview").count()
                 docs = s.query(PackFile).filter(PackFile.pack_id == p.id, PackFile.role == "file").count()
                 status = "✅ ENVIADO" if p.sent else "⏳ PENDENTE"
-                
+
                 lines.append(
-                    f"[{idx}] {esc(p.title)} — {status}\n"
+                    f"[{p.id}] {esc(p.title)} — {status}\n"
                     f"    📷 {previews} previews | 📄 {docs} arquivos\n"
                     f"    📅 {p.created_at.strftime('%d/%m %H:%M')}"
                 )
@@ -4705,14 +4785,13 @@ async def listar_packs_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Seção FREE
         if free_packs:
             lines.append(f"🆓 <b>FREE ({len(free_packs)} packs):</b>")
-            vip_count = len(vip_packs)  # Para continuar numeração após VIP
-            for idx, p in enumerate(free_packs, vip_count + 1):
+            for p in free_packs:
                 previews = s.query(PackFile).filter(PackFile.pack_id == p.id, PackFile.role == "preview").count()
                 docs = s.query(PackFile).filter(PackFile.pack_id == p.id, PackFile.role == "file").count()
                 status = "✅ ENVIADO" if p.sent else "⏳ PENDENTE"
-                
+
                 lines.append(
-                    f"[{idx}] {esc(p.title)} — {status}\n"
+                    f"[{p.id}] {esc(p.title)} — {status}\n"
                     f"    📷 {previews} previews | 📄 {docs} arquivos\n"
                     f"    📅 {p.created_at.strftime('%d/%m %H:%M')}"
                 )
@@ -5952,13 +6031,13 @@ async def on_startup():
         # ===== Handlers de storage
         application.add_handler(
             MessageHandler(
-                (filters.Chat(STORAGE_GROUP_ID) | filters.Chat(STORAGE_GROUP_FREE_ID)) & filters.TEXT & ~filters.COMMAND,
+                (filters.Chat(STORAGE_GROUP_ID) | filters.Chat(STORAGE_GROUP_FREE_ID) | filters.Chat(PACK_ADMIN_CHAT_ID)) & filters.TEXT & ~filters.COMMAND,
                 storage_text_handler
             ),
             group=1,
         )
         media_filter = (
-            (filters.Chat(STORAGE_GROUP_ID) | filters.Chat(STORAGE_GROUP_FREE_ID)) &
+            (filters.Chat(STORAGE_GROUP_ID) | filters.Chat(STORAGE_GROUP_FREE_ID) | filters.Chat(PACK_ADMIN_CHAT_ID)) &
             (filters.PHOTO | filters.VIDEO | filters.ANIMATION | filters.AUDIO | filters.Document.ALL | filters.VOICE)
         )
         application.add_handler(MessageHandler(media_filter, storage_media_handler), group=1)
@@ -5968,21 +6047,19 @@ async def on_startup():
         application.add_handler(CommandHandler("comandos", comandos_cmd), group=5)
         application.add_handler(CommandHandler("listar_comandos", comandos_cmd), group=5)
 
-        # Comandos de stress test para admin
-        if STRESS_COMMANDS_AVAILABLE:
-            application.add_handler(CommandHandler("stress_quick", stress_test_quick_cmd), group=1)
-            application.add_handler(CommandHandler("stress_connectivity", stress_test_connectivity_cmd), group=1)
-            application.add_handler(CommandHandler("stress_tokens", stress_test_tokens_cmd), group=1)
-            application.add_handler(CommandHandler("stress_status", stress_test_status_cmd), group=1)
-            logging.info("✅ Comandos de stress test registrados!")
+        # Comandos de monitoramento para admin
+        if MONITORING_COMMANDS_AVAILABLE:
+            register_monitoring_commands(application)
+            logging.info("✅ Sistema de monitoramento ativo")
 
-        # Comandos de teste VIP para admin
-        if VIP_TEST_COMMANDS_AVAILABLE:
-            application.add_handler(CommandHandler("test_vip_payments", vip_payment_test_cmd), group=1)
-            application.add_handler(CommandHandler("test_vip_quick", vip_payment_quick_cmd), group=1)
-            logging.info("✅ Comandos de teste VIP registrados!")
+        # Sistema de validação de pagamentos para admin
+        if PAYMENT_VALIDATION_AVAILABLE:
+            application.add_handler(CommandHandler("payment_test", vip_payment_test_cmd), group=1)
+            application.add_handler(CommandHandler("payment_quick", vip_payment_quick_cmd), group=1)
+            logging.info("✅ Sistema de validação de pagamentos ativo")
         application.add_handler(CommandHandler("getid", getid_cmd), group=1)
         application.add_handler(CommandHandler("debug_grupos", debug_grupos_cmd), group=1)
+        application.add_handler(CommandHandler("debug_packs", debug_packs_cmd), group=1)
 
         application.add_handler(CommandHandler("say_vip", say_vip_cmd), group=1)
         application.add_handler(CommandHandler("say_free", say_free_cmd), group=1)

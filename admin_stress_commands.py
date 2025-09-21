@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-🚀 Comandos de Admin para Teste de Stress via Telegram
-Comandos que podem ser executados diretamente no bot e monitorados nos logs do Render
+Sistema de Monitoramento e Diagnóstico de Performance
+Comandos administrativos para validação de sistemas críticos
 """
 
 import asyncio
@@ -15,18 +15,18 @@ from telegram.ext import ContextTypes
 
 # Configurar logging para aparecer no Render
 logging.basicConfig(level=logging.INFO)
-LOG = logging.getLogger("STRESS_TEST")
+LOG = logging.getLogger("SYSTEM_MONITOR")
 
-class RenderStressTest:
-    """Sistema de teste para executar via comandos do Telegram"""
+class SystemMonitor:
+    """Sistema de monitoramento e diagnóstico de performance"""
 
     def __init__(self):
         self.active_tests = {}
         self.test_results = {}
 
-    async def run_quick_payment_test(self, num_tests: int = 50) -> Dict:
-        """Executa teste rápido de pagamentos"""
-        LOG.info(f"🚀 [STRESS-TEST] Iniciando teste rápido com {num_tests} simulações")
+    async def run_quick_system_check(self, num_tests: int = 50) -> Dict:
+        """Executa verificação rápida de sistemas"""
+        LOG.info(f"[SYSTEM-CHECK] Iniciando verificação de sistemas com {num_tests} simulações")
 
         start_time = time.time()
 
@@ -84,10 +84,10 @@ class RenderStressTest:
         for chain_data in results["chain_results"].values():
             chain_data["tokens_tested"] = list(chain_data["tokens_tested"])
 
-        LOG.info(f"✅ [STRESS-TEST] Teste concluído!")
-        LOG.info(f"📈 [STRESS-TEST] Duração: {duration:.2f}s")
-        LOG.info(f"⚡ [STRESS-TEST] Throughput: {num_tests/duration:.2f} tests/s")
-        LOG.info(f"🌐 [STRESS-TEST] Chains testadas: {len(results['chain_results'])}")
+        LOG.info(f"[SYSTEM-CHECK] Verificação concluída")
+        LOG.info(f"[SYSTEM-CHECK] Duração: {duration:.2f}s")
+        LOG.info(f"[SYSTEM-CHECK] Throughput: {num_tests/duration:.2f} ops/s")
+        LOG.info(f"[SYSTEM-CHECK] Sistemas verificados: {len(results['chain_results'])}")
 
         return results
 
@@ -204,34 +204,34 @@ class RenderStressTest:
         return results
 
 # Instância global
-render_stress = RenderStressTest()
+system_monitor = SystemMonitor()
 
 # =========================
 # Comandos do Telegram
 # =========================
 
-async def stress_test_quick_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Comando /stress_quick - Teste rápido de 50 simulações"""
+async def system_check_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Comando /system_check - Verificação rápida de sistemas"""
     user = update.effective_user
 
-    # Verificar se é admin (usar verificação do bot)
+    # Verificar se é admin
     from main import _require_admin
     if not _require_admin(update):
-        return await update.effective_message.reply_text("❌ Apenas admins podem executar testes de stress.")
+        return await update.effective_message.reply_text("❌ Acesso restrito.")
 
-    await update.effective_message.reply_text("🚀 Iniciando teste rápido de stress... Verifique os logs do Render!")
+    await update.effective_message.reply_text("🔧 Iniciando verificação de sistemas...")
 
     try:
-        results = await render_stress.run_quick_payment_test(50)
+        results = await system_monitor.run_quick_system_check(30)
 
         summary = (
-            f"✅ **Teste Rápido Concluído**\n\n"
+            f"✅ **Verificação Concluída**\n\n"
             f"📊 **Resultados:**\n"
-            f"• Simulações: {results['total_simulations']}\n"
+            f"• Operações: {results['total_simulations']}\n"
             f"• Duração: {results['overall_stats']['duration_seconds']}s\n"
-            f"• Throughput: {results['overall_stats']['tests_per_second']} tests/s\n"
-            f"• Chains: {results['overall_stats']['chains_tested']}\n\n"
-            f"📝 **Logs detalhados disponíveis no Render**"
+            f"• Performance: {results['overall_stats']['tests_per_second']} ops/s\n"
+            f"• Sistemas: {results['overall_stats']['chains_tested']}\n\n"
+            f"📝 **Detalhes nos logs do servidor**"
         )
 
         await update.effective_message.reply_text(summary, parse_mode="Markdown")
@@ -240,8 +240,8 @@ async def stress_test_quick_cmd(update: Update, context: ContextTypes.DEFAULT_TY
         LOG.error(f"❌ [STRESS-TEST] Erro: {e}")
         await update.effective_message.reply_text(f"❌ Erro no teste: {str(e)}")
 
-async def stress_test_connectivity_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Comando /stress_connectivity - Teste de conectividade"""
+async def connectivity_check_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Comando /connectivity_check - Verificação de conectividade"""
     user = update.effective_user
 
     from main import _require_admin
@@ -251,7 +251,7 @@ async def stress_test_connectivity_cmd(update: Update, context: ContextTypes.DEF
     await update.effective_message.reply_text("🌐 Testando conectividade... Verifique os logs!")
 
     try:
-        results = await render_stress.run_chain_connectivity_test()
+        results = await system_monitor.run_chain_connectivity_test()
 
         summary = (
             f"✅ **Teste de Conectividade Concluído**\n\n"
@@ -279,7 +279,7 @@ async def stress_test_tokens_cmd(update: Update, context: ContextTypes.DEFAULT_T
     await update.effective_message.reply_text("💰 Testando tokens... Verifique os logs!")
 
     try:
-        results = await render_stress.run_token_diversity_test()
+        results = await system_monitor.run_token_diversity_test()
 
         summary = (
             f"✅ **Teste de Tokens Concluído**\n\n"
@@ -305,12 +305,12 @@ async def stress_test_status_cmd(update: Update, context: ContextTypes.DEFAULT_T
         return await update.effective_message.reply_text("❌ Apenas admins.")
 
     status_info = (
-        f"📊 **Status do Sistema de Testes**\n\n"
+        f"📊 **Status do Sistema de Monitoramento**\n\n"
         f"🚀 **Comandos Disponíveis:**\n"
-        f"• `/stress_quick` - Teste rápido (50 simulações)\n"
-        f"• `/stress_connectivity` - Teste de conectividade\n"
-        f"• `/stress_tokens` - Teste de tokens\n"
-        f"• `/stress_status` - Este status\n\n"
+        f"• `/system_check` - Verificação do sistema\n"
+        f"• `/connectivity_check` - Teste de conectividade\n"
+        f"• `/token_check` - Validação de tokens\n"
+        f"• `/monitoring_status` - Este status\n\n"
         f"📝 **Como usar:**\n"
         f"1. Execute um comando\n"
         f"2. Verifique os logs no Render\n"
@@ -325,20 +325,20 @@ async def stress_test_status_cmd(update: Update, context: ContextTypes.DEFAULT_T
 # Para integrar no main.py
 # =========================
 
-def register_stress_commands(application):
-    """Registra os comandos de stress test no bot"""
-    application.add_handler(CommandHandler("stress_quick", stress_test_quick_cmd))
-    application.add_handler(CommandHandler("stress_connectivity", stress_test_connectivity_cmd))
-    application.add_handler(CommandHandler("stress_tokens", stress_test_tokens_cmd))
-    application.add_handler(CommandHandler("stress_status", stress_test_status_cmd))
+def register_monitoring_commands(application):
+    """Registra os comandos de monitoramento no bot"""
+    application.add_handler(CommandHandler("system_check", system_check_cmd))
+    application.add_handler(CommandHandler("connectivity_check", connectivity_check_cmd))
+    application.add_handler(CommandHandler("token_check", stress_test_tokens_cmd))
+    application.add_handler(CommandHandler("monitoring_status", stress_test_status_cmd))
 
-    LOG.info("✅ Comandos de stress test registrados!")
+    LOG.info("✅ Comandos de monitoramento registrados!")
 
 if __name__ == "__main__":
     # Teste local
     async def test_local():
-        tester = RenderStressTest()
-        print("Testando localmente...")
-        await tester.run_quick_payment_test(10)
+        monitor = SystemMonitor()
+        print("Testando sistema...")
+        await monitor.run_quick_system_check(10)
 
     asyncio.run(test_local())
