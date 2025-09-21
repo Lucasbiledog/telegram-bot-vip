@@ -13,7 +13,7 @@ import random
 from datetime import datetime, timedelta
 from typing import Dict, List, Any
 from telegram import Update
-from telegram.ext import ContextTypes
+from telegram.ext import ContextTypes, CommandHandler
 
 # Configurar logging
 logging.basicConfig(level=logging.INFO)

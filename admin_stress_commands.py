@@ -11,7 +11,7 @@ import logging
 from datetime import datetime
 from typing import Dict, List
 from telegram import Update
-from telegram.ext import ContextTypes
+from telegram.ext import ContextTypes, CommandHandler
 
 # Configurar logging para aparecer no Render
 logging.basicConfig(level=logging.INFO)
