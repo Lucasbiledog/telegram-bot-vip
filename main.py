@@ -474,7 +474,7 @@ def init_db():
                 s.rollback()
                 raise
     if not cfg_get("daily_pack_vip_hhmm"):  cfg_set("daily_pack_vip_hhmm", "09:00")
-    if not cfg_get("daily_pack_free_hhmm"): cfg_set("daily_pack_free_hhmm", "09:30")
+    if not cfg_get("daily_pack_free_hhmm"): cfg_set("daily_pack_free_hhmm", "10:00")
 
 def ensure_critical_indexes():
     """Criar índices críticos para performance em larga escala"""
@@ -2087,7 +2087,7 @@ async def storage_text_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     if not title: return
 
     lower = title.lower()
-    banned = {"sim", "não", "nao", "/proximo", "/finalizar", "/cancelar"}
+    banned = {"sim", "não", "nao", "/proximo", "/finalizar", "/cancelar", "excluir tudo"}
     if lower in banned or title.startswith("/") or len(title) < 4: return
 
     words = title.split()
@@ -2441,7 +2441,69 @@ async def enviar_pack_job(context: ContextTypes.DEFAULT_TYPE, tier: str, target_
             (previews if f.role == "preview" else docs).append(f)
 
         if tier == "free":
-            # GRUPO FREE: Apenas previews + botão de pagamento (sem título, sem docs)
+            # GRUPO FREE: Pack completo como bonificação semanal
+
+            # Enviar mensagem personalizada
+            now = datetime.now()
+            data_formatada = now.strftime("%d/%m")
+            hora_formatada = now.strftime("%H:%M")
+
+            # Calcular próxima quarta-feira baseada no horário configurado
+            def proximo_envio_free():
+                free_hhmm = cfg_get("daily_pack_free_hhmm") or "10:00"
+                try:
+                    hora, minuto = map(int, free_hhmm.split(":"))
+                except:
+                    hora, minuto = 10, 0
+
+                # Calcular próxima quarta-feira (dia 2 = Wednesday)
+                dias_ate_quarta = (2 - now.weekday()) % 7
+                if dias_ate_quarta == 0 and now.hour >= hora:
+                    # Se hoje é quarta e já passou do horário, próxima quarta
+                    dias_ate_quarta = 7
+
+                proxima_quarta = now + timedelta(days=dias_ate_quarta)
+                return proxima_quarta
+
+            proximo_pack = proximo_envio_free()
+            proxima_data = proximo_pack.strftime("%d/%m")
+
+            # Buscar próximo pack FREE para spoiler (excluindo o atual)
+            with SessionLocal() as s:
+                proximo_free = (
+                    s.query(Pack)
+                    .filter(Pack.tier == "free", Pack.sent == False, Pack.id != p.id)
+                    .order_by(Pack.created_at.asc())
+                    .first()
+                )
+                spoiler_titulo = proximo_free.title if proximo_free else "Surpresa Especial"
+
+            # Obter URL de checkout
+            checkout_url = WEBAPP_URL or "https://telegram-bot-vip-hfn7.onrender.com/pay/"
+
+            mensagem_free = (
+                f"🔥 **PACK FREE DA SEMANA** 🔥\n\n"
+                f"📦 **{p.title}**\n\n"
+                f"💥 Pack completo liberado AGORA!\n"
+                f"👑 **QUER MAIS?** Entre no VIP e receba packs DIÁRIOS!\n\n"
+                f"🗓️ **Próximo Pack FREE:** {proxima_data}\n"
+                f"👀 **Spoiler:** ||{spoiler_titulo}||\n\n"
+                f"💎 **[ASSINAR VIP AGORA]({checkout_url})** 💎"
+            )
+
+            try:
+                await context.application.bot.send_message(
+                    chat_id=target_chat_id,
+                    text=mensagem_free,
+                    parse_mode="Markdown"
+                )
+            except Exception as e:
+                if "Chat not found" in str(e):
+                    logging.error(f"Chat {target_chat_id} não encontrado durante envio da mensagem.")
+                    return f"❌ Erro: Chat {target_chat_id} não encontrado. Bot não está no grupo?"
+                raise
+
+            # Enviar previews primeiro
             if previews:
                 try:
                     await _send_preview_media(context, target_chat_id, previews)
@@ -2450,6 +2512,10 @@ async def enviar_pack_job(context: ContextTypes.DEFAULT_TYPE, tier: str, target_
                         logging.error(f"Chat {target_chat_id} não encontrado durante envio de previews.")
                         return f"❌ Erro: Chat {target_chat_id} não encontrado. Bot não está no grupo?"
                     raise
+
+            # Enviar todos os arquivos (pack completo)
+            for f in docs:
+                await _try_send_document_like(context, target_chat_id, f, caption=None)
             
         elif tier == "vip":
             # GRUPO VIP: Tudo (previews + título + docs)
@@ -2710,12 +2776,14 @@ async def comandos_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• /getid — mostra seus IDs",
         "• /debug_grupos — debug grupos configurados",
         "• /debug_packs — debug packs no banco",
+        "• /limpar_packs_problematicos — remove packs com títulos inválidos",
         "• /comprovante — ver comprovante do VIP",
         "• /status — ver status do VIP",
         "",
         "💬 Envio imediato:",
         "• /say_vip <texto> — envia AGORA no VIP",
         "• /say_free <texto> — envia AGORA no FREE",
+        "• /test_mensagem_free [titulo] — testa mensagem do pack FREE",
         "",
         "💸 Pagamento (MetaMask):",
         "• Pagamentos automáticos junto às imagens",
@@ -2836,6 +2904,33 @@ async def debug_packs_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await update.effective_message.reply_text(text, parse_mode="Markdown")
 
+async def limpar_packs_problematicos_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Comando para limpar packs com títulos problemáticos"""
+    if not (update.effective_user and is_admin(update.effective_user.id)):
+        return await update.effective_message.reply_text("Apenas admins.")
+
+    problematicos = ["EXCLUIR TUDO", "excluir tudo", "Excluir Tudo"]
+
+    with SessionLocal() as s:
+        packs_removidos = []
+        for titulo in problematicos:
+            packs = s.query(Pack).filter(Pack.title == titulo).all()
+            for pack in packs:
+                # Remover arquivos do pack
+                s.query(PackFile).filter(PackFile.pack_id == pack.id).delete()
+                # Remover o pack
+                s.delete(pack)
+                packs_removidos.append(f"#{pack.id} - {pack.title}")
+
+        s.commit()
+
+        if packs_removidos:
+            await update.effective_message.reply_text(
+                f"✅ Packs problemáticos removidos:\n" + "\n".join(packs_removidos)
+            )
+        else:
+            await update.effective_message.reply_text("ℹ️ Nenhum pack problemático encontrado.")
+
 async def say_vip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not (update.effective_user and is_admin(update.effective_user.id)): return await update.effective_message.reply_text("Apenas admins.")
     txt = (update.effective_message.text or "").split(maxsplit=1)
@@ -2851,6 +2946,56 @@ async def say_free_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         await application.bot.send_message(chat_id=GROUP_FREE_ID, text=txt[1].strip()); await update.effective_message.reply_text("✅ Enviado no FREE.")
     except Exception as e: await update.effective_message.reply_text(f"❌ Erro: {e}")
+
+async def test_mensagem_free_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Comando para testar como ficará a mensagem do pack FREE"""
+    if not (update.effective_user and is_admin(update.effective_user.id)):
+        return await update.effective_message.reply_text("Apenas admins.")
+
+    # Simular um pack de exemplo
+    titulo_exemplo = context.args[0] if context.args else "Pack Exemplo"
+
+    now = datetime.now()
+    data_formatada = now.strftime("%d/%m")
+    hora_formatada = now.strftime("%H:%M")
+
+    # Calcular próxima quarta-feira baseada no horário configurado
+    def proximo_envio_free():
+        free_hhmm = cfg_get("daily_pack_free_hhmm") or "10:00"
+        try:
+            hora, minuto = map(int, free_hhmm.split(":"))
+        except:
+            hora, minuto = 10, 0
+
+        # Calcular próxima quarta-feira (dia 2 = Wednesday)
+        dias_ate_quarta = (2 - now.weekday()) % 7
+        if dias_ate_quarta == 0 and now.hour >= hora:
+            # Se hoje é quarta e já passou do horário, próxima quarta
+            dias_ate_quarta = 7
+
+        proxima_quarta = now + timedelta(days=dias_ate_quarta)
+        return proxima_quarta
+
+    proximo_pack = proximo_envio_free()
+    proxima_data = proximo_pack.strftime("%d/%m")
+
+    # Obter URL de checkout
+    checkout_url = WEBAPP_URL or "https://telegram-bot-vip-hfn7.onrender.com/pay/"
+
+    mensagem_free = (
+        f"🔥 **PACK FREE DA SEMANA** 🔥\n\n"
+        f"📦 **{titulo_exemplo}**\n\n"
+        f"💥 Pack completo liberado AGORA!\n"
+        f"👑 **QUER MAIS?** Entre no VIP e receba packs DIÁRIOS!\n\n"
+        f"🗓️ **Próximo Pack FREE:** {proxima_data}\n"
+        f"👀 **Spoiler:** ||Próximo Pack Surpresa||\n\n"
+        f"💎 **[ASSINAR VIP AGORA]({checkout_url})** 💎"
+    )
+
+    await update.effective_message.reply_text(
+        f"📱 **Preview da mensagem FREE:**\n\n{mensagem_free}",
+        parse_mode="Markdown"
+    )
 
 async def mudar_nome_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not (update.effective_user and is_admin(update.effective_user.id)): return await update.effective_message.reply_text("Apenas admins.")
@@ -4466,7 +4611,7 @@ async def _scheduled_message_job(context: ContextTypes.DEFAULT_TYPE):
 
 def _register_all_scheduled_messages(job_queue: JobQueue):
     for j in list(job_queue.jobs()):
-        if j.name and (j.name.startswith(JOB_PREFIX_SM) or j.name in {"daily_pack_vip", "daily_pack_free", "keepalive"}):
+        if j.name and (j.name.startswith(JOB_PREFIX_SM) or j.name in {"daily_pack_vip", "daily_pack_free", "weekly_pack_free", "keepalive"}):
             j.schedule_removal()
     msgs = scheduled_all()
     for m in msgs:
@@ -4483,7 +4628,7 @@ async def _reschedule_daily_packs():
     # Remover jobs existentes
     removed_jobs = []
     for j in list(application.job_queue.jobs()):
-        if j.name in {"daily_pack_vip", "daily_pack_free"}: 
+        if j.name in {"daily_pack_vip", "daily_pack_free", "weekly_pack_free"}:
             j.schedule_removal()
             removed_jobs.append(j.name)
     
@@ -4499,9 +4644,10 @@ async def _reschedule_daily_packs():
         
         # Agendar novos jobs
         application.job_queue.run_daily(enviar_pack_vip_job,  time=dt.time(hour=hv, minute=mv, tzinfo=tz), name="daily_pack_vip")
-        application.job_queue.run_daily(enviar_pack_free_job, time=dt.time(hour=hf, minute=mf, tzinfo=tz), name="daily_pack_free")
+        # Pack FREE: envio semanal (toda quarta-feira)
+        application.job_queue.run_daily(enviar_pack_free_job, time=dt.time(hour=hf, minute=mf, tzinfo=tz), days=(2,), name="weekly_pack_free")
         
-        logging.info(f"✅ Jobs reagendados - VIP: {hhmm_vip}, FREE: {hhmm_free} (America/Sao_Paulo)")
+        logging.info(f"✅ Jobs reagendados - VIP: {hhmm_vip} (diário), FREE: {hhmm_free} (quartas-feiras) (America/Sao_Paulo)")
     except Exception as e:
         logging.error(f"Erro ao reagendar jobs: {e}")
 
@@ -4645,9 +4791,9 @@ async def set_pack_horario_free_cmd(update: Update, context: ContextTypes.DEFAUL
         saved_time = cfg_get("daily_pack_free_hhmm")
         
         await update.effective_message.reply_text(
-            f"✅ Horário diário dos packs FREE atualizado!\n"
+            f"✅ Horário semanal dos packs FREE atualizado!\n"
             f"🕒 Novo horário: {saved_time}\n"
-            f"📅 Próximo envio: Hoje às {saved_time} (Horário de Brasília)\n"
+            f"📅 Próximo envio: Quarta-feira às {saved_time} (Horário de Brasília)\n"
             f"🔄 Jobs reagendados com sucesso!"
         )
         
@@ -4803,7 +4949,7 @@ async def listar_packs_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         vip_horario = cfg_get("daily_pack_vip_hhmm") or "09:00"
         free_horario = cfg_get("daily_pack_free_hhmm") or "09:30"
         lines.append(f"👑 VIP: {vip_horario} (diário)")
-        lines.append(f"🆓 FREE: {free_horario} (diário)")
+        lines.append(f"🆓 FREE: {free_horario} (quartas-feiras)")
         
         await update.effective_message.reply_text("\n".join(lines), parse_mode="HTML")
 
@@ -6060,9 +6206,11 @@ async def on_startup():
         application.add_handler(CommandHandler("getid", getid_cmd), group=1)
         application.add_handler(CommandHandler("debug_grupos", debug_grupos_cmd), group=1)
         application.add_handler(CommandHandler("debug_packs", debug_packs_cmd), group=1)
+        application.add_handler(CommandHandler("limpar_packs_problematicos", limpar_packs_problematicos_cmd), group=1)
 
         application.add_handler(CommandHandler("say_vip", say_vip_cmd), group=1)
         application.add_handler(CommandHandler("say_free", say_free_cmd), group=1)
+        application.add_handler(CommandHandler("test_mensagem_free", test_mensagem_free_cmd), group=1)
 
         application.add_handler(CommandHandler("simularvip", simularvip_cmd), group=1)
         application.add_handler(CommandHandler("simularfree", simularfree_cmd), group=1)
