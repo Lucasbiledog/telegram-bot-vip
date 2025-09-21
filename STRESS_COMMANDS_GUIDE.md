@@ -4,25 +4,44 @@ Sistema integrado para executar testes de stress diretamente no Telegram e monit
 
 ## 📋 **Comandos Disponíveis**
 
-### **1. `/stress_quick`**
-- **Função**: Teste rápido com 50 simulações
+### **🎯 Testes de Pagamento VIP (NOVOS!)**
+
+### **1. `/test_vip_payments`**
+- **Função**: **Teste completo de pagamentos VIP reais**
+- **Duração**: ~60-90 segundos
+- **Testa**: 13+ moedas da página de checkout (ETH, BNB, MATIC, USDC, USDT, BTCB, AVAX, etc.)
+- **Cenários**: 50 simulações de assinatura VIP com valores reais ($0.05-$10)
+- **Logs**: Distribuição de moedas, planos VIP, performance por chain
+- **🎯 RECOMENDADO: Use este para validar o sistema de pagamentos completo**
+
+### **2. `/test_vip_quick`**
+- **Função**: Teste rápido de pagamentos VIP
+- **Duração**: ~30 segundos
+- **Testa**: Principais moedas (ETH, BNB, USDC, USDT)
+- **Cenários**: 20 simulações focadas
+- **Logs**: Resumo de performance
+
+### **🔧 Testes de Sistema Geral**
+
+### **3. `/stress_quick`**
+- **Função**: Teste rápido de sistema
 - **Duração**: ~10-15 segundos
 - **Testa**: BSC, Ethereum, Polygon, tokens nativos e stablecoins
 - **Logs**: Progresso a cada 10 testes
 
-### **2. `/stress_connectivity`**
+### **4. `/stress_connectivity`**
 - **Função**: Teste de conectividade com 10 chains
 - **Duração**: ~5 segundos
 - **Testa**: Ethereum, BSC, Polygon, Arbitrum, Optimism, Base, Avalanche, Fantom, Cronos, Celo
 - **Logs**: Status de cada chain individual
 
-### **3. `/stress_tokens`**
+### **5. `/stress_tokens`**
 - **Função**: Teste de diversidade de tokens
 - **Duração**: ~8 segundos
 - **Testa**: ETH, BNB, MATIC, USDC, USDT, AVAX, FTM, CRO
 - **Logs**: Validação de preço para cada token
 
-### **4. `/stress_status`**
+### **6. `/stress_status`**
 - **Função**: Mostra status e instruções
 - **Duração**: Instantâneo
 - **Retorna**: Lista de comandos e como usar
@@ -88,6 +107,54 @@ Sistema integrado para executar testes de stress diretamente no Telegram e monit
    • Tokens testados: 8
    • Precisão média: 98.8%
    • Distribuição: {'low': 2, 'medium': 4, 'high': 2}
+```
+
+### **Teste de Pagamentos VIP (`/test_vip_payments`)**
+```
+🎯 [VIP-PAYMENT-TEST] Iniciando teste abrangente de pagamentos VIP
+   • Total de testes: 50
+   • Moedas principais: 13
+   • Faixas VIP: 4
+
+💰 [VIP-PAYMENT-TEST] Distribuição de moedas:
+   • USDC: 8 testes
+   • ETH: 7 testes
+   • BNB: 6 testes
+   • USDT: 5 testes
+   • MATIC: 4 testes
+
+📦 [VIP-PAYMENT-TEST] Distribuição de planos VIP:
+   • PREMIUM (180 dias): 15 testes
+   • ANNUAL (365 dias): 12 testes
+   • STANDARD (60 dias): 11 testes
+   • BASIC (30 dias): 12 testes
+
+🔄 [VIP-PAYMENT-TEST] Batch 1/10 (5 testes)
+   ✅ USDC (Ethereum) - $1.85 USD - 0.234s
+   ✅ ETH (Ethereum) - $2.50 USD - 0.198s
+   ✅ BNB (BSC) - $1.20 USD - 0.245s
+   ✅ USDT (BSC) - $3.00 USD - 0.221s
+   ✅ MATIC (Polygon) - $1.75 USD - 0.189s
+
+🎉 [VIP-PAYMENT-TEST] Teste concluído!
+📊 [VIP-PAYMENT-TEST] Resultados finais:
+   • Taxa de sucesso: 96.0% (48/50)
+   • Tempo médio: 0.215s
+   • Throughput: 12.3 testes/s
+   • Duração total: 45.67s
+
+💰 [VIP-PAYMENT-TEST] Performance por moeda:
+   • USDC     |  8/ 8 (100.0%) | 0.201s | $14.20
+   • ETH      |  7/ 7 (100.0%) | 0.198s | $17.50
+   • BNB      |  6/ 6 (100.0%) | 0.243s | $7.20
+   • USDT     |  5/ 5 (100.0%) | 0.221s | $12.50
+   • MATIC    |  4/ 4 (100.0%) | 0.189s | $7.00
+
+🌐 [VIP-PAYMENT-TEST] Performance por chain:
+   • Ethereum    |  15/15 (100.0%)
+   • BSC         |  11/11 (100.0%)
+   • Polygon     |   4/ 4 (100.0%)
+   • Arbitrum    |   3/ 3 (100.0%)
 ```
 
 ## 🔒 **Segurança**
