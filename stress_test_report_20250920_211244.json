@@ -1,0 +1,93 @@
+{
+  "test_summary": {
+    "total_requests": 1000,
+    "successful_requests": 0,
+    "failed_requests": 1000,
+    "success_rate_percent": 0.0,
+    "max_test_duration": 230.25,
+    "requests_per_second": 4.34
+  },
+  "response_times": {
+    "average_ms": 0,
+    "minimum_ms": 0,
+    "maximum_ms": 0,
+    "median_ms": 0,
+    "p95_ms": 0
+  },
+  "error_analysis": {
+    "Cannot connect to host localhost:8000 ssl:default [O computador remoto recusou a conexão de rede]": 1000
+  },
+  "system_performance": {
+    "cpu": {
+      "min": 0.0,
+      "max": 53.8,
+      "avg": 8.436842105263159,
+      "median": 6.2
+    },
+    "memory": {
+      "min": 47.1,
+      "max": 50.1,
+      "avg": 47.844298245614034,
+      "median": 47.4
+    }
+  },
+  "recommendations": [
+    "🔴 Taxa de sucesso baixa (<95%). Considere implementar rate limiting mais agressivo.",
+    "🟡 Throughput baixo (<50 req/s). Considere implementar cache ou otimizar handlers.",
+    "💡 Implementar cache Redis para status VIP dos usuários",
+    "💡 Usar connection pooling para o banco de dados",
+    "💡 Implementar circuit breaker para APIs externas",
+    "💡 Adicionar métricas em tempo real com Prometheus",
+    "💡 Considerar usar webhooks assíncronos"
+  ],
+  "advanced_monitoring": {
+    "timestamp": "2025-09-20T21:12:44.802718",
+    "summary": {
+      "system": {
+        "cpu_percent": 3.6,
+        "memory_percent": 49.9,
+        "memory_used_mb": 16294.31640625
+      },
+      "bot_process": {
+        "cpu_percent": 0.0,
+        "memory_mb": 40.8984375,
+        "threads": 8
+      },
+      "requests": {
+        "total_started": 0,
+        "total_completed": 0,
+        "avg_duration_last_60s": 0
+      },
+      "vip": {
+        "join_requests_approved": 0,
+        "join_requests_denied": 0
+      }
+    },
+    "issues": [],
+    "recommendations": [],
+    "health_score": 100
+  },
+  "analysis": {
+    "overall_grade": "D (Necessita Melhorias)",
+    "performance_issues": [
+      "Taxa de sucesso baixa (0.0%)",
+      "Throughput baixo (4.3 req/s)"
+    ],
+    "bottlenecks": [
+      "Possível limitação de concorrência"
+    ],
+    "optimization_suggestions": [
+      "Implementar cache Redis para dados frequentemente acessados",
+      "Otimizar queries de banco com indices apropriados",
+      "Usar connection pooling para banco de dados",
+      "Implementar rate limiting inteligente",
+      "Considerar arquitetura assincrona com filas"
+    ]
+  },
+  "test_config": {
+    "total_users": 1000,
+    "users_per_second": 100,
+    "environment": "local",
+    "scenario": null
+  }
+}

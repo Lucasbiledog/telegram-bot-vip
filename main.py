@@ -35,6 +35,19 @@ from telegram.ext import (
     ChatMemberHandler,
 )
 # === Imports ===
+# Comandos de stress test para admin
+try:
+    from admin_stress_commands import (
+        stress_test_quick_cmd,
+        stress_test_connectivity_cmd,
+        stress_test_tokens_cmd,
+        stress_test_status_cmd
+    )
+    STRESS_COMMANDS_AVAILABLE = True
+except ImportError:
+    STRESS_COMMANDS_AVAILABLE = False
+    logging.warning("Comandos de stress test não disponíveis")
+
 from sqlalchemy import (
     create_engine,
     Column,
@@ -5943,6 +5956,14 @@ async def on_startup():
         application.add_handler(CommandHandler("start", start_cmd), group=1)
         application.add_handler(CommandHandler("comandos", comandos_cmd), group=5)
         application.add_handler(CommandHandler("listar_comandos", comandos_cmd), group=5)
+
+        # Comandos de stress test para admin
+        if STRESS_COMMANDS_AVAILABLE:
+            application.add_handler(CommandHandler("stress_quick", stress_test_quick_cmd), group=1)
+            application.add_handler(CommandHandler("stress_connectivity", stress_test_connectivity_cmd), group=1)
+            application.add_handler(CommandHandler("stress_tokens", stress_test_tokens_cmd), group=1)
+            application.add_handler(CommandHandler("stress_status", stress_test_status_cmd), group=1)
+            logging.info("✅ Comandos de stress test registrados!")
         application.add_handler(CommandHandler("getid", getid_cmd), group=1)
         application.add_handler(CommandHandler("debug_grupos", debug_grupos_cmd), group=1)
 

@@ -1,0 +1,530 @@
+{
+  "test_summary": {
+    "total_tests": 45,
+    "successful_tests": 0,
+    "failed_tests": 45,
+    "avg_response_time": 2.3009282112121583,
+    "test_duration": 8.496865034103394,
+    "timestamp": "2025-09-20 21:21:00"
+  },
+  "chain_stats": {
+    "0x1": {
+      "chain_name": "Ethereum",
+      "total_tests": 10,
+      "successful_tests": 0,
+      "failed_tests": 10,
+      "success_rate": 0.0,
+      "avg_response_time": 2.313385534286499,
+      "errors": {
+        "Cannot connect to host localhost:8000 ssl:default [O computador remoto recusou a conex\u00e3o de rede]": 10
+      }
+    },
+    "0x38": {
+      "chain_name": "BNB Smart Chain",
+      "total_tests": 10,
+      "successful_tests": 0,
+      "failed_tests": 10,
+      "success_rate": 0.0,
+      "avg_response_time": 2.2998274326324464,
+      "errors": {
+        "Cannot connect to host localhost:8000 ssl:default [O computador remoto recusou a conex\u00e3o de rede]": 10
+      }
+    },
+    "0x89": {
+      "chain_name": "Polygon",
+      "total_tests": 10,
+      "successful_tests": 0,
+      "failed_tests": 10,
+      "success_rate": 0.0,
+      "avg_response_time": 2.2982982635498046,
+      "errors": {
+        "Cannot connect to host localhost:8000 ssl:default [O computador remoto recusou a conex\u00e3o de rede]": 10
+      }
+    },
+    "0xa4b1": {
+      "chain_name": "Arbitrum One",
+      "total_tests": 5,
+      "successful_tests": 0,
+      "failed_tests": 5,
+      "success_rate": 0.0,
+      "avg_response_time": 2.28751277923584,
+      "errors": {
+        "Cannot connect to host localhost:8000 ssl:default [O computador remoto recusou a conex\u00e3o de rede]": 5
+      }
+    },
+    "0xa": {
+      "chain_name": "OP Mainnet",
+      "total_tests": 5,
+      "successful_tests": 0,
+      "failed_tests": 5,
+      "success_rate": 0.0,
+      "avg_response_time": 2.28751277923584,
+      "errors": {
+        "Cannot connect to host localhost:8000 ssl:default [O computador remoto recusou a conex\u00e3o de rede]": 5
+      }
+    },
+    "0x2105": {
+      "chain_name": "Base",
+      "total_tests": 5,
+      "successful_tests": 0,
+      "failed_tests": 5,
+      "success_rate": 0.0,
+      "avg_response_time": 2.310305881500244,
+      "errors": {
+        "Cannot connect to host localhost:8000 ssl:default [O computador remoto recusou a conex\u00e3o de rede]": 5
+      }
+    }
+  },
+  "individual_results": [
+    {
+      "chain_id": "0x1",
+      "token_symbol": "USDC",
+      "tx_hash": "0xc4dcfd9f17c53027837faa6d279c2bf3bab570322c14bea277a7a9731f140386",
+      "success": false,
+      "response_time": 2.3135910034179688,
+      "error_message": "Cannot connect to host localhost:8000 ssl:default [O computador remoto recusou a conex\u00e3o de rede]",
+      "usd_amount": 3.89,
+      "status_code": null
+    },
+    {
+      "chain_id": "0x1",
+      "token_symbol": "USDC",
+      "tx_hash": "0x069710d704d3ea391eb569b16e26eb301a9bd043cd52f15c3a7d0785e9784e26",
+      "success": false,
+      "response_time": 2.3135910034179688,
+      "error_message": "Cannot connect to host localhost:8000 ssl:default [O computador remoto recusou a conex\u00e3o de rede]",
+      "usd_amount": 0.77,
+      "status_code": null
+    },
+    {
+      "chain_id": "0x1",
+      "token_symbol": "USDC",
+      "tx_hash": "0xeec078d351df4d710adb3ac7f5fd87641f83b9bef0eb04266a2343f55761168d",
+      "success": false,
+      "response_time": 2.3135910034179688,
+      "error_message": "Cannot connect to host localhost:8000 ssl:default [O computador remoto recusou a conex\u00e3o de rede]",
+      "usd_amount": 5.0,
+      "status_code": null
+    },
+    {
+      "chain_id": "0x1",
+      "token_symbol": "USDC",
+      "tx_hash": "0xff9091d909dfa84c0288569d4b65df3860663a531be41153d0511c8b59b06af3",
+      "success": false,
+      "response_time": 2.3135910034179688,
+      "error_message": "Cannot connect to host localhost:8000 ssl:default [O computador remoto recusou a conex\u00e3o de rede]",
+      "usd_amount": 1.14,
+      "status_code": null
+    },
+    {
+      "chain_id": "0x1",
+      "token_symbol": "USDC",
+      "tx_hash": "0x3fa9c9febcb0cca221332969e69038a1ac11a63cd08f51c7bc0cc14df482e957",
+      "success": false,
+      "response_time": 2.3135910034179688,
+      "error_message": "Cannot connect to host localhost:8000 ssl:default [O computador remoto recusou a conex\u00e3o de rede]",
+      "usd_amount": 0.7,
+      "status_code": null
+    },
+    {
+      "chain_id": "0x1",
+      "token_symbol": "USDT",
+      "tx_hash": "0x4da9dd96b4b4ae13287959910a23db5718cc99c03c9fb04d4d93ca6547fe073c",
+      "success": false,
+      "response_time": 2.3135910034179688,
+      "error_message": "Cannot connect to host localhost:8000 ssl:default [O computador remoto recusou a conex\u00e3o de rede]",
+      "usd_amount": 1.41,
+      "status_code": null
+    },
+    {
+      "chain_id": "0x1",
+      "token_symbol": "USDT",
+      "tx_hash": "0x060d014cce1a7a97fce765de7682e1195ba88f5f54284c491e43db8bb847857e",
+      "success": false,
+      "response_time": 2.3135910034179688,
+      "error_message": "Cannot connect to host localhost:8000 ssl:default [O computador remoto recusou a conex\u00e3o de rede]",
+      "usd_amount": 1.87,
+      "status_code": null
+    },
+    {
+      "chain_id": "0x1",
+      "token_symbol": "USDT",
+      "tx_hash": "0xd201671e3c7dbc0d7498d882f2e5f48edaf48b4df7c3a29ad7c96fa67eec2710",
+      "success": false,
+      "response_time": 2.3135910034179688,
+      "error_message": "Cannot connect to host localhost:8000 ssl:default [O computador remoto recusou a conex\u00e3o de rede]",
+      "usd_amount": 0.88,
+      "status_code": null
+    },
+    {
+      "chain_id": "0x1",
+      "token_symbol": "USDT",
+      "tx_hash": "0x3be63835192e683e50e52452094a8ab090499260a3df4861cea336d10ec01e1a",
+      "success": false,
+      "response_time": 2.31256365776062,
+      "error_message": "Cannot connect to host localhost:8000 ssl:default [O computador remoto recusou a conex\u00e3o de rede]",
+      "usd_amount": 3.95,
+      "status_code": null
+    },
+    {
+      "chain_id": "0x1",
+      "token_symbol": "USDT",
+      "tx_hash": "0xd9d3f7d29fc26dfac3f00c71ddf0afaec2e7cf206fe612e87364fae2b75b78e5",
+      "success": false,
+      "response_time": 2.31256365776062,
+      "error_message": "Cannot connect to host localhost:8000 ssl:default [O computador remoto recusou a conex\u00e3o de rede]",
+      "usd_amount": 2.22,
+      "status_code": null
+    },
+    {
+      "chain_id": "0x38",
+      "token_symbol": "USDC",
+      "tx_hash": "0x787749c73ea1bc54179755ec6be0356494e15141490157fff2ffbb425b2717a1",
+      "success": false,
+      "response_time": 2.31256365776062,
+      "error_message": "Cannot connect to host localhost:8000 ssl:default [O computador remoto recusou a conex\u00e3o de rede]",
+      "usd_amount": 0.96,
+      "status_code": null
+    },
+    {
+      "chain_id": "0x38",
+      "token_symbol": "USDC",
+      "tx_hash": "0xc386aaf16b2e854a2ab4a1c1dd0b99588705f77fbe3dc7a0d883bd4966489a57",
+      "success": false,
+      "response_time": 2.31256365776062,
+      "error_message": "Cannot connect to host localhost:8000 ssl:default [O computador remoto recusou a conex\u00e3o de rede]",
+      "usd_amount": 0.86,
+      "status_code": null
+    },
+    {
+      "chain_id": "0x38",
+      "token_symbol": "USDC",
+      "tx_hash": "0x63e28a8e50c570ca0020cdb91ebc5dcdf6f5f5631a0ffc6620ac3b5522d1e969",
+      "success": false,
+      "response_time": 2.31256365776062,
+      "error_message": "Cannot connect to host localhost:8000 ssl:default [O computador remoto recusou a conex\u00e3o de rede]",
+      "usd_amount": 2.35,
+      "status_code": null
+    },
+    {
+      "chain_id": "0x38",
+      "token_symbol": "USDC",
+      "tx_hash": "0xa10fee77ce82a486bf5d13e7d9d32c33bf6dcfb42ee498db81e7e9ab968d1925",
+      "success": false,
+      "response_time": 2.31256365776062,
+      "error_message": "Cannot connect to host localhost:8000 ssl:default [O computador remoto recusou a conex\u00e3o de rede]",
+      "usd_amount": 5.0,
+      "status_code": null
+    },
+    {
+      "chain_id": "0x38",
+      "token_symbol": "USDC",
+      "tx_hash": "0x13f13f2cd1f17f7ce0f2d28499bdb79460c43a94869ce889a15470fe20565a6a",
+      "success": false,
+      "response_time": 2.31256365776062,
+      "error_message": "Cannot connect to host localhost:8000 ssl:default [O computador remoto recusou a conex\u00e3o de rede]",
+      "usd_amount": 1.39,
+      "status_code": null
+    },
+    {
+      "chain_id": "0x38",
+      "token_symbol": "USDT",
+      "tx_hash": "0x11a16e99ed92e537271703bdaac6ae12ab37bc8fdf4ad7e35f8d874492953af9",
+      "success": false,
+      "response_time": 2.2877237796783447,
+      "error_message": "Cannot connect to host localhost:8000 ssl:default [O computador remoto recusou a conex\u00e3o de rede]",
+      "usd_amount": 0.57,
+      "status_code": null
+    },
+    {
+      "chain_id": "0x38",
+      "token_symbol": "USDT",
+      "tx_hash": "0x30417f7657a58d623cc8ff2aa0d7e67c0e3fc2291cb762b96ae0f3c1d9404f3a",
+      "success": false,
+      "response_time": 2.2877237796783447,
+      "error_message": "Cannot connect to host localhost:8000 ssl:default [O computador remoto recusou a conex\u00e3o de rede]",
+      "usd_amount": 1.18,
+      "status_code": null
+    },
+    {
+      "chain_id": "0x38",
+      "token_symbol": "USDT",
+      "tx_hash": "0x4682d4ca94d017b6fd2cf201e6b884815f9e112046c17c8117d797f23d637da1",
+      "success": false,
+      "response_time": 2.2866694927215576,
+      "error_message": "Cannot connect to host localhost:8000 ssl:default [O computador remoto recusou a conex\u00e3o de rede]",
+      "usd_amount": 4.81,
+      "status_code": null
+    },
+    {
+      "chain_id": "0x38",
+      "token_symbol": "USDT",
+      "tx_hash": "0xbb4082d9b5e47d98a3335c76f06a525a7bce32f605e8d297f5f273dffbd355c9",
+      "success": false,
+      "response_time": 2.2866694927215576,
+      "error_message": "Cannot connect to host localhost:8000 ssl:default [O computador remoto recusou a conex\u00e3o de rede]",
+      "usd_amount": 0.57,
+      "status_code": null
+    },
+    {
+      "chain_id": "0x38",
+      "token_symbol": "USDT",
+      "tx_hash": "0xcafa90bca070505b52e05b42685af57fd0eef70115ed9257cbcdb5b0bf63b2f3",
+      "success": false,
+      "response_time": 2.2866694927215576,
+      "error_message": "Cannot connect to host localhost:8000 ssl:default [O computador remoto recusou a conex\u00e3o de rede]",
+      "usd_amount": 0.91,
+      "status_code": null
+    },
+    {
+      "chain_id": "0x89",
+      "token_symbol": "USDC",
+      "tx_hash": "0xc168f339aa1b085ba8ff4459bcf9a009b56198fdc37d9f81b56033162f7e8e06",
+      "success": false,
+      "response_time": 2.2866694927215576,
+      "error_message": "Cannot connect to host localhost:8000 ssl:default [O computador remoto recusou a conex\u00e3o de rede]",
+      "usd_amount": 2.48,
+      "status_code": null
+    },
+    {
+      "chain_id": "0x89",
+      "token_symbol": "USDC",
+      "tx_hash": "0x0ce450d6f00b29af6b89b3d9fba0629ec5a610dc585ed7db0df2565a7df5906a",
+      "success": false,
+      "response_time": 2.2866694927215576,
+      "error_message": "Cannot connect to host localhost:8000 ssl:default [O computador remoto recusou a conex\u00e3o de rede]",
+      "usd_amount": 3.91,
+      "status_code": null
+    },
+    {
+      "chain_id": "0x89",
+      "token_symbol": "USDC",
+      "tx_hash": "0x2d4712d2b29e36bf3f5f7c6ee2a5f04acdad47385650ad183fe83d019a791dcc",
+      "success": false,
+      "response_time": 2.2866694927215576,
+      "error_message": "Cannot connect to host localhost:8000 ssl:default [O computador remoto recusou a conex\u00e3o de rede]",
+      "usd_amount": 1.21,
+      "status_code": null
+    },
+    {
+      "chain_id": "0x89",
+      "token_symbol": "USDC",
+      "tx_hash": "0x7dd526afed2325a3fd7659148131210185f6940d1fad8aa5689c402b377b5540",
+      "success": false,
+      "response_time": 2.2866694927215576,
+      "error_message": "Cannot connect to host localhost:8000 ssl:default [O computador remoto recusou a conex\u00e3o de rede]",
+      "usd_amount": 1.56,
+      "status_code": null
+    },
+    {
+      "chain_id": "0x89",
+      "token_symbol": "USDC",
+      "tx_hash": "0x6d4d3a346af104871f0e022c5576743b8ccf435de0928f30c781461bffbc0dc8",
+      "success": false,
+      "response_time": 2.2866694927215576,
+      "error_message": "Cannot connect to host localhost:8000 ssl:default [O computador remoto recusou a conex\u00e3o de rede]",
+      "usd_amount": 1.65,
+      "status_code": null
+    },
+    {
+      "chain_id": "0x89",
+      "token_symbol": "USDT",
+      "tx_hash": "0x4b6530cecba3fad077cfd75bbb93931e4170b0d2b4c244266c8d205f2447b994",
+      "success": false,
+      "response_time": 2.2866694927215576,
+      "error_message": "Cannot connect to host localhost:8000 ssl:default [O computador remoto recusou a conex\u00e3o de rede]",
+      "usd_amount": 3.4,
+      "status_code": null
+    },
+    {
+      "chain_id": "0x89",
+      "token_symbol": "USDT",
+      "tx_hash": "0xbfd528db472d350b17b3bfd6b5eb1ef5548328aa4ea7a899a0f6c8bce2702e7e",
+      "success": false,
+      "response_time": 2.316502809524536,
+      "error_message": "Cannot connect to host localhost:8000 ssl:default [O computador remoto recusou a conex\u00e3o de rede]",
+      "usd_amount": 1.07,
+      "status_code": null
+    },
+    {
+      "chain_id": "0x89",
+      "token_symbol": "USDT",
+      "tx_hash": "0x93aa616f57bf9ebbd0d6009491cec780a958bb52443f9a759e4573e43083b1d2",
+      "success": false,
+      "response_time": 2.3154876232147217,
+      "error_message": "Cannot connect to host localhost:8000 ssl:default [O computador remoto recusou a conex\u00e3o de rede]",
+      "usd_amount": 5.0,
+      "status_code": null
+    },
+    {
+      "chain_id": "0x89",
+      "token_symbol": "USDT",
+      "tx_hash": "0xe7cbda428451f9e3eb569e192ed695b4faa576d73f9d0fea41cb10b50f238966",
+      "success": false,
+      "response_time": 2.3154876232147217,
+      "error_message": "Cannot connect to host localhost:8000 ssl:default [O computador remoto recusou a conex\u00e3o de rede]",
+      "usd_amount": 0.74,
+      "status_code": null
+    },
+    {
+      "chain_id": "0x89",
+      "token_symbol": "USDT",
+      "tx_hash": "0xa7bc4fc318576812dee09c14581d0cfec00505d424481be01d0197cd7ac8c09b",
+      "success": false,
+      "response_time": 2.3154876232147217,
+      "error_message": "Cannot connect to host localhost:8000 ssl:default [O computador remoto recusou a conex\u00e3o de rede]",
+      "usd_amount": 0.79,
+      "status_code": null
+    },
+    {
+      "chain_id": "0xa4b1",
+      "token_symbol": "USDC",
+      "tx_hash": "0x084a01790d71ec3a01f458142f66dc22eb68328031d8008e70fd8d6962043996",
+      "success": false,
+      "response_time": 2.28751277923584,
+      "error_message": "Cannot connect to host localhost:8000 ssl:default [O computador remoto recusou a conex\u00e3o de rede]",
+      "usd_amount": 1.69,
+      "status_code": null
+    },
+    {
+      "chain_id": "0xa4b1",
+      "token_symbol": "USDC",
+      "tx_hash": "0x0be11027d288914ee17bfbef9817e411a9d2cd211b49d12138f863b66971fdfd",
+      "success": false,
+      "response_time": 2.28751277923584,
+      "error_message": "Cannot connect to host localhost:8000 ssl:default [O computador remoto recusou a conex\u00e3o de rede]",
+      "usd_amount": 5.0,
+      "status_code": null
+    },
+    {
+      "chain_id": "0xa4b1",
+      "token_symbol": "USDC",
+      "tx_hash": "0x44eb496069a35d1afa1809e1fa13b7ae5487ea9100cc9c29565d0bfa0e444d12",
+      "success": false,
+      "response_time": 2.28751277923584,
+      "error_message": "Cannot connect to host localhost:8000 ssl:default [O computador remoto recusou a conex\u00e3o de rede]",
+      "usd_amount": 2.34,
+      "status_code": null
+    },
+    {
+      "chain_id": "0xa4b1",
+      "token_symbol": "USDC",
+      "tx_hash": "0x0113187f0947a4464a8f931ed679446be923dcc3a940f44d64c6c8d70cdad998",
+      "success": false,
+      "response_time": 2.28751277923584,
+      "error_message": "Cannot connect to host localhost:8000 ssl:default [O computador remoto recusou a conex\u00e3o de rede]",
+      "usd_amount": 1.17,
+      "status_code": null
+    },
+    {
+      "chain_id": "0xa4b1",
+      "token_symbol": "USDC",
+      "tx_hash": "0x1ac123b7b737090710dcfabd3c719d56316c93473785bed3de66f3d50ca2beac",
+      "success": false,
+      "response_time": 2.28751277923584,
+      "error_message": "Cannot connect to host localhost:8000 ssl:default [O computador remoto recusou a conex\u00e3o de rede]",
+      "usd_amount": 0.51,
+      "status_code": null
+    },
+    {
+      "chain_id": "0xa",
+      "token_symbol": "USDC",
+      "tx_hash": "0x95ff830dc5eee771b5bc4968d28d1c2f0538722f09235ecfbe7d39acaaadbaa3",
+      "success": false,
+      "response_time": 2.28751277923584,
+      "error_message": "Cannot connect to host localhost:8000 ssl:default [O computador remoto recusou a conex\u00e3o de rede]",
+      "usd_amount": 1.24,
+      "status_code": null
+    },
+    {
+      "chain_id": "0xa",
+      "token_symbol": "USDC",
+      "tx_hash": "0x4ac0c95bd39469fbb472ca4532f8217bb60aca6ac1a4eb9e2248fc1c2fd9801a",
+      "success": false,
+      "response_time": 2.28751277923584,
+      "error_message": "Cannot connect to host localhost:8000 ssl:default [O computador remoto recusou a conex\u00e3o de rede]",
+      "usd_amount": 0.92,
+      "status_code": null
+    },
+    {
+      "chain_id": "0xa",
+      "token_symbol": "USDC",
+      "tx_hash": "0x907eef0e4d1cd2f1e7efe7c617903f7ce01fa90a8bad09e17d5c1149ffdc33be",
+      "success": false,
+      "response_time": 2.28751277923584,
+      "error_message": "Cannot connect to host localhost:8000 ssl:default [O computador remoto recusou a conex\u00e3o de rede]",
+      "usd_amount": 3.48,
+      "status_code": null
+    },
+    {
+      "chain_id": "0xa",
+      "token_symbol": "USDC",
+      "tx_hash": "0x41f993dd1f4663c7c0680401dd31cefa524f3c174baf70b676236c5f78d158b2",
+      "success": false,
+      "response_time": 2.28751277923584,
+      "error_message": "Cannot connect to host localhost:8000 ssl:default [O computador remoto recusou a conex\u00e3o de rede]",
+      "usd_amount": 4.73,
+      "status_code": null
+    },
+    {
+      "chain_id": "0xa",
+      "token_symbol": "USDC",
+      "tx_hash": "0xd0ed4e0dcd58a3c419cdf5672104bc940f6304c414e51c2eae979d71d8279c1a",
+      "success": false,
+      "response_time": 2.28751277923584,
+      "error_message": "Cannot connect to host localhost:8000 ssl:default [O computador remoto recusou a conex\u00e3o de rede]",
+      "usd_amount": 2.7,
+      "status_code": null
+    },
+    {
+      "chain_id": "0x2105",
+      "token_symbol": "USDC",
+      "tx_hash": "0xc8d03f6be5ff11b7a1bcf1ca24949bcc2efcc8a28e59ce2c6a09ce8ff0034b6f",
+      "success": false,
+      "response_time": 2.2860052585601807,
+      "error_message": "Cannot connect to host localhost:8000 ssl:default [O computador remoto recusou a conex\u00e3o de rede]",
+      "usd_amount": 1.53,
+      "status_code": null
+    },
+    {
+      "chain_id": "0x2105",
+      "token_symbol": "USDC",
+      "tx_hash": "0x84600b835917c252759eb19ee4e20b6fa0b2e44e0d87128e469eff7ca6d9787d",
+      "success": false,
+      "response_time": 2.3171422481536865,
+      "error_message": "Cannot connect to host localhost:8000 ssl:default [O computador remoto recusou a conex\u00e3o de rede]",
+      "usd_amount": 5.0,
+      "status_code": null
+    },
+    {
+      "chain_id": "0x2105",
+      "token_symbol": "USDC",
+      "tx_hash": "0x7aae88f667d36e7607e5c71b2ef8a035f2339238170be4add81161fb0db97492",
+      "success": false,
+      "response_time": 2.316127300262451,
+      "error_message": "Cannot connect to host localhost:8000 ssl:default [O computador remoto recusou a conex\u00e3o de rede]",
+      "usd_amount": 1.61,
+      "status_code": null
+    },
+    {
+      "chain_id": "0x2105",
+      "token_symbol": "USDC",
+      "tx_hash": "0xcdf1aa075516a1cc5fd500a8fb4f1cef6f29a449a1c5091777772132f3bbc23a",
+      "success": false,
+      "response_time": 2.316127300262451,
+      "error_message": "Cannot connect to host localhost:8000 ssl:default [O computador remoto recusou a conex\u00e3o de rede]",
+      "usd_amount": 1.58,
+      "status_code": null
+    },
+    {
+      "chain_id": "0x2105",
+      "token_symbol": "USDC",
+      "tx_hash": "0xc83e8fbfbc0d9301f7f1da4ea9984a2e061a2b6f682039366938d25b86ebf814",
+      "success": false,
+      "response_time": 2.316127300262451,
+      "error_message": "Cannot connect to host localhost:8000 ssl:default [O computador remoto recusou a conex\u00e3o de rede]",
+      "usd_amount": 2.87,
+      "status_code": null
+    }
+  ]
+}

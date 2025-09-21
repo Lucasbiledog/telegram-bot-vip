@@ -1,0 +1,66 @@
+{
+  "test_summary": {
+    "total_requests": 100,
+    "successful_requests": 0,
+    "failed_requests": 100,
+    "success_rate_percent": 0.0,
+    "max_test_duration": 22.87,
+    "requests_per_second": 4.37
+  },
+  "response_times": {
+    "average_ms": 0,
+    "minimum_ms": 0,
+    "maximum_ms": 0,
+    "median_ms": 0,
+    "p95_ms": 0
+  },
+  "error_analysis": {
+    "Cannot connect to host localhost:8000 ssl:default [O computador remoto recusou a conexão de rede]": 100
+  },
+  "system_performance": {
+    "cpu": {
+      "min": 0.0,
+      "max": 56.3,
+      "avg": 43.59090909090909,
+      "median": 44.05
+    },
+    "memory": {
+      "min": 82.4,
+      "max": 83.4,
+      "avg": 82.87727272727273,
+      "median": 82.8
+    }
+  },
+  "recommendations": [
+    "🔴 Taxa de sucesso baixa (<95%). Considere implementar rate limiting mais agressivo.",
+    "🟡 Throughput baixo (<50 req/s). Considere implementar cache ou otimizar handlers.",
+    "💡 Implementar cache Redis para status VIP dos usuários",
+    "💡 Usar connection pooling para o banco de dados",
+    "💡 Implementar circuit breaker para APIs externas",
+    "💡 Adicionar métricas em tempo real com Prometheus",
+    "💡 Considerar usar webhooks assíncronos"
+  ],
+  "analysis": {
+    "overall_grade": "D (Necessita Melhorias)",
+    "performance_issues": [
+      "Taxa de sucesso baixa (0.0%)",
+      "Throughput baixo (4.4 req/s)"
+    ],
+    "bottlenecks": [
+      "Possível limitação de concorrência"
+    ],
+    "optimization_suggestions": [
+      "Implementar cache Redis para dados frequentemente acessados",
+      "Otimizar queries de banco com indices apropriados",
+      "Usar connection pooling para banco de dados",
+      "Implementar rate limiting inteligente",
+      "Considerar arquitetura assincrona com filas"
+    ]
+  },
+  "test_config": {
+    "total_users": 100,
+    "users_per_second": 20,
+    "environment": "local",
+    "scenario": null
+  }
+}

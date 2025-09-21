@@ -1,0 +1,146 @@
+2025-09-20 13:15:23,049 - INFO -    • Total de usuários: 100
+2025-09-20 13:35:32,144 - INFO -    • Total de usuários: 100
+2025-09-20 13:35:32,145 - INFO -    • Usuários por segundo: 20
+2025-09-20 13:35:32,145 - INFO -    • Tamanho do lote: 10
+2025-09-20 13:35:32,145 - INFO -    • Duração máxima: 60s
+2025-09-20 13:36:20,482 - INFO - Iniciando teste de stress:
+2025-09-20 13:36:20,482 - INFO -    • Total de usuários: 100
+2025-09-20 13:36:20,482 - INFO -    • Usuários por segundo: 20
+2025-09-20 13:36:20,482 - INFO -    • Tamanho do lote: 10
+2025-09-20 13:36:20,482 - INFO -    • Duração máxima: 60s
+2025-09-20 13:36:20,483 - INFO - Monitoramento de performance iniciado
+2025-09-20 13:36:22,790 - INFO - Lote 1: 0/10 sucessos, tempo médio: 2.305s
+2025-09-20 13:36:25,079 - INFO - Lote 2: 0/10 sucessos, tempo médio: 2.287s
+2025-09-20 13:36:27,348 - INFO - Lote 3: 0/10 sucessos, tempo médio: 2.267s
+2025-09-20 13:36:29,639 - INFO - Lote 4: 0/10 sucessos, tempo médio: 2.278s
+2025-09-20 13:36:31,902 - INFO - Lote 5: 0/10 sucessos, tempo médio: 2.261s
+2025-09-20 13:36:34,184 - INFO - Lote 6: 0/10 sucessos, tempo médio: 2.272s
+2025-09-20 13:36:36,471 - INFO - Lote 7: 0/10 sucessos, tempo médio: 2.284s
+2025-09-20 13:36:38,764 - INFO - Lote 8: 0/10 sucessos, tempo médio: 2.292s
+2025-09-20 13:36:41,049 - INFO - Lote 9: 0/10 sucessos, tempo médio: 2.283s
+2025-09-20 13:36:43,337 - INFO - Lote 10: 0/10 sucessos, tempo médio: 2.286s
+2025-09-20 13:36:43,337 - INFO - Monitoramento de performance parado
+2025-09-20 13:38:12,764 - INFO - Iniciando teste de stress:
+2025-09-20 13:38:12,764 - INFO -    • Total de usuários: 100
+2025-09-20 13:38:12,764 - INFO -    • Usuários por segundo: 20
+2025-09-20 13:38:12,764 - INFO -    • Tamanho do lote: 10
+2025-09-20 13:38:12,765 - INFO -    • Duração máxima: 60s
+2025-09-20 13:38:12,766 - INFO - Monitoramento de performance iniciado
+2025-09-20 13:38:15,059 - INFO - Lote 1: 0/10 sucessos, tempo médio: 2.288s
+2025-09-20 13:38:17,347 - INFO - Lote 2: 0/10 sucessos, tempo médio: 2.287s
+2025-09-20 13:38:19,631 - INFO - Lote 3: 0/10 sucessos, tempo médio: 2.282s
+2025-09-20 13:38:21,929 - INFO - Lote 4: 0/10 sucessos, tempo médio: 2.296s
+2025-09-20 13:38:24,218 - INFO - Lote 5: 0/10 sucessos, tempo médio: 2.289s
+2025-09-20 13:38:26,496 - INFO - Lote 6: 0/10 sucessos, tempo médio: 2.276s
+2025-09-20 13:38:28,789 - INFO - Lote 7: 0/10 sucessos, tempo médio: 2.291s
+2025-09-20 13:38:31,071 - INFO - Lote 8: 0/10 sucessos, tempo médio: 2.279s
+2025-09-20 13:38:33,345 - INFO - Lote 9: 0/10 sucessos, tempo médio: 2.274s
+2025-09-20 13:38:35,630 - INFO - Lote 10: 0/10 sucessos, tempo médio: 2.282s
+2025-09-20 13:38:35,630 - INFO - Monitoramento de performance parado
+2025-09-20 21:08:54,547 - INFO - Iniciando teste de stress:
+2025-09-20 21:08:54,547 - INFO -    • Total de usuários: 1000
+2025-09-20 21:08:54,548 - INFO -    • Usuários por segundo: 100
+2025-09-20 21:08:54,548 - INFO -    • Tamanho do lote: 10
+2025-09-20 21:08:54,548 - INFO -    • Duração máxima: 300s
+2025-09-20 21:08:54,548 - INFO - Monitoramento de performance iniciado
+2025-09-20 21:08:56,876 - INFO - Lote 1: 0/10 sucessos, tempo médio: 2.324s
+2025-09-20 21:08:59,196 - INFO - Lote 2: 0/10 sucessos, tempo médio: 2.290s
+2025-09-20 21:09:01,506 - INFO - Lote 3: 0/10 sucessos, tempo médio: 2.310s
+2025-09-20 21:09:03,807 - INFO - Lote 4: 0/10 sucessos, tempo médio: 2.290s
+2025-09-20 21:09:06,113 - INFO - Lote 5: 0/10 sucessos, tempo médio: 2.305s
+2025-09-20 21:09:08,419 - INFO - Lote 6: 0/10 sucessos, tempo médio: 2.306s
+2025-09-20 21:09:10,719 - INFO - Lote 7: 0/10 sucessos, tempo médio: 2.299s
+2025-09-20 21:09:13,011 - INFO - Lote 8: 0/10 sucessos, tempo médio: 2.286s
+2025-09-20 21:09:15,324 - INFO - Lote 9: 0/10 sucessos, tempo médio: 2.311s
+2025-09-20 21:09:17,635 - INFO - Lote 10: 0/10 sucessos, tempo médio: 2.310s
+2025-09-20 21:09:19,937 - INFO - Lote 11: 0/10 sucessos, tempo médio: 2.301s
+2025-09-20 21:09:22,254 - INFO - Lote 12: 0/10 sucessos, tempo médio: 2.316s
+2025-09-20 21:09:24,564 - INFO - Lote 13: 0/10 sucessos, tempo médio: 2.308s
+2025-09-20 21:09:26,862 - INFO - Lote 14: 0/10 sucessos, tempo médio: 2.297s
+2025-09-20 21:09:29,171 - INFO - Lote 15: 0/10 sucessos, tempo médio: 2.308s
+2025-09-20 21:09:31,500 - INFO - Lote 16: 0/10 sucessos, tempo médio: 2.300s
+2025-09-20 21:09:33,808 - INFO - Lote 17: 0/10 sucessos, tempo médio: 2.306s
+2025-09-20 21:09:36,114 - INFO - Lote 18: 0/10 sucessos, tempo médio: 2.305s
+2025-09-20 21:09:38,418 - INFO - Lote 19: 0/10 sucessos, tempo médio: 2.303s
+2025-09-20 21:09:40,726 - INFO - Lote 20: 0/10 sucessos, tempo médio: 2.307s
+2025-09-20 21:09:43,029 - INFO - Lote 21: 0/10 sucessos, tempo médio: 2.302s
+2025-09-20 21:09:45,327 - INFO - Lote 22: 0/10 sucessos, tempo médio: 2.297s
+2025-09-20 21:09:47,626 - INFO - Lote 23: 0/10 sucessos, tempo médio: 2.298s
+2025-09-20 21:09:49,926 - INFO - Lote 24: 0/10 sucessos, tempo médio: 2.298s
+2025-09-20 21:09:52,233 - INFO - Lote 25: 0/10 sucessos, tempo médio: 2.304s
+2025-09-20 21:09:54,530 - INFO - Lote 26: 0/10 sucessos, tempo médio: 2.295s
+2025-09-20 21:09:56,824 - INFO - Lote 27: 0/10 sucessos, tempo médio: 2.293s
+2025-09-20 21:09:59,124 - INFO - Lote 28: 0/10 sucessos, tempo médio: 2.298s
+2025-09-20 21:10:01,430 - INFO - Lote 29: 0/10 sucessos, tempo médio: 2.304s
+2025-09-20 21:10:03,735 - INFO - Lote 30: 0/10 sucessos, tempo médio: 2.304s
+2025-09-20 21:10:06,065 - INFO - Lote 31: 0/10 sucessos, tempo médio: 2.288s
+2025-09-20 21:10:08,372 - INFO - Lote 32: 0/10 sucessos, tempo médio: 2.306s
+2025-09-20 21:10:10,680 - INFO - Lote 33: 0/10 sucessos, tempo médio: 2.307s
+2025-09-20 21:10:12,986 - INFO - Lote 34: 0/10 sucessos, tempo médio: 2.304s
+2025-09-20 21:10:15,283 - INFO - Lote 35: 0/10 sucessos, tempo médio: 2.295s
+2025-09-20 21:10:17,574 - INFO - Lote 36: 0/10 sucessos, tempo médio: 2.288s
+2025-09-20 21:10:19,875 - INFO - Lote 37: 0/10 sucessos, tempo médio: 2.300s
+2025-09-20 21:10:22,173 - INFO - Lote 38: 0/10 sucessos, tempo médio: 2.297s
+2025-09-20 21:10:24,498 - INFO - Lote 39: 0/10 sucessos, tempo médio: 2.305s
+2025-09-20 21:10:26,805 - INFO - Lote 40: 0/10 sucessos, tempo médio: 2.306s
+2025-09-20 21:10:29,110 - INFO - Lote 41: 0/10 sucessos, tempo médio: 2.303s
+2025-09-20 21:10:31,398 - INFO - Lote 42: 0/10 sucessos, tempo médio: 2.286s
+2025-09-20 21:10:33,698 - INFO - Lote 43: 0/10 sucessos, tempo médio: 2.299s
+2025-09-20 21:10:35,989 - INFO - Lote 44: 0/10 sucessos, tempo médio: 2.290s
+2025-09-20 21:10:38,296 - INFO - Lote 45: 0/10 sucessos, tempo médio: 2.305s
+2025-09-20 21:10:40,600 - INFO - Lote 46: 0/10 sucessos, tempo médio: 2.304s
+2025-09-20 21:10:42,907 - INFO - Lote 47: 0/10 sucessos, tempo médio: 2.306s
+2025-09-20 21:10:45,231 - INFO - Lote 48: 0/10 sucessos, tempo médio: 2.303s
+2025-09-20 21:10:47,525 - INFO - Lote 49: 0/10 sucessos, tempo médio: 2.294s
+2025-09-20 21:10:49,828 - INFO - Lote 50: 0/10 sucessos, tempo médio: 2.302s
+2025-09-20 21:10:52,139 - INFO - Lote 51: 0/10 sucessos, tempo médio: 2.282s
+2025-09-20 21:10:54,433 - INFO - Lote 52: 0/10 sucessos, tempo médio: 2.294s
+2025-09-20 21:10:56,726 - INFO - Lote 53: 0/10 sucessos, tempo médio: 2.291s
+2025-09-20 21:10:59,033 - INFO - Lote 54: 0/10 sucessos, tempo médio: 2.307s
+2025-09-20 21:11:01,337 - INFO - Lote 55: 0/10 sucessos, tempo médio: 2.302s
+2025-09-20 21:11:03,638 - INFO - Lote 56: 0/10 sucessos, tempo médio: 2.301s
+2025-09-20 21:11:05,933 - INFO - Lote 57: 0/10 sucessos, tempo médio: 2.294s
+2025-09-20 21:11:08,228 - INFO - Lote 58: 0/10 sucessos, tempo médio: 2.294s
+2025-09-20 21:11:10,525 - INFO - Lote 59: 0/10 sucessos, tempo médio: 2.296s
+2025-09-20 21:11:12,818 - INFO - Lote 60: 0/10 sucessos, tempo médio: 2.291s
+2025-09-20 21:11:15,114 - INFO - Lote 61: 0/10 sucessos, tempo médio: 2.294s
+2025-09-20 21:11:17,413 - INFO - Lote 62: 0/10 sucessos, tempo médio: 2.295s
+2025-09-20 21:11:19,717 - INFO - Lote 63: 0/10 sucessos, tempo médio: 2.304s
+2025-09-20 21:11:22,008 - INFO - Lote 64: 0/10 sucessos, tempo médio: 2.289s
+2025-09-20 21:11:24,313 - INFO - Lote 65: 0/10 sucessos, tempo médio: 2.305s
+2025-09-20 21:11:26,613 - INFO - Lote 66: 0/10 sucessos, tempo médio: 2.299s
+2025-09-20 21:11:28,915 - INFO - Lote 67: 0/10 sucessos, tempo médio: 2.300s
+2025-09-20 21:11:31,217 - INFO - Lote 68: 0/10 sucessos, tempo médio: 2.301s
+2025-09-20 21:11:33,511 - INFO - Lote 69: 0/10 sucessos, tempo médio: 2.293s
+2025-09-20 21:11:35,816 - INFO - Lote 70: 0/10 sucessos, tempo médio: 2.303s
+2025-09-20 21:11:38,113 - INFO - Lote 71: 0/10 sucessos, tempo médio: 2.296s
+2025-09-20 21:11:40,416 - INFO - Lote 72: 0/10 sucessos, tempo médio: 2.300s
+2025-09-20 21:11:42,717 - INFO - Lote 73: 0/10 sucessos, tempo médio: 2.300s
+2025-09-20 21:11:45,006 - INFO - Lote 74: 0/10 sucessos, tempo médio: 2.288s
+2025-09-20 21:11:47,304 - INFO - Lote 75: 0/10 sucessos, tempo médio: 2.297s
+2025-09-20 21:11:49,602 - INFO - Lote 76: 0/10 sucessos, tempo médio: 2.297s
+2025-09-20 21:11:51,897 - INFO - Lote 77: 0/10 sucessos, tempo médio: 2.294s
+2025-09-20 21:11:54,199 - INFO - Lote 78: 0/10 sucessos, tempo médio: 2.301s
+2025-09-20 21:11:56,500 - INFO - Lote 79: 0/10 sucessos, tempo médio: 2.299s
+2025-09-20 21:11:58,793 - INFO - Lote 80: 0/10 sucessos, tempo médio: 2.292s
+2025-09-20 21:12:01,100 - INFO - Lote 81: 0/10 sucessos, tempo médio: 2.305s
+2025-09-20 21:12:03,399 - INFO - Lote 82: 0/10 sucessos, tempo médio: 2.298s
+2025-09-20 21:12:05,698 - INFO - Lote 83: 0/10 sucessos, tempo médio: 2.296s
+2025-09-20 21:12:08,002 - INFO - Lote 84: 0/10 sucessos, tempo médio: 2.303s
+2025-09-20 21:12:10,324 - INFO - Lote 85: 0/10 sucessos, tempo médio: 2.314s
+2025-09-20 21:12:12,630 - INFO - Lote 86: 0/10 sucessos, tempo médio: 2.304s
+2025-09-20 21:12:14,928 - INFO - Lote 87: 0/10 sucessos, tempo médio: 2.297s
+2025-09-20 21:12:17,221 - INFO - Lote 88: 0/10 sucessos, tempo médio: 2.293s
+2025-09-20 21:12:19,520 - INFO - Lote 89: 0/10 sucessos, tempo médio: 2.296s
+2025-09-20 21:12:21,807 - INFO - Lote 90: 0/10 sucessos, tempo médio: 2.287s
+2025-09-20 21:12:24,103 - INFO - Lote 91: 0/10 sucessos, tempo médio: 2.294s
+2025-09-20 21:12:26,399 - INFO - Lote 92: 0/10 sucessos, tempo médio: 2.295s
+2025-09-20 21:12:28,710 - INFO - Lote 93: 0/10 sucessos, tempo médio: 2.308s
+2025-09-20 21:12:31,015 - INFO - Lote 94: 0/10 sucessos, tempo médio: 2.303s
+2025-09-20 21:12:33,314 - INFO - Lote 95: 0/10 sucessos, tempo médio: 2.297s
+2025-09-20 21:12:35,620 - INFO - Lote 96: 0/10 sucessos, tempo médio: 2.304s
+2025-09-20 21:12:37,912 - INFO - Lote 97: 0/10 sucessos, tempo médio: 2.291s
+2025-09-20 21:12:40,207 - INFO - Lote 98: 0/10 sucessos, tempo médio: 2.294s
+2025-09-20 21:12:42,504 - INFO - Lote 99: 0/10 sucessos, tempo médio: 2.295s
+2025-09-20 21:12:44,800 - INFO - Lote 100: 0/10 sucessos, tempo médio: 2.295s
+2025-09-20 21:12:44,801 - INFO - Monitoramento de performance parado

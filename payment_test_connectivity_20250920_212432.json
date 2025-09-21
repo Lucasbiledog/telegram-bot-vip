@@ -1,0 +1,2956 @@
+{
+  "test_summary": {
+    "total_tests": 270,
+    "successful_tests": 0,
+    "failed_tests": 270,
+    "avg_response_time": 0.2306715002766362,
+    "test_duration": 40.834254026412964,
+    "timestamp": "2025-09-20 21:24:32"
+  },
+  "chain_stats": {
+    "0x1": {
+      "chain_name": "Ethereum",
+      "total_tests": 20,
+      "successful_tests": 0,
+      "failed_tests": 20,
+      "success_rate": 0.0,
+      "avg_response_time": 0.39657326936721804,
+      "errors": {
+        "HTTP 404: {\"detail\":\"Not Found\"}": 20
+      }
+    },
+    "0x38": {
+      "chain_name": "BNB Smart Chain",
+      "total_tests": 25,
+      "successful_tests": 0,
+      "failed_tests": 25,
+      "success_rate": 0.0,
+      "avg_response_time": 0.21911523818969728,
+      "errors": {
+        "HTTP 404: {\"detail\":\"Not Found\"}": 25
+      }
+    },
+    "0x89": {
+      "chain_name": "Polygon",
+      "total_tests": 20,
+      "successful_tests": 0,
+      "failed_tests": 20,
+      "success_rate": 0.0,
+      "avg_response_time": 0.2255823254585266,
+      "errors": {
+        "HTTP 404: {\"detail\":\"Not Found\"}": 20
+      }
+    },
+    "0xa4b1": {
+      "chain_name": "Arbitrum One",
+      "total_tests": 15,
+      "successful_tests": 0,
+      "failed_tests": 15,
+      "success_rate": 0.0,
+      "avg_response_time": 0.21926094690958658,
+      "errors": {
+        "HTTP 404: {\"detail\":\"Not Found\"}": 15
+      }
+    },
+    "0xa": {
+      "chain_name": "OP Mainnet",
+      "total_tests": 15,
+      "successful_tests": 0,
+      "failed_tests": 15,
+      "success_rate": 0.0,
+      "avg_response_time": 0.22098898887634277,
+      "errors": {
+        "HTTP 404: {\"detail\":\"Not Found\"}": 15
+      }
+    },
+    "0x2105": {
+      "chain_name": "Base",
+      "total_tests": 15,
+      "successful_tests": 0,
+      "failed_tests": 15,
+      "success_rate": 0.0,
+      "avg_response_time": 0.218549378712972,
+      "errors": {
+        "HTTP 404: {\"detail\":\"Not Found\"}": 15
+      }
+    },
+    "0xa86a": {
+      "chain_name": "Avalanche",
+      "total_tests": 10,
+      "successful_tests": 0,
+      "failed_tests": 10,
+      "success_rate": 0.0,
+      "avg_response_time": 0.21218504905700683,
+      "errors": {
+        "HTTP 404: {\"detail\":\"Not Found\"}": 10
+      }
+    },
+    "0x144": {
+      "chain_name": "zkSync Era",
+      "total_tests": 10,
+      "successful_tests": 0,
+      "failed_tests": 10,
+      "success_rate": 0.0,
+      "avg_response_time": 0.21565780639648438,
+      "errors": {
+        "HTTP 404: {\"detail\":\"Not Found\"}": 10
+      }
+    },
+    "0xe708": {
+      "chain_name": "Linea",
+      "total_tests": 10,
+      "successful_tests": 0,
+      "failed_tests": 10,
+      "success_rate": 0.0,
+      "avg_response_time": 0.21754815578460693,
+      "errors": {
+        "HTTP 404: {\"detail\":\"Not Found\"}": 10
+      }
+    },
+    "0x13e31": {
+      "chain_name": "Blast",
+      "total_tests": 10,
+      "successful_tests": 0,
+      "failed_tests": 10,
+      "success_rate": 0.0,
+      "avg_response_time": 0.21809349060058594,
+      "errors": {
+        "HTTP 404: {\"detail\":\"Not Found\"}": 10
+      }
+    },
+    "0xa4ec": {
+      "chain_name": "Celo",
+      "total_tests": 10,
+      "successful_tests": 0,
+      "failed_tests": 10,
+      "success_rate": 0.0,
+      "avg_response_time": 0.21151537895202638,
+      "errors": {
+        "HTTP 404: {\"detail\":\"Not Found\"}": 10
+      }
+    },
+    "0x1388": {
+      "chain_name": "Mantle",
+      "total_tests": 10,
+      "successful_tests": 0,
+      "failed_tests": 10,
+      "success_rate": 0.0,
+      "avg_response_time": 0.2182313919067383,
+      "errors": {
+        "HTTP 404: {\"detail\":\"Not Found\"}": 10
+      }
+    },
+    "0xcc": {
+      "chain_name": "opBNB",
+      "total_tests": 10,
+      "successful_tests": 0,
+      "failed_tests": 10,
+      "success_rate": 0.0,
+      "avg_response_time": 0.21471970081329345,
+      "errors": {
+        "HTTP 404: {\"detail\":\"Not Found\"}": 10
+      }
+    },
+    "0x82750": {
+      "chain_name": "Scroll",
+      "total_tests": 10,
+      "successful_tests": 0,
+      "failed_tests": 10,
+      "success_rate": 0.0,
+      "avg_response_time": 0.21308929920196534,
+      "errors": {
+        "HTTP 404: {\"detail\":\"Not Found\"}": 10
+      }
+    },
+    "0xfa": {
+      "chain_name": "Fantom",
+      "total_tests": 10,
+      "successful_tests": 0,
+      "failed_tests": 10,
+      "success_rate": 0.0,
+      "avg_response_time": 0.2132655620574951,
+      "errors": {
+        "HTTP 404: {\"detail\":\"Not Found\"}": 10
+      }
+    },
+    "0x64": {
+      "chain_name": "Gnosis",
+      "total_tests": 10,
+      "successful_tests": 0,
+      "failed_tests": 10,
+      "success_rate": 0.0,
+      "avg_response_time": 0.21939783096313475,
+      "errors": {
+        "HTTP 404: {\"detail\":\"Not Found\"}": 10
+      }
+    },
+    "0x507": {
+      "chain_name": "Moonbeam",
+      "total_tests": 10,
+      "successful_tests": 0,
+      "failed_tests": 10,
+      "success_rate": 0.0,
+      "avg_response_time": 0.22099609375,
+      "errors": {
+        "HTTP 404: {\"detail\":\"Not Found\"}": 10
+      }
+    },
+    "0x505": {
+      "chain_name": "Moonriver",
+      "total_tests": 10,
+      "successful_tests": 0,
+      "failed_tests": 10,
+      "success_rate": 0.0,
+      "avg_response_time": 0.2116328001022339,
+      "errors": {
+        "HTTP 404: {\"detail\":\"Not Found\"}": 10
+      }
+    },
+    "0x19": {
+      "chain_name": "Cronos",
+      "total_tests": 10,
+      "successful_tests": 0,
+      "failed_tests": 10,
+      "success_rate": 0.0,
+      "avg_response_time": 0.21429674625396727,
+      "errors": {
+        "HTTP 404: {\"detail\":\"Not Found\"}": 10
+      }
+    },
+    "0x7a69": {
+      "chain_name": "Zora",
+      "total_tests": 10,
+      "successful_tests": 0,
+      "failed_tests": 10,
+      "success_rate": 0.0,
+      "avg_response_time": 0.2180100679397583,
+      "errors": {
+        "HTTP 404: {\"detail\":\"Not Found\"}": 10
+      }
+    },
+    "0x1b3": {
+      "chain_name": "Ape Chain",
+      "total_tests": 10,
+      "successful_tests": 0,
+      "failed_tests": 10,
+      "success_rate": 0.0,
+      "avg_response_time": 0.21842260360717775,
+      "errors": {
+        "HTTP 404: {\"detail\":\"Not Found\"}": 10
+      }
+    },
+    "0x2710": {
+      "chain_name": "Morph",
+      "total_tests": 10,
+      "successful_tests": 0,
+      "failed_tests": 10,
+      "success_rate": 0.0,
+      "avg_response_time": 0.21077027320861816,
+      "errors": {
+        "HTTP 404: {\"detail\":\"Not Found\"}": 10
+      }
+    }
+  },
+  "individual_results": [
+    {
+      "chain_id": "0x1",
+      "token_symbol": "ETH",
+      "tx_hash": "0xb6f7576946d0ac04b57a04ca8a8baa3806f6505230a76d3847f047e759f025c3",
+      "success": false,
+      "response_time": 0.9043481349945068,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.25,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x1",
+      "token_symbol": "ETH",
+      "tx_hash": "0x3548a009f5d0bbdeefdd592cc30945fa82ce5c2c96eb4e4641d83d7485f0d214",
+      "success": false,
+      "response_time": 0.9153990745544434,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 2.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x1",
+      "token_symbol": "ETH",
+      "tx_hash": "0xe6f9cdeb61d34333af72fd698cc9e2548f3e081ea5072f4832f408efbe8dad65",
+      "success": false,
+      "response_time": 0.9387710094451904,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.59,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x1",
+      "token_symbol": "ETH",
+      "tx_hash": "0x7950b16aff5fd29d346db910eda2bd2d5e6bfb304e68c4033aac4b23677bf030",
+      "success": false,
+      "response_time": 0.9586217403411865,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 2.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x1",
+      "token_symbol": "ETH",
+      "tx_hash": "0x9cb54025326fdb69547090c1b64093b3100084fa920c2ba9a519a1cd58e315e6",
+      "success": false,
+      "response_time": 0.927415132522583,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.78,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x1",
+      "token_symbol": "ETH",
+      "tx_hash": "0xe829dd9465b9aa52a274910e123e0ab4e0f26d558cebfd3fdd43ccb20d9d3a93",
+      "success": false,
+      "response_time": 0.21454071998596191,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.37,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x1",
+      "token_symbol": "ETH",
+      "tx_hash": "0x211fc6d13fc4aaa25abae186e2e13175d33d2ded5de757dc01dd98d26eb49c90",
+      "success": false,
+      "response_time": 0.21870207786560059,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 2.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x1",
+      "token_symbol": "ETH",
+      "tx_hash": "0xf29bb4cfdd7d29ddc49e847c6eaab5276bb64a4dccbda47f5ca20f5f429e20b9",
+      "success": false,
+      "response_time": 0.21870207786560059,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.94,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x1",
+      "token_symbol": "ETH",
+      "tx_hash": "0x65c9ce00e3a814d34b8083a15292ab6f6a7665cb0b75b32acd2c8a7abce24810",
+      "success": false,
+      "response_time": 0.2237553596496582,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x1",
+      "token_symbol": "ETH",
+      "tx_hash": "0x38ffa66218a0e9a9a5c7d5ee1749f37e60a624249e2ce0f8a744d511d59e5a42",
+      "success": false,
+      "response_time": 0.2120192050933838,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.04,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x1",
+      "token_symbol": "USDC",
+      "tx_hash": "0xfc50325690431a734b1671abe292143e36e5f384b1df3e43a4c7e46d77763e49",
+      "success": false,
+      "response_time": 0.21633076667785645,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.32,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x1",
+      "token_symbol": "USDC",
+      "tx_hash": "0xab9985c9b79cdf36dbca80c55466894e36a8c559e2a5dbc029249b56464181b9",
+      "success": false,
+      "response_time": 0.2565791606903076,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.2,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x1",
+      "token_symbol": "USDC",
+      "tx_hash": "0xf080b85af2bbbdba1bbaf59fa7a83c264b60357d093168cb77b71a8e8e4b8d64",
+      "success": false,
+      "response_time": 0.21077609062194824,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.83,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x1",
+      "token_symbol": "USDC",
+      "tx_hash": "0xbfe1201dd51939eee8a0b8fb3309b99cc66894eee2b99de958df77c2110537e5",
+      "success": false,
+      "response_time": 0.21532058715820312,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.48,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x1",
+      "token_symbol": "USDC",
+      "tx_hash": "0x45a64d74c91893e18d2e2dd07168cbd4931360b35cf051614587793f10ab25c5",
+      "success": false,
+      "response_time": 0.22852778434753418,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 2.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x1",
+      "token_symbol": "USDT",
+      "tx_hash": "0x3bc0849805b9dcbdef6615abd53f0e57d712f34d9e2b938d5c2acab0333788ed",
+      "success": false,
+      "response_time": 0.2068498134613037,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.09,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x1",
+      "token_symbol": "USDT",
+      "tx_hash": "0x4c359d12ffc457e25324cb68bcd0d91ad7bcea91910a0090c5022394e771aa73",
+      "success": false,
+      "response_time": 0.21447181701660156,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 2.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x1",
+      "token_symbol": "USDT",
+      "tx_hash": "0x0a06561379b68f4cf2718ee16851f29c474510f625021f1edd9beb0239940db4",
+      "success": false,
+      "response_time": 0.22099041938781738,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.2,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x1",
+      "token_symbol": "USDT",
+      "tx_hash": "0xbee692d0a79525d5db0d71535f04c07abcf406991dacd3b42f8794e4775bf9c8",
+      "success": false,
+      "response_time": 0.22249460220336914,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.6,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x1",
+      "token_symbol": "USDT",
+      "tx_hash": "0x6d8a669d0af05795ba02720a806ab7113797a35a79fa1bfb9731cd1c2b79b70e",
+      "success": false,
+      "response_time": 0.2068498134613037,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.69,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x38",
+      "token_symbol": "BNB",
+      "tx_hash": "0x2d74407fc29c22848ee475418ce9ef26a2c42e851caba220454f4a4622a58eb0",
+      "success": false,
+      "response_time": 0.2221825122833252,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 2.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x38",
+      "token_symbol": "BNB",
+      "tx_hash": "0x561bf62da18cd744a6592973f612eedad7c49fc443e5858787a38041c222e77e",
+      "success": false,
+      "response_time": 0.23786044120788574,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 2.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x38",
+      "token_symbol": "BNB",
+      "tx_hash": "0x55a2990a025bbb7c88bd6ad004f85f15efc8fb085465094f5c813705123789f4",
+      "success": false,
+      "response_time": 0.2137775421142578,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 2.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x38",
+      "token_symbol": "BNB",
+      "tx_hash": "0xdc4b6c41e514e4fe1a1b3fff645b161a0bfe22f463978c0059b2fb87acf49c2a",
+      "success": false,
+      "response_time": 0.20416522026062012,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.39,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x38",
+      "token_symbol": "BNB",
+      "tx_hash": "0x76e8dd0824cc485fb0382cd40f652049dac2b59ee969fb4302fed22d45ee6f63",
+      "success": false,
+      "response_time": 0.21137690544128418,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 2.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x38",
+      "token_symbol": "BNB",
+      "tx_hash": "0x4b385ee9fc913a116d08aaf3c3976be44fe0d5b270d2df17351b3a934a3b1280",
+      "success": false,
+      "response_time": 0.21447038650512695,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.03,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x38",
+      "token_symbol": "BNB",
+      "tx_hash": "0x7504a2b4650d6f083bf753bbdf1ca614eabddef2126e9960a1c4fc1b9f77ddbf",
+      "success": false,
+      "response_time": 0.21447038650512695,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 2.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x38",
+      "token_symbol": "BNB",
+      "tx_hash": "0x6058026712ee124a32c8abfe93b99abbd3943dcfe1c74531db159bf2c7d3ecad",
+      "success": false,
+      "response_time": 0.21961379051208496,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.67,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x38",
+      "token_symbol": "BNB",
+      "tx_hash": "0x08c4f122c6e61c8118c263ec2e36b3abe2bfe90024e8338491330e4f50673a58",
+      "success": false,
+      "response_time": 0.21961379051208496,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.25,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x38",
+      "token_symbol": "BNB",
+      "tx_hash": "0xf051a7a0f9baba9a572cabc483ea1e05ed366d551bccda3de54fbe3c971a5bd8",
+      "success": false,
+      "response_time": 0.21040749549865723,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.4,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x38",
+      "token_symbol": "USDC",
+      "tx_hash": "0xcbb1c7d2caa2ae7fd0092b669108565e2a0c6163861d1af582b774ff853ba91d",
+      "success": false,
+      "response_time": 0.21947693824768066,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.2,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x38",
+      "token_symbol": "USDC",
+      "tx_hash": "0xd5ef1e1ffbb17d12cf9ce606325f4e0727556299d71532a7d1d61acbd8ecfa3f",
+      "success": false,
+      "response_time": 0.2261500358581543,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.42,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x38",
+      "token_symbol": "USDC",
+      "tx_hash": "0xe7fa9d58ff3ad8d822e4960dec36f0b7772e91630d76c5b3f21f4fbd44d3dcb7",
+      "success": false,
+      "response_time": 0.22056269645690918,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.15,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x38",
+      "token_symbol": "USDC",
+      "tx_hash": "0x872355113011a62848b8a071635f02b5ed1baa8f149d1eb73eb062947bf03f35",
+      "success": false,
+      "response_time": 0.21301651000976562,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 2.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x38",
+      "token_symbol": "USDC",
+      "tx_hash": "0x72c5dec76eb3f7603504925998f8574aa80db90859fdcff012ec00e2b8a67475",
+      "success": false,
+      "response_time": 0.2241218090057373,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 2.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x38",
+      "token_symbol": "USDT",
+      "tx_hash": "0x1289a18b3748f440504e86ed20dfbe8fba2bf7e41d2cf2a4a44d352f07751a87",
+      "success": false,
+      "response_time": 0.23238492012023926,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.14,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x38",
+      "token_symbol": "USDT",
+      "tx_hash": "0xf335214d50689274021c0e43b82390482d82003732d8cf589815458fc85f16a0",
+      "success": false,
+      "response_time": 0.21136474609375,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.86,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x38",
+      "token_symbol": "USDT",
+      "tx_hash": "0x615c60b08e0fd6a18c6665781d476b735d5ca9ca8b5254eb5bae0d5385ffd7c0",
+      "success": false,
+      "response_time": 0.21338987350463867,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 2.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x38",
+      "token_symbol": "USDT",
+      "tx_hash": "0x92963b80b5b6c3851dee1fb848c8193ad1f256f303480f96ac771a6723a3d0cb",
+      "success": false,
+      "response_time": 0.20832443237304688,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.44,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x38",
+      "token_symbol": "USDT",
+      "tx_hash": "0x793a3f874cfe483ecae7200d419b6926c486140a24fee3512c498d08ba2c4f44",
+      "success": false,
+      "response_time": 0.21916580200195312,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 2.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x38",
+      "token_symbol": "BTCB",
+      "tx_hash": "0xd1abbab5f034730e856a972def054af6135c3c05d9151be6f0815e755584586a",
+      "success": false,
+      "response_time": 0.2063157558441162,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 2.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x38",
+      "token_symbol": "BTCB",
+      "tx_hash": "0x655a00c872adfe80676a6b68617d92e079a31d224fee0a848af7f070f95f0857",
+      "success": false,
+      "response_time": 0.231703519821167,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.12,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x38",
+      "token_symbol": "BTCB",
+      "tx_hash": "0x67d4862772b92acd5b04e281ba4e3649fab02ce23a5cf282ca13010d669b31ab",
+      "success": false,
+      "response_time": 0.2515888214111328,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 2.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x38",
+      "token_symbol": "BTCB",
+      "tx_hash": "0x295f91cb6d4449a09538c2bce6ec27bc9c6a56f6a83477050cb243ebc48c6a3d",
+      "success": false,
+      "response_time": 0.21866416931152344,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.36,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x38",
+      "token_symbol": "BTCB",
+      "tx_hash": "0x4f03b0976893fb99ccc7d7e43982039aab7fb83dd8baa1c8bdf867050e0f1657",
+      "success": false,
+      "response_time": 0.21371245384216309,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 2.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x89",
+      "token_symbol": "MATIC",
+      "tx_hash": "0xf6c487ccd1597b7f81b59a80ed66c8add07673714b779c07a2c13b38534f175d",
+      "success": false,
+      "response_time": 0.21741938591003418,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.72,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x89",
+      "token_symbol": "MATIC",
+      "tx_hash": "0xedc5494c4716b72aa65ea5bf35aad0f72fa789307b9e8cedb804fff74797c715",
+      "success": false,
+      "response_time": 0.21500611305236816,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.91,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x89",
+      "token_symbol": "MATIC",
+      "tx_hash": "0x6305aaad07d95a645cb920ff81437f24565af9af9cb3f0d2c48755adaa9f094c",
+      "success": false,
+      "response_time": 0.22910165786743164,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.21,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x89",
+      "token_symbol": "MATIC",
+      "tx_hash": "0xb2e13b90109a19b9aad331002cf7eebfed9ac0f810024a04ad378d629c361b4b",
+      "success": false,
+      "response_time": 0.3405182361602783,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.2,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x89",
+      "token_symbol": "MATIC",
+      "tx_hash": "0x3ba2a96992b3429c38e719608e6fe05778ffcc85a7c01594273fd8f995be32c6",
+      "success": false,
+      "response_time": 0.23012161254882812,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.9,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x89",
+      "token_symbol": "MATIC",
+      "tx_hash": "0x7458f5ef5940e3a03755df64b8ccbbd95c9161c866a5809b1faab048760c3b51",
+      "success": false,
+      "response_time": 0.21866726875305176,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 2.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x89",
+      "token_symbol": "MATIC",
+      "tx_hash": "0xba2b2a5b3e87dd57725ec8b5197889700656d7824b0c856acf5bae3370794040",
+      "success": false,
+      "response_time": 0.20743513107299805,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.81,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x89",
+      "token_symbol": "MATIC",
+      "tx_hash": "0x16ef7f0f5a1381105da523c57d34e99d6995a29a1e83127a7abccb01c7998e10",
+      "success": false,
+      "response_time": 0.21968531608581543,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.8,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x89",
+      "token_symbol": "MATIC",
+      "tx_hash": "0xa80eea95312a750d54cb96876cdf3f71b8fb1dbf8632d29ad4ec8e47d99d35fb",
+      "success": false,
+      "response_time": 0.22516751289367676,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.69,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x89",
+      "token_symbol": "MATIC",
+      "tx_hash": "0xec184733406a2bc195d503ff61de525245c1a22c2850327a44e8613adbc2ede2",
+      "success": false,
+      "response_time": 0.21866726875305176,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.68,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x89",
+      "token_symbol": "USDC",
+      "tx_hash": "0x73762437724aaafc2ac3b0a1d95055da448b001742e5867347e7a389bae72ab4",
+      "success": false,
+      "response_time": 0.2170727252960205,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.19,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x89",
+      "token_symbol": "USDC",
+      "tx_hash": "0xb5abadb249608bfe896558ca682bea7b8f8df6c8eaaba72dc0bbe628a1941c0f",
+      "success": false,
+      "response_time": 0.2170727252960205,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.16,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x89",
+      "token_symbol": "USDC",
+      "tx_hash": "0x1b11cdd0102ec893d146c47deafaf8cb1832d881f41a121e68db6e935c5a41f2",
+      "success": false,
+      "response_time": 0.21909379959106445,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.31,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x89",
+      "token_symbol": "USDC",
+      "tx_hash": "0xf38deb91ea9c1f2a953ea227ee8717534297852a6be7eab9d292acf69e9949d9",
+      "success": false,
+      "response_time": 0.22010397911071777,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.6,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x89",
+      "token_symbol": "USDC",
+      "tx_hash": "0xfd2fbfa189cf41f71c877e9f410c0b24c3e24feb0383e89f244c8d5fea80ab4d",
+      "success": false,
+      "response_time": 0.20815014839172363,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 2.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x89",
+      "token_symbol": "USDT",
+      "tx_hash": "0x0ee2eee29f8356c75bc6b2cde6e27b336c1c3ed17ad87c4945c8442c22c6b76a",
+      "success": false,
+      "response_time": 0.22693467140197754,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.35,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x89",
+      "token_symbol": "USDT",
+      "tx_hash": "0x6a4b26d74f64c5dad4f37555ac06564c61240a898f8539be579ccb70540760fb",
+      "success": false,
+      "response_time": 0.21986079216003418,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 2.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x89",
+      "token_symbol": "USDT",
+      "tx_hash": "0xe521903abc58ffe53f1002e713061811c37f1a0d7fc6b041427a03fbb7131f53",
+      "success": false,
+      "response_time": 0.2188429832458496,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 2.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x89",
+      "token_symbol": "USDT",
+      "tx_hash": "0x40456a2b6c373a6c636fa9d95d84d4d31f70e84d9c81f8c1e53258c1993ea4f5",
+      "success": false,
+      "response_time": 0.2178196907043457,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.81,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x89",
+      "token_symbol": "USDT",
+      "tx_hash": "0x5240b92320f69241ebb98c2fbb7a87b0c9d748f4d34be621e6378e183644fda9",
+      "success": false,
+      "response_time": 0.22490549087524414,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.91,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0xa4b1",
+      "token_symbol": "ETH",
+      "tx_hash": "0x91111b1ac370c2fe536e6ede5a1ed8d6f75da9cdc605d724bb8d318cf474a6fd",
+      "success": false,
+      "response_time": 0.21808505058288574,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.17,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0xa4b1",
+      "token_symbol": "ETH",
+      "tx_hash": "0xc6e15bf540ac71c8e4a1cb4cacdd52b6d1c5e92ae944f9d7b072a190d3a1d238",
+      "success": false,
+      "response_time": 0.21074962615966797,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.68,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0xa4b1",
+      "token_symbol": "ETH",
+      "tx_hash": "0xe5290152e1727ff8d1a761cd8d4fbbc2b48d3a54fc278c638795fc8c38b7d235",
+      "success": false,
+      "response_time": 0.22161650657653809,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.15,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0xa4b1",
+      "token_symbol": "ETH",
+      "tx_hash": "0x51a887e7513b063ecea763ea7691471a4d8486b87fd60fd6a85f31a6b046c360",
+      "success": false,
+      "response_time": 0.22161650657653809,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.27,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0xa4b1",
+      "token_symbol": "ETH",
+      "tx_hash": "0xdc280e89f572d09d6f3718b2bec1f791a77d4b4b1de4dabf6bf0fd2861e7332c",
+      "success": false,
+      "response_time": 0.22575139999389648,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.34,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0xa4b1",
+      "token_symbol": "ETH",
+      "tx_hash": "0x4fd4778c215a203ff980f4a1a2c4fcae4e0277cb511141bb9abbb9ab3496d2d3",
+      "success": false,
+      "response_time": 0.23002099990844727,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.03,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0xa4b1",
+      "token_symbol": "ETH",
+      "tx_hash": "0xdb74fa00255513811206dd8e0c0ba27f187934b7188b53a746359d088f6606a3",
+      "success": false,
+      "response_time": 0.21781635284423828,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.63,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0xa4b1",
+      "token_symbol": "ETH",
+      "tx_hash": "0x38014ef34fa91891bfdf12ed979816937eaf19eac8bfac785196afa0f056e78a",
+      "success": false,
+      "response_time": 0.22749543190002441,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.07,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0xa4b1",
+      "token_symbol": "ETH",
+      "tx_hash": "0x79cbb2a3a697ddec11ccec22fd8aab35ab2e57aa5295512a18659e44eb3b8e62",
+      "success": false,
+      "response_time": 0.21105241775512695,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.74,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0xa4b1",
+      "token_symbol": "ETH",
+      "tx_hash": "0xa2b7d2ad268eb728b693da9960d5d75dabe8c8a82955f5962987af4b7ef90ebf",
+      "success": false,
+      "response_time": 0.21105241775512695,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.35,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0xa4b1",
+      "token_symbol": "USDC",
+      "tx_hash": "0x6db8cd84933f1c7813f471aba2f0d584b28ed0cfb8fa0ee7e98d4093f73308c2",
+      "success": false,
+      "response_time": 0.22031235694885254,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.57,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0xa4b1",
+      "token_symbol": "USDC",
+      "tx_hash": "0x42bf25eba94db94dbe660fc8028fa3217c1fc41f42aedd898b207d37e33bfd65",
+      "success": false,
+      "response_time": 0.23322486877441406,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.9,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0xa4b1",
+      "token_symbol": "USDC",
+      "tx_hash": "0x28d3e6f00bbfb5d7671cee74a670dcd643d18e8bc9b35c10ca434ae74bbf8ec2",
+      "success": false,
+      "response_time": 0.2133009433746338,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.93,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0xa4b1",
+      "token_symbol": "USDC",
+      "tx_hash": "0x2e94139b453e0aefe9911c695853db7512ddbc74dd73947fc30a2a3d3cd794b5",
+      "success": false,
+      "response_time": 0.22031235694885254,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.37,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0xa4b1",
+      "token_symbol": "USDC",
+      "tx_hash": "0x8971bab2b5c263d4b0dc0c6049081592c2911987362256d28a21c00ee53356ca",
+      "success": false,
+      "response_time": 0.20650696754455566,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.72,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0xa",
+      "token_symbol": "ETH",
+      "tx_hash": "0xe124a1ca32099cdb1993a92519f1de4fc638e0b69946ee777a05f4da6a6f43d8",
+      "success": false,
+      "response_time": 0.2029273509979248,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 2.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0xa",
+      "token_symbol": "ETH",
+      "tx_hash": "0xee42905f16c62bff5ab9061759559c9c4fccdfc517d35d6bd3f8a65c2884de8f",
+      "success": false,
+      "response_time": 0.21162962913513184,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 2.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0xa",
+      "token_symbol": "ETH",
+      "tx_hash": "0x53c9c279f1a35a0dfc19889982537e63c44951bb2e52e4524875505124095386",
+      "success": false,
+      "response_time": 0.21467804908752441,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.39,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0xa",
+      "token_symbol": "ETH",
+      "tx_hash": "0xb232be5499bc63bf764a95f0c8f01c8a2f6d01bb6c1be800e7997c646c19b716",
+      "success": false,
+      "response_time": 0.22202134132385254,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.24,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0xa",
+      "token_symbol": "ETH",
+      "tx_hash": "0xa9052b345cf770f856ae788c1a0fddac65f2f2f396b1332ac09aa1aa4e640505",
+      "success": false,
+      "response_time": 0.21997714042663574,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.11,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0xa",
+      "token_symbol": "ETH",
+      "tx_hash": "0x51e7e69fb562e66a6ab8ddb14970aa1a9a1ca17dc73150ef27b5c8791881f24e",
+      "success": false,
+      "response_time": 0.33657217025756836,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.57,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0xa",
+      "token_symbol": "ETH",
+      "tx_hash": "0x985d3874109c80dfea52cc3f18a789a2cbdb1d0026c48b494fb227bcc0e30287",
+      "success": false,
+      "response_time": 0.21519708633422852,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 2.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0xa",
+      "token_symbol": "ETH",
+      "tx_hash": "0xa6af0fe4494cb46536985da6e85ba91affac696719fe026480160a1da42b0763",
+      "success": false,
+      "response_time": 0.19416356086730957,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.22,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0xa",
+      "token_symbol": "ETH",
+      "tx_hash": "0xee14453ff50a22b56c48cf3f47ace3db3a64fd1b384a622b9be8d6f9500cb311",
+      "success": false,
+      "response_time": 0.2242598533630371,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.28,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0xa",
+      "token_symbol": "ETH",
+      "tx_hash": "0x3558bc20588380606832f36f9f2274166b0f9a4231c97b186c13f94f5c45fc36",
+      "success": false,
+      "response_time": 0.2126631736755371,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 2.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0xa",
+      "token_symbol": "USDC",
+      "tx_hash": "0x85c1450d341f1eaf4c02cae815b7cab90a159c50e12739d9eb82af2aad24f562",
+      "success": false,
+      "response_time": 0.21059513092041016,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.28,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0xa",
+      "token_symbol": "USDC",
+      "tx_hash": "0x2ea61955f2933ad489821d2486c38aec5c2232e6a8913ca06305557e74d20598",
+      "success": false,
+      "response_time": 0.2298274040222168,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.34,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0xa",
+      "token_symbol": "USDC",
+      "tx_hash": "0xd70f73acc114898b6591927ab6ef9ec5ead710fa273750b86aa6dd8eb3d9df37",
+      "success": false,
+      "response_time": 0.2081284523010254,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.55,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0xa",
+      "token_symbol": "USDC",
+      "tx_hash": "0x0bb5a241a32fd64a23e96ce21e6e69a971375a646d508e624d5b3d872831e64f",
+      "success": false,
+      "response_time": 0.20406603813171387,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.5,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0xa",
+      "token_symbol": "USDC",
+      "tx_hash": "0xb1b42da291f1b07c0fb57279cd89e36baecc6e4083adae53c618862de9dc8e52",
+      "success": false,
+      "response_time": 0.2081284523010254,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 2.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x2105",
+      "token_symbol": "ETH",
+      "tx_hash": "0xb684833ae28442bbac9ca97e390388d1bd20ba843b2a3317f9faa9ae2731bfc6",
+      "success": false,
+      "response_time": 0.22613024711608887,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.8,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x2105",
+      "token_symbol": "ETH",
+      "tx_hash": "0xf17a14ee8f975b01fcdf12063042f0b73051fa68deab56a8217e5de91aca0d83",
+      "success": false,
+      "response_time": 0.21131420135498047,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 2.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x2105",
+      "token_symbol": "ETH",
+      "tx_hash": "0x6c130e8a81d7b8248857aea35356f717463ff911f4f9f34511b28df980399205",
+      "success": false,
+      "response_time": 0.21384000778198242,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 2.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x2105",
+      "token_symbol": "ETH",
+      "tx_hash": "0xc3e62f6ee43a362a9c21e88d5f8edc152cba02ba3a70f418a746bc96617dd2ed",
+      "success": false,
+      "response_time": 0.21485304832458496,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 2.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x2105",
+      "token_symbol": "ETH",
+      "tx_hash": "0x84b05c6785eaceee37664c000912fb954241ae9a2b84d7e908e96af5454ba578",
+      "success": false,
+      "response_time": 0.22613024711608887,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x2105",
+      "token_symbol": "ETH",
+      "tx_hash": "0x241e1c4cd93cc8c21e8edb7cd90d8011b694bd8355ab21d53532810ea33916f4",
+      "success": false,
+      "response_time": 0.22636198997497559,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.71,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x2105",
+      "token_symbol": "ETH",
+      "tx_hash": "0xc002b54adec5b6b787b295977cd5026e404dcd1e592a48916d95bdd243702ba4",
+      "success": false,
+      "response_time": 0.2041490077972412,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 2.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x2105",
+      "token_symbol": "ETH",
+      "tx_hash": "0x1ca4627a1a337adb5b00c3561503a3f88c8cfa19cb10569a666f299ac70ec920",
+      "success": false,
+      "response_time": 0.20718622207641602,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 2.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x2105",
+      "token_symbol": "ETH",
+      "tx_hash": "0x6e30e3e16e532651f8929ec6b78f93a9164aa848025a1bf70bbfb065a50b510f",
+      "success": false,
+      "response_time": 0.21113371849060059,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 2.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x2105",
+      "token_symbol": "ETH",
+      "tx_hash": "0x2ddbf9fdbbae5ec3bebb2334bff00042bf0da074b62d9eb1dd63e5820eaa0027",
+      "success": false,
+      "response_time": 0.228895902633667,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 2.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x2105",
+      "token_symbol": "USDC",
+      "tx_hash": "0x14025d581d3a129f212fa95a8e6fe4e64334d0537bfe30b15ba01df2daa48ef7",
+      "success": false,
+      "response_time": 0.21724295616149902,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 2.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x2105",
+      "token_symbol": "USDC",
+      "tx_hash": "0x5d5f4ba415d08de73ef0f14533b74b2928a37035480f11de9c2f3e65faa4157d",
+      "success": false,
+      "response_time": 0.22273778915405273,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 2.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x2105",
+      "token_symbol": "USDC",
+      "tx_hash": "0xeee550d464092677f8c7d1cdf328090eb7dbeb2181e32912392f3fb430d14201",
+      "success": false,
+      "response_time": 0.23293447494506836,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.73,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x2105",
+      "token_symbol": "USDC",
+      "tx_hash": "0x5c24a37f708ae27c1e2396011828098a940c9a31926e7246e3a6629288a10152",
+      "success": false,
+      "response_time": 0.20651984214782715,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.69,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x2105",
+      "token_symbol": "USDC",
+      "tx_hash": "0x9a219046c8a14ae5bf50cba2a64e7af4975b7eecdf32f1eeb9a0f2690f560437",
+      "success": false,
+      "response_time": 0.22881102561950684,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.91,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0xa86a",
+      "token_symbol": "AVAX",
+      "tx_hash": "0x74a2b499d268c2c98b965c2bba647c0da434082f5d8d9b8c289fcc76240487b3",
+      "success": false,
+      "response_time": 0.21153521537780762,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 2.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0xa86a",
+      "token_symbol": "AVAX",
+      "tx_hash": "0x8de68c9d235d20bbec9b0669a0f0ae95fdeda4865b879db01a4db2aaceab0f39",
+      "success": false,
+      "response_time": 0.2187023162841797,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.05,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0xa86a",
+      "token_symbol": "AVAX",
+      "tx_hash": "0x7e24c4b196fbb08a82e8418ea22c922c8fb986132d3226b5338aab2c7a93032f",
+      "success": false,
+      "response_time": 0.19587373733520508,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.66,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0xa86a",
+      "token_symbol": "AVAX",
+      "tx_hash": "0x7262d5fdf9cf7b6e46cf07a43d375edaf63c583eec092a7d6bed80fb78bceae1",
+      "success": false,
+      "response_time": 0.21358537673950195,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.36,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0xa86a",
+      "token_symbol": "AVAX",
+      "tx_hash": "0x30aaadb83852645912146e5dd8d220f4171dc4d0e6e9feaa54b803849c05d74d",
+      "success": false,
+      "response_time": 0.23219752311706543,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 2.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0xa86a",
+      "token_symbol": "AVAX",
+      "tx_hash": "0xbf2d15091b18293c96b34a6c1c51581a832930129e1e4f1e455e0498da427459",
+      "success": false,
+      "response_time": 0.2260890007019043,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.62,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0xa86a",
+      "token_symbol": "AVAX",
+      "tx_hash": "0xc0acb396fdfdddb45c1b826daab9f4e2ebf2582f6b22cd2cc978d933671a6ad7",
+      "success": false,
+      "response_time": 0.21195578575134277,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.69,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0xa86a",
+      "token_symbol": "AVAX",
+      "tx_hash": "0x371192fbf6233e1dc8a4da8a3509f23b72ae8d55cc7647716ccc9fa7501ce67e",
+      "success": false,
+      "response_time": 0.1940624713897705,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.24,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0xa86a",
+      "token_symbol": "AVAX",
+      "tx_hash": "0x3077719444453bf922f4c90b25e6f177f2a6f40a7c61edf0422f7c34e58fe2c6",
+      "success": false,
+      "response_time": 0.21602249145507812,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.77,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0xa86a",
+      "token_symbol": "AVAX",
+      "tx_hash": "0x9db320835873476294ffcdaf8b4c47f6bf0c8a063036866d42a266456ae1cf6f",
+      "success": false,
+      "response_time": 0.2018265724182129,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 2.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x144",
+      "token_symbol": "ETH",
+      "tx_hash": "0x32f4b5050e7a85e95ca31667aee3df8de6674872f62b424d0c7919ca620301e0",
+      "success": false,
+      "response_time": 0.20494747161865234,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.59,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x144",
+      "token_symbol": "ETH",
+      "tx_hash": "0x1218825d13045b6fbac62123393f299a934c96434872ff769d3889bdfba92264",
+      "success": false,
+      "response_time": 0.2127232551574707,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.06,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x144",
+      "token_symbol": "ETH",
+      "tx_hash": "0x9fd4597b8946d6e188250e98acad45f8902ab40a3cddb6c3be0139724a8c7aad",
+      "success": false,
+      "response_time": 0.2064511775970459,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.53,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x144",
+      "token_symbol": "ETH",
+      "tx_hash": "0x05384baa6e1569a71bee47c16850d3bc618880836caa51ba210bde436a198379",
+      "success": false,
+      "response_time": 0.22078585624694824,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 2.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x144",
+      "token_symbol": "ETH",
+      "tx_hash": "0x2ec45218ba944871f45c930433f02c804b1e937c54a6911f13bc3f8c5a7a27e3",
+      "success": false,
+      "response_time": 0.21474838256835938,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.03,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x144",
+      "token_symbol": "ETH",
+      "tx_hash": "0x793f1061cb1c3bbeaca8a30b370d7e19defc85d3ae4957c82df1ddb0d20dd103",
+      "success": false,
+      "response_time": 0.21934103965759277,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 2.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x144",
+      "token_symbol": "ETH",
+      "tx_hash": "0xceba47f0389154c3c74a3885429235734163bd6a6baae0cd10466f860a820691",
+      "success": false,
+      "response_time": 0.2168257236480713,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.02,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x144",
+      "token_symbol": "ETH",
+      "tx_hash": "0x5ab7f34e65eb14ac2e798af8c93aef7cdc0605dda8c749255dddd17983c36fbe",
+      "success": false,
+      "response_time": 0.2363736629486084,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.9,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x144",
+      "token_symbol": "ETH",
+      "tx_hash": "0x54e17f7fde332082299a26066878717fe079b408728a0404ef6ab866f5f85f2a",
+      "success": false,
+      "response_time": 0.21269845962524414,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.71,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x144",
+      "token_symbol": "ETH",
+      "tx_hash": "0xe0660a855d3cd3fecd50ecc7ce24a7625005d14dcaa15d3a5a179682112ca8b8",
+      "success": false,
+      "response_time": 0.21168303489685059,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.38,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0xe708",
+      "token_symbol": "ETH",
+      "tx_hash": "0xac1b1f5bb932666b4f547519fc5b01059490889b5a97eddd9a69d59505bad543",
+      "success": false,
+      "response_time": 0.2162764072418213,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.17,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0xe708",
+      "token_symbol": "ETH",
+      "tx_hash": "0x06b41aad1927c5c3910d14d597e84f702cd094ec3128a348e58bfcc5529d28c1",
+      "success": false,
+      "response_time": 0.22880959510803223,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.11,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0xe708",
+      "token_symbol": "ETH",
+      "tx_hash": "0x469c9cf5f0bd9fd092df477b5ca67d86d18530172ad8224586e067bfbbd8486d",
+      "success": false,
+      "response_time": 0.21100449562072754,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.05,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0xe708",
+      "token_symbol": "ETH",
+      "tx_hash": "0xd777f106bda7fef3b8285e1ea82f2e0956c3a8b759b0a45c003cb8c5c971f1fb",
+      "success": false,
+      "response_time": 0.23236918449401855,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.51,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0xe708",
+      "token_symbol": "ETH",
+      "tx_hash": "0xb091ff14887e9da44b601ae52e01fe171dadc02113ebc11fcce4faac9323f49f",
+      "success": false,
+      "response_time": 0.2165524959564209,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.08,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0xe708",
+      "token_symbol": "ETH",
+      "tx_hash": "0x852e515cac79c6066abd59e07d72cb5f7ac671b1f2beea7268567a0c57e661af",
+      "success": false,
+      "response_time": 0.2111530303955078,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 2.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0xe708",
+      "token_symbol": "ETH",
+      "tx_hash": "0x58962df55df5f8f9e3bd56f77c0b435da545b116291f9ee5555bc98c2d4c830e",
+      "success": false,
+      "response_time": 0.21982073783874512,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.85,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0xe708",
+      "token_symbol": "ETH",
+      "tx_hash": "0x16e30b89f2e554d63ae3362a6e0e6d5870bf7f3a3aaa89baa4dce1bfe8eda20c",
+      "success": false,
+      "response_time": 0.21216249465942383,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.36,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0xe708",
+      "token_symbol": "ETH",
+      "tx_hash": "0xa9991d013302987fc24024479f12ab2214904e49119d449e2aeb3f401a12ac02",
+      "success": false,
+      "response_time": 0.20272278785705566,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.08,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0xe708",
+      "token_symbol": "ETH",
+      "tx_hash": "0x478e2b071b7134d5f621781fc2defc87b6f7da789d2a1dc69943a73ca436b204",
+      "success": false,
+      "response_time": 0.2246103286743164,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.23,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x13e31",
+      "token_symbol": "ETH",
+      "tx_hash": "0xa23477cd4d176643148e9757689b0f3e34d7882f93833628a0083d6130a6c084",
+      "success": false,
+      "response_time": 0.2177417278289795,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 2.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x13e31",
+      "token_symbol": "ETH",
+      "tx_hash": "0x396d9caf1df63dc0bbbb562c865c36bb23fd5a24c15343806e8cd9808e8f77c3",
+      "success": false,
+      "response_time": 0.21306228637695312,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 2.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x13e31",
+      "token_symbol": "ETH",
+      "tx_hash": "0xac1151da038557ee99f8703ba441316eec619ed7c2858d23c84f2a943ca2e41d",
+      "success": false,
+      "response_time": 0.22179341316223145,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.49,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x13e31",
+      "token_symbol": "ETH",
+      "tx_hash": "0x90f5d0aac472cb0616fd672abd78220919c0d5d6189e29b75de93e30f86dc905",
+      "success": false,
+      "response_time": 0.2197723388671875,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 2.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x13e31",
+      "token_symbol": "ETH",
+      "tx_hash": "0xa81b9518db023372e22c33ffd682069eddd2d7cdd2285bdc17ec7b72275e57c6",
+      "success": false,
+      "response_time": 0.22381925582885742,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 2.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x13e31",
+      "token_symbol": "ETH",
+      "tx_hash": "0x5b3116aac25d6654526881baff56f6fba7a2ad34a8e0515f3aec9e84f278159f",
+      "success": false,
+      "response_time": 0.2101447582244873,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.09,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x13e31",
+      "token_symbol": "ETH",
+      "tx_hash": "0xa28e7fad8c0fa3ede4bbd61358f94b6c9ae8d1b59b6b8b3d5dfb0bf7b7b8cefe",
+      "success": false,
+      "response_time": 0.21851325035095215,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 2.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x13e31",
+      "token_symbol": "ETH",
+      "tx_hash": "0x3a0d240281ca0c4680d2187c2fcfd07334b1ab8bf98ff07822dfd988c8d80c5d",
+      "success": false,
+      "response_time": 0.21629643440246582,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.39,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x13e31",
+      "token_symbol": "ETH",
+      "tx_hash": "0xa3aeb4e70fbd4ef11c19768ca57055f2e4045902b4f542ebe2a7e3e7711c9ef5",
+      "success": false,
+      "response_time": 0.22861552238464355,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 2.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x13e31",
+      "token_symbol": "ETH",
+      "tx_hash": "0x8fbaa059c231a8d63c94be84cf4aab618bf8a680d29155b42a425a9d231bc649",
+      "success": false,
+      "response_time": 0.21117591857910156,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.3,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0xa4ec",
+      "token_symbol": "CELO",
+      "tx_hash": "0x5d238f4fc8df40e5625caa889e369657e66f394fbf3ca2aae2b9a5fb9c7c5392",
+      "success": false,
+      "response_time": 0.21199631690979004,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 2.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0xa4ec",
+      "token_symbol": "CELO",
+      "tx_hash": "0xcd81caea7a9a4e049c3bea429dea0851697bfd4668e94f02eea81fe4e296cb94",
+      "success": false,
+      "response_time": 0.2039015293121338,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 2.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0xa4ec",
+      "token_symbol": "CELO",
+      "tx_hash": "0xac59d01149a20257e3ea80b3f90272c7e3f10ef5c17b3feefbf3aeb643a528e6",
+      "success": false,
+      "response_time": 0.2140181064605713,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.99,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0xa4ec",
+      "token_symbol": "CELO",
+      "tx_hash": "0x1c9b71ec362658202f59402469c94b5c7a5cdc45313888e9deaa1da5980f2439",
+      "success": false,
+      "response_time": 0.2241535186767578,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.71,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0xa4ec",
+      "token_symbol": "CELO",
+      "tx_hash": "0x6540a13524a39813fa6e7d963e37aa8396db88aa2b0ec61e9e22938e6a8ec5c8",
+      "success": false,
+      "response_time": 0.2049093246459961,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.94,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0xa4ec",
+      "token_symbol": "CELO",
+      "tx_hash": "0x2e6d8d7ac2ffe775b6a93b1e121588915805e6140dc393a218b040a9eefa1077",
+      "success": false,
+      "response_time": 0.21724534034729004,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 2.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0xa4ec",
+      "token_symbol": "CELO",
+      "tx_hash": "0x69d88985a1015005fc3e7c297b84373ec3913d1f9ffe71529040bcf9a52bf5b6",
+      "success": false,
+      "response_time": 0.2221372127532959,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.38,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0xa4ec",
+      "token_symbol": "CELO",
+      "tx_hash": "0x62ad3b359349508a13697b0cca1653017ce60dda47625eb2dc1fdc433e09a87f",
+      "success": false,
+      "response_time": 0.20857906341552734,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.34,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0xa4ec",
+      "token_symbol": "CELO",
+      "tx_hash": "0xc1fd4e22e9ec4973ae8891b99b26a5b7ab2edc7c5ba05f89624322fb84510aca",
+      "success": false,
+      "response_time": 0.20857906341552734,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.26,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0xa4ec",
+      "token_symbol": "CELO",
+      "tx_hash": "0x84c3c867a46e4cc36e34a88d7da8ba68a9e1efa462f7202634800ccfdcfdda9c",
+      "success": false,
+      "response_time": 0.19963431358337402,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 2.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x1388",
+      "token_symbol": "MNT",
+      "tx_hash": "0x0eb6d3330f71863452cf06892fd4ea54d8ba66a1645b2484310feac8c82eca01",
+      "success": false,
+      "response_time": 0.21982669830322266,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.53,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x1388",
+      "token_symbol": "MNT",
+      "tx_hash": "0xdc1260c26b385ec67cf01ac1f857c761398db189eebfda1ebaa123cbc27ee59d",
+      "success": false,
+      "response_time": 0.21982669830322266,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.43,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x1388",
+      "token_symbol": "MNT",
+      "tx_hash": "0x712d707ba5d3fdff93cd44e9541bba77161193675764a598e58fe263389f22e5",
+      "success": false,
+      "response_time": 0.22388148307800293,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 2.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x1388",
+      "token_symbol": "MNT",
+      "tx_hash": "0x8cf870a4ca0dfa45f920fc611a409a0fac8683cc9cab8ad53fcc22443d4c2a1c",
+      "success": false,
+      "response_time": 0.20402240753173828,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.27,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x1388",
+      "token_symbol": "MNT",
+      "tx_hash": "0x3f8aceb336e0dffb91e7c5c30ebf66d8ea937ba9f766a29eb5acc5e6187dff50",
+      "success": false,
+      "response_time": 0.22843098640441895,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.45,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x1388",
+      "token_symbol": "MNT",
+      "tx_hash": "0x22c6d65d1d2cb344e00bcb2ba26cce50ac889d7b967f01e708f09ff74a0fb38d",
+      "success": false,
+      "response_time": 0.21445703506469727,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.21,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x1388",
+      "token_symbol": "MNT",
+      "tx_hash": "0x12000be2585f91a381113a261b405f3f1a0f271d0470e6d5fd1af98cf2de59e2",
+      "success": false,
+      "response_time": 0.21041321754455566,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.87,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x1388",
+      "token_symbol": "MNT",
+      "tx_hash": "0xb8e3b93e6af64f0078ffb38b32ffc01500f445eb314461d56a2a6b49ae089c9b",
+      "success": false,
+      "response_time": 0.21041321754455566,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.77,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x1388",
+      "token_symbol": "MNT",
+      "tx_hash": "0xcc7b22c407d77759f42eb6964266df114c3e702f4d94be72a2730adf0a3ebfa2",
+      "success": false,
+      "response_time": 0.21799254417419434,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 2.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x1388",
+      "token_symbol": "MNT",
+      "tx_hash": "0xfd7ece5ebd04d85314b1d87d582d6037acd899116fce169fba7b986ade20441d",
+      "success": false,
+      "response_time": 0.23304963111877441,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 2.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0xcc",
+      "token_symbol": "BNB",
+      "tx_hash": "0x037b8f54a89896d33de88a6fec951cbf135111f812ce729b082e71f1b4f72752",
+      "success": false,
+      "response_time": 0.22362518310546875,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.35,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0xcc",
+      "token_symbol": "BNB",
+      "tx_hash": "0xf3d76540b348de6fe15cff90c593c36c4f89ab1b99183647729d04e1d5d17f2a",
+      "success": false,
+      "response_time": 0.2312178611755371,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.96,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0xcc",
+      "token_symbol": "BNB",
+      "tx_hash": "0x8267894fc27cd3661ae8d08fd5895a9fe1e5b18caadea053df938d5f74e3abe6",
+      "success": false,
+      "response_time": 0.19364285469055176,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 2.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0xcc",
+      "token_symbol": "BNB",
+      "tx_hash": "0x3f159893b99994a9beb772bf4fdbde830c60bde7e6f32a41078729669a23888c",
+      "success": false,
+      "response_time": 0.20885419845581055,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.9,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0xcc",
+      "token_symbol": "BNB",
+      "tx_hash": "0x8b8dab1a226321258a8a7f3f211721106635cd02a32e3e5b2ecb56b845e27e5a",
+      "success": false,
+      "response_time": 0.207350492477417,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.42,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0xcc",
+      "token_symbol": "BNB",
+      "tx_hash": "0x137f63fd14b20affb975fd7c117766556a8ac54ecdf9d237601f6dde20271ff0",
+      "success": false,
+      "response_time": 0.21485066413879395,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 2.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0xcc",
+      "token_symbol": "BNB",
+      "tx_hash": "0x781da1785a4df1f8c439728159480233300772d91eb8ae0941d0858ca85d286f",
+      "success": false,
+      "response_time": 0.22909021377563477,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.53,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0xcc",
+      "token_symbol": "BNB",
+      "tx_hash": "0x68fe0d865dc067474d34eca11f0c4ef41c30571d1773cdef5dea6cc1b8fff648",
+      "success": false,
+      "response_time": 0.21593713760375977,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.23,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0xcc",
+      "token_symbol": "BNB",
+      "tx_hash": "0x09c22b9257269da4e00ba53182dd277651655b47af065dc0d22a95ab091920a2",
+      "success": false,
+      "response_time": 0.21897268295288086,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.76,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0xcc",
+      "token_symbol": "BNB",
+      "tx_hash": "0x284e0912673703f285f8dc267f1f9ab88649aa64c288267934bcb56cc96f8d3a",
+      "success": false,
+      "response_time": 0.20365571975708008,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.15,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x82750",
+      "token_symbol": "ETH",
+      "tx_hash": "0xd8f96129f149d57dfbb77eeda6caf5be92bd7c4be379ba41269022bc729f706b",
+      "success": false,
+      "response_time": 0.21902084350585938,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 2.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x82750",
+      "token_symbol": "ETH",
+      "tx_hash": "0xbe6e3c75c18560f516e518ea824eabc3e51f94870130aab3fc5de04a89900abc",
+      "success": false,
+      "response_time": 0.20309805870056152,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.62,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x82750",
+      "token_symbol": "ETH",
+      "tx_hash": "0x92fdf00b35dd84e04262306174414c76df5a1511ebede6aa1c20333b7c6b9b0d",
+      "success": false,
+      "response_time": 0.21370744705200195,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 2.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x82750",
+      "token_symbol": "ETH",
+      "tx_hash": "0xace641958e53ffbc11939fa5b13bbf5259a8b124d2b8c589c873e2a11368662d",
+      "success": false,
+      "response_time": 0.21573615074157715,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.42,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x82750",
+      "token_symbol": "ETH",
+      "tx_hash": "0xf6299d75eeb767a9f67b5125c9f3db3655ec824b8e4e5447f015ee2315e7c803",
+      "success": false,
+      "response_time": 0.22207164764404297,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 2.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x82750",
+      "token_symbol": "ETH",
+      "tx_hash": "0xfb2339f87b5abde337a0769548b78a4991f55ed4ad04a22fbb1569f7c25a3c9e",
+      "success": false,
+      "response_time": 0.2162001132965088,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.72,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x82750",
+      "token_symbol": "ETH",
+      "tx_hash": "0x076998678844ee1c71c9c405c517dc6b4a6d527d36eb235cb75584aabf4fe973",
+      "success": false,
+      "response_time": 0.2121572494506836,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.16,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x82750",
+      "token_symbol": "ETH",
+      "tx_hash": "0xaf5a8eb649cfe199213bb5965903b67b275302f813231a0a1695b3764045b394",
+      "success": false,
+      "response_time": 0.22304797172546387,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 2.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x82750",
+      "token_symbol": "ETH",
+      "tx_hash": "0x5551886d89184a29a5e2f4898818c0bd661f4096fee6e640e8dc676676028518",
+      "success": false,
+      "response_time": 0.2086043357849121,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 2.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x82750",
+      "token_symbol": "ETH",
+      "tx_hash": "0xf43aaef0409a7315443b2541eee7c883755f5d5bc07ef9e349c881fe2f5a45eb",
+      "success": false,
+      "response_time": 0.197249174118042,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.89,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0xfa",
+      "token_symbol": "FTM",
+      "tx_hash": "0xe8bf181db4dd2d0a4f11a9efbb5332e1a5e0851c06f76467ec923a230e0b9120",
+      "success": false,
+      "response_time": 0.22174811363220215,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 2.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0xfa",
+      "token_symbol": "FTM",
+      "tx_hash": "0x912c73329be81e245dc68919dfa193b661732866292bba69667d27f455e6f403",
+      "success": false,
+      "response_time": 0.22826385498046875,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 2.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0xfa",
+      "token_symbol": "FTM",
+      "tx_hash": "0x17a89cb37b293e8e254c681a22e622b126cd1c1f9b2cdd49b1e47e9d71171d71",
+      "success": false,
+      "response_time": 0.2161121368408203,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.11,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0xfa",
+      "token_symbol": "FTM",
+      "tx_hash": "0x6db20059848637421799de4d59a0dfbcdf9f64d8150b228807a395c74593fb27",
+      "success": false,
+      "response_time": 0.20935463905334473,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 2.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0xfa",
+      "token_symbol": "FTM",
+      "tx_hash": "0x9f5871945a3fa03ae94558421652cf72db904048a3467f2aec499d66e132b462",
+      "success": false,
+      "response_time": 0.20531964302062988,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.52,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0xfa",
+      "token_symbol": "FTM",
+      "tx_hash": "0xb811ae076b1137a7e3edc86a5ba1d1fa789efb6f805147577e2edc9a7a7efcd6",
+      "success": false,
+      "response_time": 0.1990959644317627,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 2.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0xfa",
+      "token_symbol": "FTM",
+      "tx_hash": "0x7f427d6686ed1f5607a75273c3992c332c62e3dc476fd603e9bcecbd56780bce",
+      "success": false,
+      "response_time": 0.21505045890808105,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.93,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0xfa",
+      "token_symbol": "FTM",
+      "tx_hash": "0xf5d5005ba9a603fcb0433bc4c09562577600e4ab9aebea5b60beccd1b94fe208",
+      "success": false,
+      "response_time": 0.21505045890808105,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 2.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0xfa",
+      "token_symbol": "FTM",
+      "tx_hash": "0xa4721733a36e395aef976e207641d80b212e2541508edf7e9c96da6aba73a83e",
+      "success": false,
+      "response_time": 0.21505045890808105,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.27,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0xfa",
+      "token_symbol": "FTM",
+      "tx_hash": "0xe2a3f824b7ed629d4d1dfa778f5329c1271a184e11cf34c5850cbfbdf3e779a7",
+      "success": false,
+      "response_time": 0.2076098918914795,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.88,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x64",
+      "token_symbol": "xDAI",
+      "tx_hash": "0x59713396bc514b8500d5ef702db4984a67a02b7147e4ab9bc3ee2b597021bdb6",
+      "success": false,
+      "response_time": 0.22599458694458008,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.44,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x64",
+      "token_symbol": "xDAI",
+      "tx_hash": "0x8ba9a879254c1350266a7f31633f5bd38b22e7931b9ab67d6955849b64c4e855",
+      "success": false,
+      "response_time": 0.2219536304473877,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 2.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x64",
+      "token_symbol": "xDAI",
+      "tx_hash": "0xf1c04a972570ee1396e0915fb4fbcd24947116616f0e7e76a4e2742850716278",
+      "success": false,
+      "response_time": 0.1966111660003662,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.13,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x64",
+      "token_symbol": "xDAI",
+      "tx_hash": "0x415c19ed2ad545db666f939605f696e0e6f0ddd3d219783185f82d9cc5d953e4",
+      "success": false,
+      "response_time": 0.2380685806274414,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 2.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x64",
+      "token_symbol": "xDAI",
+      "tx_hash": "0x07d194e323e175ecd1420ecad6caa52f33128afb8e8b3614a7d9c0d3fcf254b4",
+      "success": false,
+      "response_time": 0.21007895469665527,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.77,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x64",
+      "token_symbol": "xDAI",
+      "tx_hash": "0xa1c22af21d57a8435a1be638826e7c4a5769f091a5bcfc4077df200e4648da11",
+      "success": false,
+      "response_time": 0.2102043628692627,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 2.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x64",
+      "token_symbol": "xDAI",
+      "tx_hash": "0x413b848afd54d77154bc3cb401f5c1828954cbfe424a1cccda70b5891619e3e9",
+      "success": false,
+      "response_time": 0.22532010078430176,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.51,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x64",
+      "token_symbol": "xDAI",
+      "tx_hash": "0x9e05971c713409c7a2904654279d4ed9e6f53bdffdee2aa2bbaa2e1a8251b8f1",
+      "success": false,
+      "response_time": 0.22734737396240234,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.31,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x64",
+      "token_symbol": "xDAI",
+      "tx_hash": "0xb0cd8239b682ceec9eee2fdbeadee9184296cf56abfd65b2df2867dd98ad184e",
+      "success": false,
+      "response_time": 0.21738290786743164,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.35,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x64",
+      "token_symbol": "xDAI",
+      "tx_hash": "0xf0fadc1c518fc3627220f5221d7635a62fe2c42a884c67e7bb5e0e5af5d120c1",
+      "success": false,
+      "response_time": 0.22101664543151855,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 2.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x507",
+      "token_symbol": "GLMR",
+      "tx_hash": "0x2b0a340993a6b21640764322cc78c320bf2de9fe077f2c569249e27a722cc120",
+      "success": false,
+      "response_time": 0.20635581016540527,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 2.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x507",
+      "token_symbol": "GLMR",
+      "tx_hash": "0x7ef1c06e7795792048f8dc69e215e8acd145899dababb8a030a00cea5f914244",
+      "success": false,
+      "response_time": 0.19923806190490723,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.3,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x507",
+      "token_symbol": "GLMR",
+      "tx_hash": "0x92c2b3b227e0855ee240ba1e3a58fac06225a9a0831af0fce83899354613a582",
+      "success": false,
+      "response_time": 0.22818946838378906,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.2,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x507",
+      "token_symbol": "GLMR",
+      "tx_hash": "0x831825c9e100550ec8c239cf4853a0ce3c7e69f6c4b4df7cfbda2a7d4e75b69b",
+      "success": false,
+      "response_time": 0.2200930118560791,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 2.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x507",
+      "token_symbol": "GLMR",
+      "tx_hash": "0x06cab133fa6037cea5fe56b27709bb7d182e4e01d599c2f5311a8798ecb00e8e",
+      "success": false,
+      "response_time": 0.20126628875732422,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.83,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x507",
+      "token_symbol": "GLMR",
+      "tx_hash": "0xad504974a3357c470948c6f96c4073dfbe8bb29842d5ddfd34d4dfdf61ccb3ab",
+      "success": false,
+      "response_time": 0.22116470336914062,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.45,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x507",
+      "token_symbol": "GLMR",
+      "tx_hash": "0x3e47d0d6d741a43faa1c1f63eea778f89a470e36a52ef616db4409495dc2d18d",
+      "success": false,
+      "response_time": 0.22319746017456055,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 2.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x507",
+      "token_symbol": "GLMR",
+      "tx_hash": "0xc89252fda1b56208af8a5cdbabe894ca28e59e68945e4a578ca4f4b36f1e02df",
+      "success": false,
+      "response_time": 0.20944643020629883,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 2.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x507",
+      "token_symbol": "GLMR",
+      "tx_hash": "0xdad1401672ecf0b080b18925b6b80f2254aab24df52f2d0a131b9429bf856053",
+      "success": false,
+      "response_time": 0.21500468254089355,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 2.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x507",
+      "token_symbol": "GLMR",
+      "tx_hash": "0x4c32f4c08b91c37ce7bce13c496fe75ce292d7b002fb31c6b86e17ad98a5b1b6",
+      "success": false,
+      "response_time": 0.28600502014160156,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.2,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x505",
+      "token_symbol": "MOVR",
+      "tx_hash": "0x728145fb8f08064d41cc2b43c4f86aea1cf7560f4d125aba46bf61acc623eb5b",
+      "success": false,
+      "response_time": 0.20324373245239258,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 2.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x505",
+      "token_symbol": "MOVR",
+      "tx_hash": "0xda3d834a4a7ee67a7923268d8b1458210f61d1e037d2531256795083a14bdc6c",
+      "success": false,
+      "response_time": 0.21902179718017578,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 2.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x505",
+      "token_symbol": "MOVR",
+      "tx_hash": "0xc59df2445ece7b2448d6f67ad414c41e4546b55960755b2ac2bc7c787c5cea0f",
+      "success": false,
+      "response_time": 0.22307443618774414,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 2.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x505",
+      "token_symbol": "MOVR",
+      "tx_hash": "0xbbfe64d221020af256c9654c53ecd14454108748e4b33d9dd98eadfa9f067e82",
+      "success": false,
+      "response_time": 0.20324373245239258,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.21,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x505",
+      "token_symbol": "MOVR",
+      "tx_hash": "0x706cd72ddc291ed452ee51a7869d4e2f01922b091121cd9240722ece0bd6ceb4",
+      "success": false,
+      "response_time": 0.2167949676513672,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 2.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x505",
+      "token_symbol": "MOVR",
+      "tx_hash": "0xe9831717b724697e7743e19aaa57e5cc8d4beb5b9a57d2e3d5b2f9f71c2baa33",
+      "success": false,
+      "response_time": 0.20413470268249512,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.34,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x505",
+      "token_symbol": "MOVR",
+      "tx_hash": "0x4feaf04ad8922ea3945973646034de9a9d1a3403ecf72381e6c0aed78ae4471f",
+      "success": false,
+      "response_time": 0.20514774322509766,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.49,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x505",
+      "token_symbol": "MOVR",
+      "tx_hash": "0x735b770003d301d9f5738f1b515e03333b5e81e24ac7d2c9b3352b54e5385859",
+      "success": false,
+      "response_time": 0.22657394409179688,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 2.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x505",
+      "token_symbol": "MOVR",
+      "tx_hash": "0x5453c0622fa8793e6d9172f15fb03b814b236b12f5d8cce2e1583b43163ea97a",
+      "success": false,
+      "response_time": 0.21095824241638184,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.39,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x505",
+      "token_symbol": "MOVR",
+      "tx_hash": "0x9b2ec6fec19d572e2136828cd9eab74e5684ca1b0c4353c596c02201a0ea8dd7",
+      "success": false,
+      "response_time": 0.20413470268249512,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.71,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x19",
+      "token_symbol": "CRO",
+      "tx_hash": "0xeff82af050db6f90398f8d84d150bc92e5121e71b4f0d27716682b0cb6743f27",
+      "success": false,
+      "response_time": 0.1953291893005371,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.94,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x19",
+      "token_symbol": "CRO",
+      "tx_hash": "0x313618b7d1128b60e2859ec9fd94c81fb25695b4af32ae8d6c2cdd242defec58",
+      "success": false,
+      "response_time": 0.21953606605529785,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.03,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x19",
+      "token_symbol": "CRO",
+      "tx_hash": "0x70d4c506620324fff4dd4a90fd0ed59464a35af5c2f5a219c27233ecf4b2121b",
+      "success": false,
+      "response_time": 0.2081761360168457,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 2.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x19",
+      "token_symbol": "CRO",
+      "tx_hash": "0x9c8d056822b0e0621cda42bc620dc7b0a219525bf34d5d011419f738c6a22940",
+      "success": false,
+      "response_time": 0.21647930145263672,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.4,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x19",
+      "token_symbol": "CRO",
+      "tx_hash": "0x7e119859ae456ba59c2610ff707a0b9faf7268bf8f0abcd47de3453015e88030",
+      "success": false,
+      "response_time": 0.2278592586517334,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.04,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x19",
+      "token_symbol": "CRO",
+      "tx_hash": "0x14781324277e5d3e9b89da1095e555e42c7cddd3c1b52c879e8c20a7ec967261",
+      "success": false,
+      "response_time": 0.2186746597290039,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 2.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x19",
+      "token_symbol": "CRO",
+      "tx_hash": "0xc9c462c7c8d292ce416efffa2f07401cb800dbf3ffeb4c979f36956f81e08f8c",
+      "success": false,
+      "response_time": 0.21764612197875977,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.85,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x19",
+      "token_symbol": "CRO",
+      "tx_hash": "0xa05f0becf2e7b2d57a134e9433bd9deda9e224bcdc85b96aa8884042ef541868",
+      "success": false,
+      "response_time": 0.21550679206848145,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.1,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x19",
+      "token_symbol": "CRO",
+      "tx_hash": "0x6965f0c95fe44d2d95fcc4e25f4f4827b2e4710c08207212d25b6ecbe9cae61f",
+      "success": false,
+      "response_time": 0.21187996864318848,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.02,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x19",
+      "token_symbol": "CRO",
+      "tx_hash": "0xb82ee92679c9e0da6bc542a196ab66533174967677038b38d5acace590e3b5cc",
+      "success": false,
+      "response_time": 0.21187996864318848,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.68,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x7a69",
+      "token_symbol": "ETH",
+      "tx_hash": "0x6ff929c0ee3b40cb09ddbeed62315bd44b47f18d2b0bb8c6d87ad9a0bcdc90d6",
+      "success": false,
+      "response_time": 0.21097278594970703,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 2.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x7a69",
+      "token_symbol": "ETH",
+      "tx_hash": "0x84416c19510b9f4c36df8b98eb1ec4cb03247d6fc2d4c57847b74a30e7f2a543",
+      "success": false,
+      "response_time": 0.23896241188049316,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.64,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x7a69",
+      "token_symbol": "ETH",
+      "tx_hash": "0x0b44325d51685e65d42b8a5ce3f5a1b7f8d3b156425b26208c46e63cc99d79bb",
+      "success": false,
+      "response_time": 0.21527409553527832,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.5,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x7a69",
+      "token_symbol": "ETH",
+      "tx_hash": "0xfe01fd167fbeb907befeed67de3f2029493a479c5647820ed2447f5933bc2758",
+      "success": false,
+      "response_time": 0.20352959632873535,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 2.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x7a69",
+      "token_symbol": "ETH",
+      "tx_hash": "0xdacb42523ee9a49c5c2a36784ed693af91e90617efa767a69d0cfd8543b563ab",
+      "success": false,
+      "response_time": 0.20592331886291504,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.85,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x7a69",
+      "token_symbol": "ETH",
+      "tx_hash": "0x02feaf464eaebeb1ef49cac54da31b72376e473208c028f3731a01b4e64c920a",
+      "success": false,
+      "response_time": 0.2110738754272461,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.91,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x7a69",
+      "token_symbol": "ETH",
+      "tx_hash": "0x9fa7242b5fd5486e1ff7e877a904d599b83537da5f3bff9959b3e500297c1d23",
+      "success": false,
+      "response_time": 0.2211291790008545,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 2.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x7a69",
+      "token_symbol": "ETH",
+      "tx_hash": "0x2b7c9e6bcb312ee9f12aaff958755af98508c7d2f1f6f89b7cf950b13540eb85",
+      "success": false,
+      "response_time": 0.23900771141052246,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.57,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x7a69",
+      "token_symbol": "ETH",
+      "tx_hash": "0x06860ee72c423be321d0c69402ac65c64cfb4849381e491bf8f5144e0649f4db",
+      "success": false,
+      "response_time": 0.21006560325622559,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.7,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x7a69",
+      "token_symbol": "ETH",
+      "tx_hash": "0x54f8f63d90ad0392bb10269bb414bf164c770f04826ed3c291fc5cad28b0c566",
+      "success": false,
+      "response_time": 0.22416210174560547,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.35,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x1b3",
+      "token_symbol": "APE",
+      "tx_hash": "0xfb8ae30fad941be9ccdf7cc541352553a6a480256bb2b83a03b88efb7b273363",
+      "success": false,
+      "response_time": 0.21566295623779297,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.21,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x1b3",
+      "token_symbol": "APE",
+      "tx_hash": "0x004e6745b437bad788e1c36f1cec60c19de47e0731804da6d547e042ab426253",
+      "success": false,
+      "response_time": 0.2121598720550537,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 2.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x1b3",
+      "token_symbol": "APE",
+      "tx_hash": "0x112ca91ac02b94f9f2f52cc4c792c38e0a05d0f5f723ff8099e577be667200cf",
+      "success": false,
+      "response_time": 0.2440507411956787,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x1b3",
+      "token_symbol": "APE",
+      "tx_hash": "0x08e1325cfa69b2c9b6f3dc1ea7a069f6741894819253626c20a1398d4a387ffe",
+      "success": false,
+      "response_time": 0.22556352615356445,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.8,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x1b3",
+      "token_symbol": "APE",
+      "tx_hash": "0xfb71ebe2d0bf46a66420bb6d3442b6226dad4338e168164d39d8ab45ebe1d14c",
+      "success": false,
+      "response_time": 0.2223219871520996,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 2.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x1b3",
+      "token_symbol": "APE",
+      "tx_hash": "0x27b8d1e66a84f0bbbc9cf153fec27575655f529b2fbf0fdf38151e1a2662d636",
+      "success": false,
+      "response_time": 0.21056747436523438,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 2.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x1b3",
+      "token_symbol": "APE",
+      "tx_hash": "0x0cf26ad8d0ae4848fb48cf2c3c44481a8b78f288b42c3ae4d36077efcc017d5b",
+      "success": false,
+      "response_time": 0.21056747436523438,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 2.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x1b3",
+      "token_symbol": "APE",
+      "tx_hash": "0x68dfbcb2a841df866d76f1ac682e250188414ac9c428097d432c0c7c2d9857ec",
+      "success": false,
+      "response_time": 0.22214937210083008,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.94,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x1b3",
+      "token_symbol": "APE",
+      "tx_hash": "0x6f53f6aecec3d4d7f8f9240b29e16af8774a2febeb8b59948193712759f5f5e1",
+      "success": false,
+      "response_time": 0.2207188606262207,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.54,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x1b3",
+      "token_symbol": "APE",
+      "tx_hash": "0x4058d51f15be8e94c625369e4fe3e4a5db8c65427df3ab4d16fa90ff8abc5ee9",
+      "success": false,
+      "response_time": 0.20046377182006836,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 2.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x2710",
+      "token_symbol": "ETH",
+      "tx_hash": "0x197166b4d10c46b87848627e813ca0544626a86183b6ee6b835324bb8414560e",
+      "success": false,
+      "response_time": 0.2100517749786377,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.97,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x2710",
+      "token_symbol": "ETH",
+      "tx_hash": "0xe3109b8d109f643d81e8311187d5f5d9206c86cea32865cd7794429afb4f11e8",
+      "success": false,
+      "response_time": 0.2100517749786377,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 2.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x2710",
+      "token_symbol": "ETH",
+      "tx_hash": "0x9197c394083ddaba133597ef2e7956b44a7cce74d145f712f2c7b402513e0713",
+      "success": false,
+      "response_time": 0.21506738662719727,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.66,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x2710",
+      "token_symbol": "ETH",
+      "tx_hash": "0x2ab84ae794cdec61563fca70b6cd4ecdd4576520f5f88262326680c5b2fd4e22",
+      "success": false,
+      "response_time": 0.19324874877929688,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.03,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x2710",
+      "token_symbol": "ETH",
+      "tx_hash": "0x0af230f829b69429b09eae74616da212f383292a2d410714c3edb98634d74af4",
+      "success": false,
+      "response_time": 0.21809887886047363,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.79,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x2710",
+      "token_symbol": "ETH",
+      "tx_hash": "0x62c2ce570409503d95b7a370052f039d249eb3c92d62dcdf012cec356819e900",
+      "success": false,
+      "response_time": 0.22778105735778809,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 2.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x2710",
+      "token_symbol": "ETH",
+      "tx_hash": "0x86ba2b5b95e90b8bd622511ac35c904acd385e3184354bfbab3511ab32bad168",
+      "success": false,
+      "response_time": 0.2083446979522705,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 2.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x2710",
+      "token_symbol": "ETH",
+      "tx_hash": "0x26292aeab0dbfe5f67db6a3c97e8a5e9b3006a8b9887b84d5a8f056ca1a496e8",
+      "success": false,
+      "response_time": 0.20984959602355957,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 2.0,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x2710",
+      "token_symbol": "ETH",
+      "tx_hash": "0x94163e3f0cfdb805c8ecec4d31fe908d55d01cf985c9245229cb472e3f950b39",
+      "success": false,
+      "response_time": 0.20226454734802246,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 1.85,
+      "status_code": 404
+    },
+    {
+      "chain_id": "0x2710",
+      "token_symbol": "ETH",
+      "tx_hash": "0xbc04911b6d72e6f07b1351a4b51e9280c7a84b4f4117cc9a8b6cf43cf5d00ee2",
+      "success": false,
+      "response_time": 0.21294426918029785,
+      "error_message": "HTTP 404: {\"detail\":\"Not Found\"}",
+      "usd_amount": 2.0,
+      "status_code": 404
+    }
+  ]
+}

@@ -1,0 +1,2956 @@
+{
+  "test_summary": {
+    "total_tests": 270,
+    "successful_tests": 0,
+    "failed_tests": 270,
+    "avg_response_time": 0.22266196498164423,
+    "test_duration": 40.78328585624695,
+    "timestamp": "2025-09-20 21:26:10"
+  },
+  "chain_stats": {
+    "0x1": {
+      "chain_name": "Ethereum",
+      "total_tests": 20,
+      "successful_tests": 0,
+      "failed_tests": 20,
+      "success_rate": 0.0,
+      "avg_response_time": 0.2887970805168152,
+      "errors": {
+        "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}": 20
+      }
+    },
+    "0x38": {
+      "chain_name": "BNB Smart Chain",
+      "total_tests": 25,
+      "successful_tests": 0,
+      "failed_tests": 25,
+      "success_rate": 0.0,
+      "avg_response_time": 0.21975339889526369,
+      "errors": {
+        "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}": 25
+      }
+    },
+    "0x89": {
+      "chain_name": "Polygon",
+      "total_tests": 20,
+      "successful_tests": 0,
+      "failed_tests": 20,
+      "success_rate": 0.0,
+      "avg_response_time": 0.2199623703956604,
+      "errors": {
+        "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}": 20
+      }
+    },
+    "0xa4b1": {
+      "chain_name": "Arbitrum One",
+      "total_tests": 15,
+      "successful_tests": 0,
+      "failed_tests": 15,
+      "success_rate": 0.0,
+      "avg_response_time": 0.21818343798319498,
+      "errors": {
+        "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}": 15
+      }
+    },
+    "0xa": {
+      "chain_name": "OP Mainnet",
+      "total_tests": 15,
+      "successful_tests": 0,
+      "failed_tests": 15,
+      "success_rate": 0.0,
+      "avg_response_time": 0.218874724706014,
+      "errors": {
+        "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}": 15
+      }
+    },
+    "0x2105": {
+      "chain_name": "Base",
+      "total_tests": 15,
+      "successful_tests": 0,
+      "failed_tests": 15,
+      "success_rate": 0.0,
+      "avg_response_time": 0.21281986236572265,
+      "errors": {
+        "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}": 15
+      }
+    },
+    "0xa86a": {
+      "chain_name": "Avalanche",
+      "total_tests": 10,
+      "successful_tests": 0,
+      "failed_tests": 10,
+      "success_rate": 0.0,
+      "avg_response_time": 0.22052574157714844,
+      "errors": {
+        "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}": 10
+      }
+    },
+    "0x144": {
+      "chain_name": "zkSync Era",
+      "total_tests": 10,
+      "successful_tests": 0,
+      "failed_tests": 10,
+      "success_rate": 0.0,
+      "avg_response_time": 0.2122938871383667,
+      "errors": {
+        "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}": 10
+      }
+    },
+    "0xe708": {
+      "chain_name": "Linea",
+      "total_tests": 10,
+      "successful_tests": 0,
+      "failed_tests": 10,
+      "success_rate": 0.0,
+      "avg_response_time": 0.21648769378662108,
+      "errors": {
+        "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}": 10
+      }
+    },
+    "0x13e31": {
+      "chain_name": "Blast",
+      "total_tests": 10,
+      "successful_tests": 0,
+      "failed_tests": 10,
+      "success_rate": 0.0,
+      "avg_response_time": 0.20930118560791017,
+      "errors": {
+        "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}": 10
+      }
+    },
+    "0xa4ec": {
+      "chain_name": "Celo",
+      "total_tests": 10,
+      "successful_tests": 0,
+      "failed_tests": 10,
+      "success_rate": 0.0,
+      "avg_response_time": 0.21633434295654297,
+      "errors": {
+        "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}": 10
+      }
+    },
+    "0x1388": {
+      "chain_name": "Mantle",
+      "total_tests": 10,
+      "successful_tests": 0,
+      "failed_tests": 10,
+      "success_rate": 0.0,
+      "avg_response_time": 0.21718206405639648,
+      "errors": {
+        "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}": 10
+      }
+    },
+    "0xcc": {
+      "chain_name": "opBNB",
+      "total_tests": 10,
+      "successful_tests": 0,
+      "failed_tests": 10,
+      "success_rate": 0.0,
+      "avg_response_time": 0.20835087299346924,
+      "errors": {
+        "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}": 10
+      }
+    },
+    "0x82750": {
+      "chain_name": "Scroll",
+      "total_tests": 10,
+      "successful_tests": 0,
+      "failed_tests": 10,
+      "success_rate": 0.0,
+      "avg_response_time": 0.21108689308166503,
+      "errors": {
+        "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}": 10
+      }
+    },
+    "0xfa": {
+      "chain_name": "Fantom",
+      "total_tests": 10,
+      "successful_tests": 0,
+      "failed_tests": 10,
+      "success_rate": 0.0,
+      "avg_response_time": 0.2174668788909912,
+      "errors": {
+        "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}": 10
+      }
+    },
+    "0x64": {
+      "chain_name": "Gnosis",
+      "total_tests": 10,
+      "successful_tests": 0,
+      "failed_tests": 10,
+      "success_rate": 0.0,
+      "avg_response_time": 0.21685199737548827,
+      "errors": {
+        "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}": 10
+      }
+    },
+    "0x507": {
+      "chain_name": "Moonbeam",
+      "total_tests": 10,
+      "successful_tests": 0,
+      "failed_tests": 10,
+      "success_rate": 0.0,
+      "avg_response_time": 0.22037827968597412,
+      "errors": {
+        "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}": 10
+      }
+    },
+    "0x505": {
+      "chain_name": "Moonriver",
+      "total_tests": 10,
+      "successful_tests": 0,
+      "failed_tests": 10,
+      "success_rate": 0.0,
+      "avg_response_time": 0.21805121898651122,
+      "errors": {
+        "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}": 10
+      }
+    },
+    "0x19": {
+      "chain_name": "Cronos",
+      "total_tests": 10,
+      "successful_tests": 0,
+      "failed_tests": 10,
+      "success_rate": 0.0,
+      "avg_response_time": 0.21395034790039064,
+      "errors": {
+        "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}": 10
+      }
+    },
+    "0x7a69": {
+      "chain_name": "Zora",
+      "total_tests": 10,
+      "successful_tests": 0,
+      "failed_tests": 10,
+      "success_rate": 0.0,
+      "avg_response_time": 0.21589243412017822,
+      "errors": {
+        "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}": 10
+      }
+    },
+    "0x1b3": {
+      "chain_name": "Ape Chain",
+      "total_tests": 10,
+      "successful_tests": 0,
+      "failed_tests": 10,
+      "success_rate": 0.0,
+      "avg_response_time": 0.22082889080047607,
+      "errors": {
+        "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}": 10
+      }
+    },
+    "0x2710": {
+      "chain_name": "Morph",
+      "total_tests": 10,
+      "successful_tests": 0,
+      "failed_tests": 10,
+      "success_rate": 0.0,
+      "avg_response_time": 0.23517088890075682,
+      "errors": {
+        "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}": 10
+      }
+    }
+  },
+  "individual_results": [
+    {
+      "chain_id": "0x1",
+      "token_symbol": "ETH",
+      "tx_hash": "0xe7068cde4408eb1489ce75b0ca2dac53be6260de1cc022cbca2900428fb58393",
+      "success": false,
+      "response_time": 0.6650288105010986,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.42,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x1",
+      "token_symbol": "ETH",
+      "tx_hash": "0x6c541aa241610a06f4fda9a85dd904384d0ff664e7b43c4cf2f6981625e63a11",
+      "success": false,
+      "response_time": 0.2587125301361084,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 2.0,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x1",
+      "token_symbol": "ETH",
+      "tx_hash": "0x1dc92b8f2612c3dd89db5507d92447f73970dbc1b58344128f2f5a90ed0817f5",
+      "success": false,
+      "response_time": 0.2551748752593994,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 2.0,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x1",
+      "token_symbol": "ETH",
+      "tx_hash": "0xa26812b1730b3ecf037c2e477ffc897d8ba98d04e185f1460c9c6505744917d3",
+      "success": false,
+      "response_time": 0.25667858123779297,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.7,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x1",
+      "token_symbol": "ETH",
+      "tx_hash": "0x43a68625ffe089846e5a924c111c76509b51d52e7b32ef321f373cedcb684e9e",
+      "success": false,
+      "response_time": 0.2597966194152832,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.35,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x1",
+      "token_symbol": "ETH",
+      "tx_hash": "0xb8069ea77dd81fc4b906873463394a4a1d4436658ebf5301c7c15532b2ebff43",
+      "success": false,
+      "response_time": 0.2256486415863037,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.91,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x1",
+      "token_symbol": "ETH",
+      "tx_hash": "0x297df1257e1a1b3f1049299d1020e6978647007c7899716fc6b08622a704a809",
+      "success": false,
+      "response_time": 0.21747994422912598,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.1,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x1",
+      "token_symbol": "ETH",
+      "tx_hash": "0xc9efe7d76b4e5f80bd4870fb5b15a4fedeb70b6586dc9faf41528f4a65631ea1",
+      "success": false,
+      "response_time": 0.22666192054748535,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 2.0,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x1",
+      "token_symbol": "ETH",
+      "tx_hash": "0x1ac69bb4f999acbdbb3e27aa2233d2b27c62f1f2a98cae64636e30d24fd7e9af",
+      "success": false,
+      "response_time": 0.2195603847503662,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.84,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x1",
+      "token_symbol": "ETH",
+      "tx_hash": "0x5f07efee3a33140848deb53e84ab47e023514cec6f0bd4433f6e5cd8f689fbb0",
+      "success": false,
+      "response_time": 0.22259807586669922,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 2.0,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x1",
+      "token_symbol": "USDC",
+      "tx_hash": "0x5d859efe9ba73fc04d3ebc8a8e8df6990e02aa434f1cf9378772d544b6d9f3e5",
+      "success": false,
+      "response_time": 0.21042799949645996,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.4,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x1",
+      "token_symbol": "USDC",
+      "tx_hash": "0x89e85105b8bb66f2da2cb45ce15f15cacfc52a4dd4f1588307cc2d0813f623fc",
+      "success": false,
+      "response_time": 0.22308635711669922,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.78,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x1",
+      "token_symbol": "USDC",
+      "tx_hash": "0xbdea922fe7a7a1fcfbd4ad4aa2e83bb1e88a772fba039151dfb23d2f976de3af",
+      "success": false,
+      "response_time": 0.2251129150390625,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 2.0,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x1",
+      "token_symbol": "USDC",
+      "tx_hash": "0x7d9285964312a598d9aaf804056a954b9c6f585f8b17116bb945c5f44797121d",
+      "success": false,
+      "response_time": 0.5984296798706055,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 2.0,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x1",
+      "token_symbol": "USDC",
+      "tx_hash": "0xb731f88f12d31fbc097157c3a626093dc666ac2270ed360b80cc6ea52cf8f8bc",
+      "success": false,
+      "response_time": 0.6014602184295654,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 2.0,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x1",
+      "token_symbol": "USDT",
+      "tx_hash": "0x9d8415017f64ebb599baf8df7a898c5f242f01548ff94ff99ba79872dc293f9c",
+      "success": false,
+      "response_time": 0.22569751739501953,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.61,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x1",
+      "token_symbol": "USDT",
+      "tx_hash": "0x5ac2fc8308cbb6fcf50d2510cda89fc4452dc5bddd9d9613d7cf2e3f6c76792b",
+      "success": false,
+      "response_time": 0.22262287139892578,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.99,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x1",
+      "token_symbol": "USDT",
+      "tx_hash": "0x17ff8437c09c834654d6624e0f60995874985604583634ecb410be4333a289d2",
+      "success": false,
+      "response_time": 0.21957731246948242,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.52,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x1",
+      "token_symbol": "USDT",
+      "tx_hash": "0xb8ef84f7b31ce1423b7737d87ccfac49a8dbef5c5ead45c7fea574b8f8dcf97a",
+      "success": false,
+      "response_time": 0.21856307983398438,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 2.0,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x1",
+      "token_symbol": "USDT",
+      "tx_hash": "0xee9dc9bb7de8e18fe0566654ef8af6786e2631df3b31c9eb99141a2f980e5bbc",
+      "success": false,
+      "response_time": 0.22362327575683594,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.3,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x38",
+      "token_symbol": "BNB",
+      "tx_hash": "0x922045888b9c00e0cb0b41fc27609caedfb6311e83cdada9d17a7a6495ac8a15",
+      "success": false,
+      "response_time": 0.21848392486572266,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.02,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x38",
+      "token_symbol": "BNB",
+      "tx_hash": "0x1ab957e51a51973c5c14d20221e4c2f19a93a4bca60f42da0a38e553f50871ac",
+      "success": false,
+      "response_time": 0.21634435653686523,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.92,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x38",
+      "token_symbol": "BNB",
+      "tx_hash": "0xa9283dfea93bf2d73320e9a5ab020e9a0ef5c609bc6508015a1c1fa52874751a",
+      "success": false,
+      "response_time": 0.23477864265441895,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.63,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x38",
+      "token_symbol": "BNB",
+      "tx_hash": "0x5e284a1d29ca411c7554582c9e8b674be3e45e9cc90d9674ecc671426cd6108c",
+      "success": false,
+      "response_time": 0.21229267120361328,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.25,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x38",
+      "token_symbol": "BNB",
+      "tx_hash": "0xed931de06b5396a970db116cba5d0e401e249fb2b3fde9226a3b1e5be80b7637",
+      "success": false,
+      "response_time": 0.2220172882080078,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.64,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x38",
+      "token_symbol": "BNB",
+      "tx_hash": "0x79e76aeaf20467243936a93f5a2eb49425220b0a9fd1439059903484f7d62685",
+      "success": false,
+      "response_time": 0.21249079704284668,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.14,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x38",
+      "token_symbol": "BNB",
+      "tx_hash": "0xcc5d0da18f298967415adc61ae07e5b5128dd326bcd75970364a3e6356d31946",
+      "success": false,
+      "response_time": 0.21703886985778809,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.74,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x38",
+      "token_symbol": "BNB",
+      "tx_hash": "0xcbfd6f367f053e84817aa712b5c8f10afa1399c65ad683b0871de1b51a4f9af3",
+      "success": false,
+      "response_time": 0.21703886985778809,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.61,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x38",
+      "token_symbol": "BNB",
+      "tx_hash": "0x6478e4952ec4f4dad70d62d80cab7ddfe89b3d5c5062387b2fcdf98ee245ff5c",
+      "success": false,
+      "response_time": 0.21249079704284668,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 2.0,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x38",
+      "token_symbol": "BNB",
+      "tx_hash": "0x0fb023e7fd2b79aa772ccbb67a563f7cf10f90a4d0bb64c02ca28f6635973869",
+      "success": false,
+      "response_time": 0.22467875480651855,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.71,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x38",
+      "token_symbol": "USDC",
+      "tx_hash": "0x980a660858648fdafc695e35297cea287e562f9b49103d55a7f1a37a95ffa1c2",
+      "success": false,
+      "response_time": 0.20998239517211914,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 2.0,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x38",
+      "token_symbol": "USDC",
+      "tx_hash": "0x091cd051b1eb71a359bf004d52aea644c1fc9829f277068ca2b4ef9ef86cdd17",
+      "success": false,
+      "response_time": 0.2114865779876709,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.71,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x38",
+      "token_symbol": "USDC",
+      "tx_hash": "0x62ee8e029dd7e4a0c3f27222cf42854cfc79fdf53cf21a6d82c03262cd720a6e",
+      "success": false,
+      "response_time": 0.22448372840881348,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.83,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x38",
+      "token_symbol": "USDC",
+      "tx_hash": "0x25ab81ed12a599a4f4842a9b8351a7570d809bcfc78841479691cec143ce75f9",
+      "success": false,
+      "response_time": 0.21764564514160156,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.52,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x38",
+      "token_symbol": "USDC",
+      "tx_hash": "0x95fbf119124c8b9ea539ce8ecb762cc31b7196aa5ba5014340d24f76759c7e8d",
+      "success": false,
+      "response_time": 0.22144103050231934,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.98,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x38",
+      "token_symbol": "USDT",
+      "tx_hash": "0xe957e36c67f2bcca3fd62d840392510c58855d8d46a06cc8b63d6681f33cc4cc",
+      "success": false,
+      "response_time": 0.21665215492248535,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 2.0,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x38",
+      "token_symbol": "USDT",
+      "tx_hash": "0x5512736dd536ce593f55c25ca859df55370db330786cc7c95f925181bb190443",
+      "success": false,
+      "response_time": 0.21564388275146484,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.5,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x38",
+      "token_symbol": "USDT",
+      "tx_hash": "0x96107a344e2b516f8eabac05ab5d4fc5ce566e0f4aaacb6c7c995cda5c0de7ca",
+      "success": false,
+      "response_time": 0.21047282218933105,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.88,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x38",
+      "token_symbol": "USDT",
+      "tx_hash": "0x3b572afb4fed21897ff0773e81bf5473b2ddd55f8313c00811a43d69d63a5538",
+      "success": false,
+      "response_time": 0.21918487548828125,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.79,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x38",
+      "token_symbol": "USDT",
+      "tx_hash": "0x6b0e5d7950f3d5eacbf037901cf40f6f3e2f7d5750798c991e9300cbcfab2195",
+      "success": false,
+      "response_time": 0.21767950057983398,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.62,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x38",
+      "token_symbol": "BTCB",
+      "tx_hash": "0x308d87ecaed1edca921a66fa2daec2357c314aae20931e3a25079612adee04cd",
+      "success": false,
+      "response_time": 0.22805094718933105,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.26,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x38",
+      "token_symbol": "BTCB",
+      "tx_hash": "0x97b18f9b1636203c66e05541af343f3857f103885a7df1224bef87a16bd37258",
+      "success": false,
+      "response_time": 0.22086501121520996,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.05,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x38",
+      "token_symbol": "BTCB",
+      "tx_hash": "0x5f17cbd6b87505c789bab336aa62a94f0126aa2ea141b7672418bab3fb4af368",
+      "success": false,
+      "response_time": 0.22188758850097656,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 2.0,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x38",
+      "token_symbol": "BTCB",
+      "tx_hash": "0x9c8346245696ff386aaee8400f87bb3e2db5ecda5c0faa07f75b60e156f34829",
+      "success": false,
+      "response_time": 0.22392058372497559,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.57,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x38",
+      "token_symbol": "BTCB",
+      "tx_hash": "0x6d1e568a42ef4fb3c390f074cc1bbc6ead4531917b248de6db77fffa9fba12a4",
+      "success": false,
+      "response_time": 0.24678325653076172,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.34,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x89",
+      "token_symbol": "MATIC",
+      "tx_hash": "0x32e323f1b9d07d9719aefee9aa6f1665298a9a4d2414f7f51f83e2c2fc4ab3d2",
+      "success": false,
+      "response_time": 0.21520304679870605,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.66,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x89",
+      "token_symbol": "MATIC",
+      "tx_hash": "0xbb5f0ec5a564bf57cd804e00acde0f2842e67d5d78fce7b0564bf3b9c5070925",
+      "success": false,
+      "response_time": 0.21723198890686035,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.2,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x89",
+      "token_symbol": "MATIC",
+      "tx_hash": "0x5d37ef49677ca362e8dd113969586bb11f2dd87c5a73fbb629635c12f9fae571",
+      "success": false,
+      "response_time": 0.2162160873413086,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 2.0,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x89",
+      "token_symbol": "MATIC",
+      "tx_hash": "0x5a9e0dddc6a03b759690cfe8f9a6ef8488059b977b768e63d96f4e706090170a",
+      "success": false,
+      "response_time": 0.22201156616210938,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.6,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x89",
+      "token_symbol": "MATIC",
+      "tx_hash": "0x40e775e83301d7e4041d652b99e6c8b14edce30ecc46db2cbb73f603817a8712",
+      "success": false,
+      "response_time": 0.2187361717224121,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.66,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x89",
+      "token_symbol": "MATIC",
+      "tx_hash": "0xfe3e49a2bda9ecda0fc99859a0de711a5cb3cd1b0f9bab37ed0d7f80128307f2",
+      "success": false,
+      "response_time": 0.25124049186706543,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.38,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x89",
+      "token_symbol": "MATIC",
+      "tx_hash": "0xe8cb8d659b500e1248ff9dab429ea5b459275cb0ae973b2baa6d1f2e3ecfbf9f",
+      "success": false,
+      "response_time": 0.21859145164489746,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.57,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x89",
+      "token_symbol": "MATIC",
+      "tx_hash": "0x0dc05c49b086ea64b1c7a04cf6fc79e8343b0830fccae27086dbd4d68fac8fa9",
+      "success": false,
+      "response_time": 0.18982577323913574,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.75,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x89",
+      "token_symbol": "MATIC",
+      "tx_hash": "0x4f4e3094d0bd55797a46871b0e34c9c8b1cb370256f4890648faad398f92b16d",
+      "success": false,
+      "response_time": 0.22409796714782715,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.04,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x89",
+      "token_symbol": "MATIC",
+      "tx_hash": "0x4453e7d75c27364e7b0965a8cbb9dbfaf033b7b16028f8df7f00adb495674f32",
+      "success": false,
+      "response_time": 0.21504902839660645,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.37,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x89",
+      "token_symbol": "USDC",
+      "tx_hash": "0xe862c165248e45946bfecb15b9d62c84db1c2b1f043b77a2746527f20941c33b",
+      "success": false,
+      "response_time": 0.21921730041503906,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.54,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x89",
+      "token_symbol": "USDC",
+      "tx_hash": "0x66e7fcb9f172b8233a9f20d0af7301113088116ff1f58f51acab5092ec6695f0",
+      "success": false,
+      "response_time": 0.2226407527923584,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.59,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x89",
+      "token_symbol": "USDC",
+      "tx_hash": "0xb34fa339a1e6f07b91ae8ba70e08e7e707a880adc7d67d2b88c2d7c77de161c6",
+      "success": false,
+      "response_time": 0.22374582290649414,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.14,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x89",
+      "token_symbol": "USDC",
+      "tx_hash": "0x3993cd6626792e2edabe2c938b0ad4dde423a50c8a5f9cb8ea56561a5b5ac3ab",
+      "success": false,
+      "response_time": 0.22831225395202637,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.83,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x89",
+      "token_symbol": "USDC",
+      "tx_hash": "0xbc048ff22bcb2d06338fc6f9362818a14c7185d1c61108dee8c8231c9c7a54dd",
+      "success": false,
+      "response_time": 0.23619365692138672,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 2.0,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x89",
+      "token_symbol": "USDT",
+      "tx_hash": "0x3d664c0763e0adebe378fac2085c09cb17c8895593e7c649bca86936a6136c51",
+      "success": false,
+      "response_time": 0.20415782928466797,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.58,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x89",
+      "token_symbol": "USDT",
+      "tx_hash": "0x8f950d797943777282fcefeb39f279c408f0076ea95040debc297fbeb74a5760",
+      "success": false,
+      "response_time": 0.2172842025756836,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.53,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x89",
+      "token_symbol": "USDT",
+      "tx_hash": "0x9b6689b455d73b69657d50bfa460402cc937ec87c493f64d238834097d4a838a",
+      "success": false,
+      "response_time": 0.21466374397277832,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 2.0,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x89",
+      "token_symbol": "USDT",
+      "tx_hash": "0x4f7241e2f3f1ce98ab7f2b1e80f7941d9cf3bba2436319049e6c37aa474556db",
+      "success": false,
+      "response_time": 0.2172842025756836,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.98,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x89",
+      "token_symbol": "USDT",
+      "tx_hash": "0xdd591531d991d0edb0f5f23998c87325b1e152845f6652f23e47c5ba05121b59",
+      "success": false,
+      "response_time": 0.22754406929016113,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.86,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0xa4b1",
+      "token_symbol": "ETH",
+      "tx_hash": "0x1513f6e4fb59767c81da058b8ba101b4acfe7a530418552fcb86f6f71a75fee6",
+      "success": false,
+      "response_time": 0.20747852325439453,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 2.0,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0xa4b1",
+      "token_symbol": "ETH",
+      "tx_hash": "0xbb4d4e350e7b6572a1799abd411377cb0d06ebeaab9c16e7333444e8977f5cd5",
+      "success": false,
+      "response_time": 0.215376615524292,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.03,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0xa4b1",
+      "token_symbol": "ETH",
+      "tx_hash": "0x17a4e51840e05171d78811dc2a013a19284f657bd1a6570f6b12a722c9af4828",
+      "success": false,
+      "response_time": 0.21335077285766602,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 2.0,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0xa4b1",
+      "token_symbol": "ETH",
+      "tx_hash": "0xc8d98e6179ff30b6131183189e53330f4b7a1eea6481158b29c1fff624094558",
+      "success": false,
+      "response_time": 0.21906757354736328,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.0,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0xa4b1",
+      "token_symbol": "ETH",
+      "tx_hash": "0x74adc36997c61242cfbd200262421f80c9a61a0b82e8e2730345632d63ca3848",
+      "success": false,
+      "response_time": 0.2268364429473877,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 2.0,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0xa4b1",
+      "token_symbol": "ETH",
+      "tx_hash": "0x0d378eac8bed2a5405588e526bbf7e5c8626239a7f02c4ddf8e9332ca5533f1a",
+      "success": false,
+      "response_time": 0.2218949794769287,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 2.0,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0xa4b1",
+      "token_symbol": "ETH",
+      "tx_hash": "0xb53858c47e07d38a8fe501c38c6ffc6530ec55646709cca2d21499455ea50df0",
+      "success": false,
+      "response_time": 0.2407236099243164,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.11,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0xa4b1",
+      "token_symbol": "ETH",
+      "tx_hash": "0x7b07737df8e3fba29b8c2a093c30a2ddcf2d05a47378c478ad2e4c2367dce4fb",
+      "success": false,
+      "response_time": 0.21319031715393066,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 2.0,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0xa4b1",
+      "token_symbol": "ETH",
+      "tx_hash": "0xa1163fb8050835484100548dc83cfa950311852921643022a51cd093f664e86f",
+      "success": false,
+      "response_time": 0.23002052307128906,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.36,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0xa4b1",
+      "token_symbol": "ETH",
+      "tx_hash": "0xfba887a3d415e730e5b8b7a273e877d88ef0669499e76eaf36f9c1a669349ea9",
+      "success": false,
+      "response_time": 0.21629023551940918,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.56,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0xa4b1",
+      "token_symbol": "USDC",
+      "tx_hash": "0x59cd7618473665150f9ff3999b99dfc1c5af2316b2e1cb12f604b31866df506d",
+      "success": false,
+      "response_time": 0.2223186492919922,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.32,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0xa4b1",
+      "token_symbol": "USDC",
+      "tx_hash": "0x6cd3fc16b9832627403728a4348faebc28c4a1d064bb358def01ba8d7f9ab9eb",
+      "success": false,
+      "response_time": 0.2099606990814209,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.74,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0xa4b1",
+      "token_symbol": "USDC",
+      "tx_hash": "0x0c2674028ab88826c8ee66199cbdd9fd7461d4f2ba7b7b60f8dc6299715de560",
+      "success": false,
+      "response_time": 0.21608328819274902,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.35,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0xa4b1",
+      "token_symbol": "USDC",
+      "tx_hash": "0xa78e93b52fd5548aad2aa8757915863d6b50e5242bb80f9d7b20c97e0ff8c5a2",
+      "success": false,
+      "response_time": 0.20305490493774414,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.26,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0xa4b1",
+      "token_symbol": "USDC",
+      "tx_hash": "0x90edc3f5a05907e4e597b28484e4433b4d0b1fc4594fe9481b82d848298c90e3",
+      "success": false,
+      "response_time": 0.21710443496704102,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.66,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0xa",
+      "token_symbol": "ETH",
+      "tx_hash": "0xeff38f30ba89a8d6e9ccd15a56cd3bbab7c2baea8b1937a3231c8fe6b3b13381",
+      "success": false,
+      "response_time": 0.21398496627807617,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.38,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0xa",
+      "token_symbol": "ETH",
+      "tx_hash": "0xc55210056d508872b29f718ca8b3de6aa8232fe15ad632941d87f8a090168db7",
+      "success": false,
+      "response_time": 0.21499371528625488,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.89,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0xa",
+      "token_symbol": "ETH",
+      "tx_hash": "0xab6ab7d9ab47d074aae75e0effeca26731d142a899bd59c564fec5f2fde93c82",
+      "success": false,
+      "response_time": 0.21398496627807617,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.21,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0xa",
+      "token_symbol": "ETH",
+      "tx_hash": "0xa8d2a71a794361bff20c83ec75570bcd7c8e51e31fd6a541717076f596c91cf5",
+      "success": false,
+      "response_time": 0.21398496627807617,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 2.0,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0xa",
+      "token_symbol": "ETH",
+      "tx_hash": "0xfd89f4618bbcd9ab01aee94b4acadf213a227ea324673b7435cc91057a142b39",
+      "success": false,
+      "response_time": 0.22170424461364746,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.68,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0xa",
+      "token_symbol": "ETH",
+      "tx_hash": "0x488f46425d5604fa7668a6c29327b5a83c87b6938a6f399846ecd8c2e3ef80c7",
+      "success": false,
+      "response_time": 0.22089529037475586,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 2.0,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0xa",
+      "token_symbol": "ETH",
+      "tx_hash": "0x1cd0cdff0193392a4c92e43908ae9d4a6085fe9665e867471997d3b3f3d35ef9",
+      "success": false,
+      "response_time": 0.21534109115600586,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 2.0,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0xa",
+      "token_symbol": "ETH",
+      "tx_hash": "0x74564d79472a3ba0cc74369b5cf5a991b1af2a8820f677bdc7ea37284499b72d",
+      "success": false,
+      "response_time": 0.2091364860534668,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.4,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0xa",
+      "token_symbol": "ETH",
+      "tx_hash": "0x96a2625c5d3b5878ba47831a066d3c5a9cadd8338b958a935e7d397552115e96",
+      "success": false,
+      "response_time": 0.22089529037475586,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.03,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0xa",
+      "token_symbol": "ETH",
+      "tx_hash": "0x630b4db5945210c3683452be1742c99892db889983710e8476074ae935bd05d7",
+      "success": false,
+      "response_time": 0.2193915843963623,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 2.0,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0xa",
+      "token_symbol": "USDC",
+      "tx_hash": "0x2a037d2f803ea8affd02cbd25cad5973bbcded0fb498da5de42ea881176047f6",
+      "success": false,
+      "response_time": 0.21853184700012207,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.05,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0xa",
+      "token_symbol": "USDC",
+      "tx_hash": "0x1b1ff8f6271ef68ead81225c05245999875c53d5eb90cdaba87a72f4a4e644e8",
+      "success": false,
+      "response_time": 0.2257089614868164,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.65,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0xa",
+      "token_symbol": "USDC",
+      "tx_hash": "0xe99ce8a5b82c22af8c4d3a200855bb6131bc00a370105e8be00feed154c38043",
+      "success": false,
+      "response_time": 0.2206566333770752,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 2.0,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0xa",
+      "token_symbol": "USDC",
+      "tx_hash": "0x3b8410ebe92cd03e92f2350e6daf02a2a1b978c7f3e7eea1d0638ce50bdd2301",
+      "success": false,
+      "response_time": 0.23890256881713867,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.21,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0xa",
+      "token_symbol": "USDC",
+      "tx_hash": "0xb7d34b208460457090f3fcde987ee75773063043286abf80d363b3c30c04a751",
+      "success": false,
+      "response_time": 0.21500825881958008,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.07,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x2105",
+      "token_symbol": "ETH",
+      "tx_hash": "0x692770e4acb9106fc6802fc629a4c7ea18666bca314d7db6ffb0d9163bd0b86c",
+      "success": false,
+      "response_time": 0.21525168418884277,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.28,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x2105",
+      "token_symbol": "ETH",
+      "tx_hash": "0xcd26c8683424a662094d8c363d9b0402e5d1a221b275151ce3d31fd9649bd2ba",
+      "success": false,
+      "response_time": 0.21171283721923828,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 2.0,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x2105",
+      "token_symbol": "ETH",
+      "tx_hash": "0x877290f1af2ca2e6377523e326bedc861c54dbe73ab2c9f1777da77607b522b8",
+      "success": false,
+      "response_time": 0.22316670417785645,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.68,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x2105",
+      "token_symbol": "ETH",
+      "tx_hash": "0xfe984fdf324b3548dc06fb6f1275f58a4ab5b4785576b57340570b98c74bec6f",
+      "success": false,
+      "response_time": 0.19811058044433594,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.6,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x2105",
+      "token_symbol": "ETH",
+      "tx_hash": "0xe23952affc505cbdef55e3dbff9d126c4cd8f082cefda23bbe6f7d26448a1171",
+      "success": false,
+      "response_time": 0.21219420433044434,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.69,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x2105",
+      "token_symbol": "ETH",
+      "tx_hash": "0x7a16ee40421156d7e2e1f258b6534d3dbc083996e03c5fb429494322c710ecd1",
+      "success": false,
+      "response_time": 0.19770407676696777,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.26,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x2105",
+      "token_symbol": "ETH",
+      "tx_hash": "0x85be3acf7f67c71e94a340d76ca853816d28221043352c8c57981388b3df06a5",
+      "success": false,
+      "response_time": 0.20685696601867676,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.76,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x2105",
+      "token_symbol": "ETH",
+      "tx_hash": "0x96dbc04d9cbb635d994039ffc6d3b6a7bb067d1ac169ca3b441537b0df423f50",
+      "success": false,
+      "response_time": 0.2243208885192871,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.32,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x2105",
+      "token_symbol": "ETH",
+      "tx_hash": "0xc5e8a6f46de3b602ad06c6cda0cbe03d6178d7a9838da5360400304e8e3f326e",
+      "success": false,
+      "response_time": 0.2229294776916504,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.46,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x2105",
+      "token_symbol": "ETH",
+      "tx_hash": "0x562555ae9af2398f49e834d3957ff45ed9b9c5565d962c5e8b3c29a0f105d4b4",
+      "success": false,
+      "response_time": 0.2243208885192871,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.95,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x2105",
+      "token_symbol": "USDC",
+      "tx_hash": "0xa7497f8e25d88aa8bd2dbe395ab6638cb461c03da7aa8433f9973dbbb58d137d",
+      "success": false,
+      "response_time": 0.21208429336547852,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.93,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x2105",
+      "token_symbol": "USDC",
+      "tx_hash": "0x7bb57ad921cdd1fc7ca201ab71f74d31a0e0947c11e14a7546de26d2e79e3ac1",
+      "success": false,
+      "response_time": 0.21516180038452148,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.5,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x2105",
+      "token_symbol": "USDC",
+      "tx_hash": "0x1858780441ccf1d6acf93bbdd9f698289094215e7b69f306e5512dfc4ae6c1f1",
+      "success": false,
+      "response_time": 0.21312999725341797,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.91,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x2105",
+      "token_symbol": "USDC",
+      "tx_hash": "0x381f8218b3336c80f1e96608a5fc442cfbdd81c7adbd8889aa6e39e551140528",
+      "success": false,
+      "response_time": 0.1945633888244629,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 2.0,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x2105",
+      "token_symbol": "USDC",
+      "tx_hash": "0x882caaf5e3dfd7fd0c40e2950cfab6e8ad6c23918961f726e94632c35cdbd26e",
+      "success": false,
+      "response_time": 0.22079014778137207,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 2.0,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0xa86a",
+      "token_symbol": "AVAX",
+      "tx_hash": "0x31153c732b07dbc434d886bc2d8ef561d0daa026cb4a30a5d575ee84a09e054d",
+      "success": false,
+      "response_time": 0.220933198928833,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.47,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0xa86a",
+      "token_symbol": "AVAX",
+      "tx_hash": "0x7587c34c380b914e4279ca9cde6ec1c54991880990489da7f36d00f99cfc04fb",
+      "success": false,
+      "response_time": 0.22194600105285645,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.24,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0xa86a",
+      "token_symbol": "AVAX",
+      "tx_hash": "0xa09dca8d029364d377563ad1dd69368c021ee1c064962c6049c0822d5564b0c6",
+      "success": false,
+      "response_time": 0.2398519515991211,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.66,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0xa86a",
+      "token_symbol": "AVAX",
+      "tx_hash": "0xe66d917eed99da0bceb586ba68e6285b9ebd92815c2991a12a992b34e880c3d0",
+      "success": false,
+      "response_time": 0.2168595790863037,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.68,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0xa86a",
+      "token_symbol": "AVAX",
+      "tx_hash": "0x8e565bdf04634d586bb5157298da00cdaa4cc9588d9bec041185cd19f265f0cb",
+      "success": false,
+      "response_time": 0.2168595790863037,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.17,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0xa86a",
+      "token_symbol": "AVAX",
+      "tx_hash": "0xfd12498a1eb254b5283db89f8435a7610cbbce2a9ba971faecafd33c04a573ba",
+      "success": false,
+      "response_time": 0.19154906272888184,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.8,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0xa86a",
+      "token_symbol": "AVAX",
+      "tx_hash": "0xe720b02a550610f30dbc8ae1015b4cfdf524343f2e73db77cbc83085e8ed62ea",
+      "success": false,
+      "response_time": 0.21896028518676758,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.76,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0xa86a",
+      "token_symbol": "AVAX",
+      "tx_hash": "0x2c1b74ce03256aeddf50248b6aaa7e44ce916487af59ea0d54444efa0e62d090",
+      "success": false,
+      "response_time": 0.24805808067321777,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.18,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0xa86a",
+      "token_symbol": "AVAX",
+      "tx_hash": "0x1c18cd8b6203b05bc9df882d8ca770544122e7ddf566371993a4bf81e9ef86c9",
+      "success": false,
+      "response_time": 0.2087545394897461,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 2.0,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0xa86a",
+      "token_symbol": "AVAX",
+      "tx_hash": "0x0864f6476b46495f6ecba4d883e764f4a46b5da3522d218d81eee01af652b990",
+      "success": false,
+      "response_time": 0.22148513793945312,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.08,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x144",
+      "token_symbol": "ETH",
+      "tx_hash": "0xf2965ad33d4303b00e5698c101e46c155aabfdc864b8933e5f0121808238b03a",
+      "success": false,
+      "response_time": 0.20375919342041016,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.6,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x144",
+      "token_symbol": "ETH",
+      "tx_hash": "0x531f35e88e3bdffb4b714072fa885febbddb96c6b61f0fd327a9be1b23824784",
+      "success": false,
+      "response_time": 0.21247601509094238,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.96,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x144",
+      "token_symbol": "ETH",
+      "tx_hash": "0x67a6ead95acd7ed616d2457f89155194f83cd80477955fcce594036f9674eace",
+      "success": false,
+      "response_time": 0.21449828147888184,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.93,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x144",
+      "token_symbol": "ETH",
+      "tx_hash": "0xeccc9ccb263e1cc41bd8311b9163cb864dc6b854b2dfb4a15eef36080a72cd0a",
+      "success": false,
+      "response_time": 0.21247601509094238,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 2.0,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x144",
+      "token_symbol": "ETH",
+      "tx_hash": "0x3457ec4a3e0f868041024cb9626f180ee9d06bef455cf446c99aa2a86bb170ea",
+      "success": false,
+      "response_time": 0.2228231430053711,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.77,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x144",
+      "token_symbol": "ETH",
+      "tx_hash": "0xb9e2ae9f88e11edbb7256e4e17a74600807df368dcfa4ef264c51c77ca613f3b",
+      "success": false,
+      "response_time": 0.19718194007873535,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.0,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x144",
+      "token_symbol": "ETH",
+      "tx_hash": "0x097e117f6f793cef213eb22da7cfdd6d1edcc29dc25b914e21928cbe7f6c8e9b",
+      "success": false,
+      "response_time": 0.22520065307617188,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.19,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x144",
+      "token_symbol": "ETH",
+      "tx_hash": "0x22f066cea632e8b83ba6f87bee6454708f14ce003f68868470cfc9ae7d03589f",
+      "success": false,
+      "response_time": 0.21619033813476562,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 2.0,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x144",
+      "token_symbol": "ETH",
+      "tx_hash": "0x142eae2a584eb10b896ba698c9f3064fbb174e70524c6dfff8a95c2c09a92f3b",
+      "success": false,
+      "response_time": 0.2231757640838623,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.1,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x144",
+      "token_symbol": "ETH",
+      "tx_hash": "0x6a569864a1f84ecd79d1590afda3f1ee7106e802508a50679ac6b0fb3b9caa32",
+      "success": false,
+      "response_time": 0.19515752792358398,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.3,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0xe708",
+      "token_symbol": "ETH",
+      "tx_hash": "0x02d3a6fd172a56f5962f22a10f9b916c624923d8ff2f210fa36c1da5dd74a11f",
+      "success": false,
+      "response_time": 0.2111058235168457,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 2.0,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0xe708",
+      "token_symbol": "ETH",
+      "tx_hash": "0xdbca5a14630512e0a44aca9f69a63eae3643b876d999f7fe3995debd3b9291ff",
+      "success": false,
+      "response_time": 0.2111058235168457,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.02,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0xe708",
+      "token_symbol": "ETH",
+      "tx_hash": "0x22a4a99168d1c998c430f5b508046b77a3aa145a17ce98ae8489ac4655490118",
+      "success": false,
+      "response_time": 0.21773552894592285,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.27,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0xe708",
+      "token_symbol": "ETH",
+      "tx_hash": "0xbdbb3e9959e5399a1be2652bd46f171c5f8eb6eb7ce0b2f33c63c016d3433538",
+      "success": false,
+      "response_time": 0.21773552894592285,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.77,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0xe708",
+      "token_symbol": "ETH",
+      "tx_hash": "0xe476fa440c224c91702d45cebcd0edfdc53667eb5b5417b927fa151d35827b0e",
+      "success": false,
+      "response_time": 0.21414446830749512,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.58,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0xe708",
+      "token_symbol": "ETH",
+      "tx_hash": "0x9005d1be4bd01441ad26894f37c795b69426cfc7db33719e3e711003daf5bbc2",
+      "success": false,
+      "response_time": 0.21445655822753906,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.96,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0xe708",
+      "token_symbol": "ETH",
+      "tx_hash": "0x0e3224297a633bb392547a9a2cd1294b1fc74c80ff8c9155f076368ed3f292f6",
+      "success": false,
+      "response_time": 0.20992231369018555,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.81,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0xe708",
+      "token_symbol": "ETH",
+      "tx_hash": "0xcd51cd1db3cae2c38667b5e3b1962fac15bee926bdfc08325f5b563dfcce8a89",
+      "success": false,
+      "response_time": 0.22682976722717285,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 2.0,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0xe708",
+      "token_symbol": "ETH",
+      "tx_hash": "0xdcf701d8af9e8d5db3dce71edb3e690089630c10c0ea768e02a712b4d88d4751",
+      "success": false,
+      "response_time": 0.22271251678466797,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.67,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0xe708",
+      "token_symbol": "ETH",
+      "tx_hash": "0xbbba498835aeec1eb668ce8503383cb585d71b3fe416174edc58c7b620a56767",
+      "success": false,
+      "response_time": 0.21912860870361328,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.33,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x13e31",
+      "token_symbol": "ETH",
+      "tx_hash": "0x5af882fdc8493eedae6af93bc1ac125fc019f33311e6f148c2c9d1fd0e20cc3d",
+      "success": false,
+      "response_time": 0.21318960189819336,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.02,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x13e31",
+      "token_symbol": "ETH",
+      "tx_hash": "0x07e239cb6f8bec16ecb49290e3cc8f2a2f65e4d3d58113aba37d8ee6c0b1d9dd",
+      "success": false,
+      "response_time": 0.20849394798278809,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 2.0,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x13e31",
+      "token_symbol": "ETH",
+      "tx_hash": "0x6f33f0a7eef7226089a43a648e053240013cbd127d1db3d0cc33d3422a728900",
+      "success": false,
+      "response_time": 0.19300413131713867,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.44,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x13e31",
+      "token_symbol": "ETH",
+      "tx_hash": "0xae45ea6df787d57f9b4923c53f25288a0f9082960c265052910113ab6c86e274",
+      "success": false,
+      "response_time": 0.22223997116088867,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.82,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x13e31",
+      "token_symbol": "ETH",
+      "tx_hash": "0xda1c75f361e30b6aa7cf3f3d96e7362e83621d51e2963b311bc8d537411e95dc",
+      "success": false,
+      "response_time": 0.20999956130981445,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.92,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x13e31",
+      "token_symbol": "ETH",
+      "tx_hash": "0xc8ebff37aace46c44cc07a6ad3e0a1d620624d82bbb4f6edf37af893ae742011",
+      "success": false,
+      "response_time": 0.2092268466949463,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.98,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x13e31",
+      "token_symbol": "ETH",
+      "tx_hash": "0x79a00f40f179a76a6e8c37607e5baf31a287456f51377b53b1ada021ab7fd850",
+      "success": false,
+      "response_time": 0.19536280632019043,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.03,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x13e31",
+      "token_symbol": "ETH",
+      "tx_hash": "0x5f8c7ee7a851d4daa69dbf1fa83e877def30c76dd049f1d07fbff615bb08072e",
+      "success": false,
+      "response_time": 0.21801495552062988,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 2.0,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x13e31",
+      "token_symbol": "ETH",
+      "tx_hash": "0xdc89002796a0b1c71f09c2e05049ef09739ab870f9ef4b77d22f9038d087ba71",
+      "success": false,
+      "response_time": 0.21174001693725586,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 2.0,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x13e31",
+      "token_symbol": "ETH",
+      "tx_hash": "0xd6eebceac55f03ecd9bfceeb41bbd85a9302923e7732df18363b8d7424f08943",
+      "success": false,
+      "response_time": 0.21174001693725586,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.79,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0xa4ec",
+      "token_symbol": "CELO",
+      "tx_hash": "0xbe3fd381193cceac347e1d4919f642532d66824eb7ad0b392a0a5cf23b8333d6",
+      "success": false,
+      "response_time": 0.2227787971496582,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.23,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0xa4ec",
+      "token_symbol": "CELO",
+      "tx_hash": "0xca4cb4fef2c345d7877c3ef736710a57cdaa566a612469c79ced808e93454a69",
+      "success": false,
+      "response_time": 0.21770882606506348,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.57,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0xa4ec",
+      "token_symbol": "CELO",
+      "tx_hash": "0x2cf77701e762bd683c73019d4c3647c4cf148c5d1e7f258c008fb1954b52ef06",
+      "success": false,
+      "response_time": 0.24362730979919434,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.45,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0xa4ec",
+      "token_symbol": "CELO",
+      "tx_hash": "0x99d0f48f2190ba450c7059af1771b7bf9751fb4c1c0448d546cc9600b8134a4e",
+      "success": false,
+      "response_time": 0.2046065330505371,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.14,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0xa4ec",
+      "token_symbol": "CELO",
+      "tx_hash": "0x5c665db63a4ce1fb16e2fde67bf8b9a8c3f686819df5ad587809498e97c8b29d",
+      "success": false,
+      "response_time": 0.21305227279663086,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.75,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0xa4ec",
+      "token_symbol": "CELO",
+      "tx_hash": "0x6c1b8dae8d2fe6034b0acb1439609f6286feea8362d4a9136bc21ae1f6bcd809",
+      "success": false,
+      "response_time": 0.1938331127166748,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 2.0,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0xa4ec",
+      "token_symbol": "CELO",
+      "tx_hash": "0x61e618c9f3e8d2cfca909529802587a399efd843f747f1699889cdc6b0a7f9d7",
+      "success": false,
+      "response_time": 0.21405601501464844,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 2.0,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0xa4ec",
+      "token_symbol": "CELO",
+      "tx_hash": "0x3a97ccc40e7f08693051f5b44413d62266562bc0b289d25d4c13e8c14f027c60",
+      "success": false,
+      "response_time": 0.2198474407196045,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 2.0,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0xa4ec",
+      "token_symbol": "CELO",
+      "tx_hash": "0x735463bd8ddf6429ea7ba6ec4f67e79fa64da4e13bb5a26fe40cffb42328c2d8",
+      "success": false,
+      "response_time": 0.20688748359680176,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.42,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0xa4ec",
+      "token_symbol": "CELO",
+      "tx_hash": "0x643c408d851907e04248ca9f2b7fd8dbbc0227836c7d2f29c763c6dabbbfbe80",
+      "success": false,
+      "response_time": 0.2269456386566162,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.57,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x1388",
+      "token_symbol": "MNT",
+      "tx_hash": "0x3a8882d038e8ea44585abb29f9742a0ebfa81895d3b5fcb4269d56d5ed23b395",
+      "success": false,
+      "response_time": 0.21921753883361816,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.83,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x1388",
+      "token_symbol": "MNT",
+      "tx_hash": "0xd58e47811a6ffd391423069f65d6de8647d675d04caaa09c6acb74a621cd5b54",
+      "success": false,
+      "response_time": 0.1935892105102539,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.28,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x1388",
+      "token_symbol": "MNT",
+      "tx_hash": "0x0d432882f7f19b86ee9de6db0489881f59d186eb49639a250a26bb39cbe28e3c",
+      "success": false,
+      "response_time": 0.21871304512023926,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.78,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x1388",
+      "token_symbol": "MNT",
+      "tx_hash": "0x147f5e4e7c289137ffa63bbd3992fe2863d41a4f1eef58751151f0ffb19946b8",
+      "success": false,
+      "response_time": 0.21561980247497559,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.41,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x1388",
+      "token_symbol": "MNT",
+      "tx_hash": "0xf8728fbc732c7c41bdd1319c055cc4de719691a2ab711c1d8c3d4f9006d1cccb",
+      "success": false,
+      "response_time": 0.2167041301727295,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.12,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x1388",
+      "token_symbol": "MNT",
+      "tx_hash": "0xddd3c5e4a1fa5e39fd9a4008910c1a9a266b475921c20a329b89c1f0efa4b89d",
+      "success": false,
+      "response_time": 0.2136845588684082,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.26,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x1388",
+      "token_symbol": "MNT",
+      "tx_hash": "0x079ea3948cd97ff9da32503b4347b30cb9826e0377f9655861d1520d0de0137e",
+      "success": false,
+      "response_time": 0.21518874168395996,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.56,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x1388",
+      "token_symbol": "MNT",
+      "tx_hash": "0x53e19cf45d9412caebde702640e91784139961e5c9797190d3b2cf0e689d3194",
+      "success": false,
+      "response_time": 0.2403700351715088,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.01,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x1388",
+      "token_symbol": "MNT",
+      "tx_hash": "0x3bac6115082e48a793eaf04a924338d070af1388f8b2a981c63f4b5a197174c5",
+      "success": false,
+      "response_time": 0.22243809700012207,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 2.0,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x1388",
+      "token_symbol": "MNT",
+      "tx_hash": "0x4e85ceea7987fa55c930706fe103f98a3abdac248be92d376aa783762c099f5e",
+      "success": false,
+      "response_time": 0.21629548072814941,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.02,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0xcc",
+      "token_symbol": "BNB",
+      "tx_hash": "0xb17f5b29819bbc730c171402b3f159af5c51c60f9022fcaca469e976e7590dc4",
+      "success": false,
+      "response_time": 0.20785069465637207,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 2.0,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0xcc",
+      "token_symbol": "BNB",
+      "tx_hash": "0x36b41c8f52cdd15153ecdf0376ddc03d158d8a2da7408a735e74fca64d3c12dc",
+      "success": false,
+      "response_time": 0.19928193092346191,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.05,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0xcc",
+      "token_symbol": "BNB",
+      "tx_hash": "0x8833300c143a2f7e821c75167497dc1b4028a86a1594b0f7fa35b99d3d82e529",
+      "success": false,
+      "response_time": 0.20579218864440918,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.16,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0xcc",
+      "token_symbol": "BNB",
+      "tx_hash": "0x312e9f9dae718723034d83211f686d2fa4941755e3bbc5ba3ad12a67667f5e63",
+      "success": false,
+      "response_time": 0.22229480743408203,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.36,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0xcc",
+      "token_symbol": "BNB",
+      "tx_hash": "0xf49d662885f7cd613d1755c0bd59a8da42b9bad09aa1f8f04be3484cb296efb5",
+      "success": false,
+      "response_time": 0.22229480743408203,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.73,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0xcc",
+      "token_symbol": "BNB",
+      "tx_hash": "0xc41abeeb8077cde0d5fc945ad63538372e9032e18b7adb3ef58f07ddc2579063",
+      "success": false,
+      "response_time": 0.21846890449523926,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.63,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0xcc",
+      "token_symbol": "BNB",
+      "tx_hash": "0xcea32578f467ba1abff21f4c2c8e8acd11baa5c8e9e70c2f9fea95159a2cff43",
+      "success": false,
+      "response_time": 0.18823742866516113,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.53,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0xcc",
+      "token_symbol": "BNB",
+      "tx_hash": "0xc83fc8169e9ea30f407042abd51129b1bad909cb8814cb1394c5c69f8b8e2758",
+      "success": false,
+      "response_time": 0.1960146427154541,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 2.0,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0xcc",
+      "token_symbol": "BNB",
+      "tx_hash": "0xd8643427e788b1e63fce49cda77a6c3bbbb37a743f3e803b502fc37b3075895d",
+      "success": false,
+      "response_time": 0.22928500175476074,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 2.0,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0xcc",
+      "token_symbol": "BNB",
+      "tx_hash": "0x1c173418a1ba361da71c28fa29e3ed49c7e3becc1362175abc8e1ed213d69cf8",
+      "success": false,
+      "response_time": 0.19398832321166992,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.59,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x82750",
+      "token_symbol": "ETH",
+      "tx_hash": "0xd1cf9d982f66435c23573785aa886c9feb3e0ecbb9ab2e8fb3c6fe970279053a",
+      "success": false,
+      "response_time": 0.1979691982269287,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.73,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x82750",
+      "token_symbol": "ETH",
+      "tx_hash": "0x8eacbc26e54c7c988a8f87e846de776bb1d5cf30d09beeea3512ef91879cf1b5",
+      "success": false,
+      "response_time": 0.22070860862731934,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 2.0,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x82750",
+      "token_symbol": "ETH",
+      "tx_hash": "0xa53499bf3372ba9b64a902b20a3a2667d038595f5904e910cc2e1cccae9253e2",
+      "success": false,
+      "response_time": 0.21820378303527832,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.83,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x82750",
+      "token_symbol": "ETH",
+      "tx_hash": "0x23df636518ee815be8b1978e048a1cd3b4c2f3afc4a72b50d8ec49a805544cb8",
+      "success": false,
+      "response_time": 0.2162024974822998,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.26,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x82750",
+      "token_symbol": "ETH",
+      "tx_hash": "0x2d41c7ae7500ab1be58700a72e1beac648fad56c8e27161bcb90a8046ec22d27",
+      "success": false,
+      "response_time": 0.21520233154296875,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.17,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x82750",
+      "token_symbol": "ETH",
+      "tx_hash": "0xd1437b79cd2f368abc6ffa24ed3d3375750e45987efc0a94375e887aec9f6523",
+      "success": false,
+      "response_time": 0.1977689266204834,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 2.0,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x82750",
+      "token_symbol": "ETH",
+      "tx_hash": "0x327948bca8247441cc78d3f832a3f76632bafbf2567382ecaeff3193dfddbec7",
+      "success": false,
+      "response_time": 0.1977689266204834,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.79,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x82750",
+      "token_symbol": "ETH",
+      "tx_hash": "0x2ccc92f15e7ccd38de5c8699e4d0ee04177d15a7fc339b33c46c4dce92dfbad0",
+      "success": false,
+      "response_time": 0.21900629997253418,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 2.0,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x82750",
+      "token_symbol": "ETH",
+      "tx_hash": "0x7279a7f796786d8135780a0fe15f1acda243601fe4d8e928d78d2e019fae14f1",
+      "success": false,
+      "response_time": 0.2080211639404297,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.41,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x82750",
+      "token_symbol": "ETH",
+      "tx_hash": "0x188397bfd1d2bd2b5853e959aab701ff9b4310cba2cfcbc85e4af4afcf924f79",
+      "success": false,
+      "response_time": 0.2200171947479248,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 2.0,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0xfa",
+      "token_symbol": "FTM",
+      "tx_hash": "0x6b26c6b6ecc193ea326f383545621240b1a8595a5b8c0c5ad737f150cfcad76b",
+      "success": false,
+      "response_time": 0.22980499267578125,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 2.0,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0xfa",
+      "token_symbol": "FTM",
+      "tx_hash": "0xad94d34d973e87ef9b0f20e6b15c56fd8b0e99396c7361fa168e354dda6af6b0",
+      "success": false,
+      "response_time": 0.20218205451965332,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.13,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0xfa",
+      "token_symbol": "FTM",
+      "tx_hash": "0x7963eca683ebd6c1006d8cfe91e73f2005306a0a7c83e4012b6490056742e230",
+      "success": false,
+      "response_time": 0.20976924896240234,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.97,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0xfa",
+      "token_symbol": "FTM",
+      "tx_hash": "0xa4f39105737045b1d62687c09497cd88c2938634d3e9f70304f97809c13417fc",
+      "success": false,
+      "response_time": 0.2169809341430664,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 2.0,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0xfa",
+      "token_symbol": "FTM",
+      "tx_hash": "0xb6c264ee699d37f887bed6548c4fea9e67fa26614166297eaf7520ade7e1da4c",
+      "success": false,
+      "response_time": 0.2153642177581787,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.79,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0xfa",
+      "token_symbol": "FTM",
+      "tx_hash": "0x9717b25af02e4be3fd49d97e56a221584cad91df7b5dee428b621cd6b1925ba9",
+      "success": false,
+      "response_time": 0.22185802459716797,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 2.0,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0xfa",
+      "token_symbol": "FTM",
+      "tx_hash": "0x26addb1d4b61facc52a07093e70f3774196d22cd4598aa0772aed2e23be76da9",
+      "success": false,
+      "response_time": 0.22565865516662598,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.6,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0xfa",
+      "token_symbol": "FTM",
+      "tx_hash": "0x6a24b9f5ebb998e22ac4de4c213dea27fa0e7f95e2cfe2be09374b17c9d92c82",
+      "success": false,
+      "response_time": 0.22185802459716797,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.84,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0xfa",
+      "token_symbol": "FTM",
+      "tx_hash": "0x9aca0c451c23e99722452474d35416a987e0844fb5f11b1715a6f08244580dfe",
+      "success": false,
+      "response_time": 0.22185802459716797,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.88,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0xfa",
+      "token_symbol": "FTM",
+      "tx_hash": "0xce574f23b30eb36ae42ba35e696ce9dfb511a3c0f4cda73edb9afbb062321c9d",
+      "success": false,
+      "response_time": 0.2093346118927002,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.37,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x64",
+      "token_symbol": "xDAI",
+      "tx_hash": "0x672d93f31163d390d85b7041a37059c1d989edf3201725b01936d9207c7b8edb",
+      "success": false,
+      "response_time": 0.21713042259216309,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.85,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x64",
+      "token_symbol": "xDAI",
+      "tx_hash": "0x9097c6a88b189b96a25eb34436b00727e41fe1902b28dcd51468ded623902dec",
+      "success": false,
+      "response_time": 0.22999000549316406,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.17,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x64",
+      "token_symbol": "xDAI",
+      "tx_hash": "0xb64e7fb8bcaaeb576bdc81734bca0eeadb8791328e6b0c2ad52c3833e1ca101a",
+      "success": false,
+      "response_time": 0.2018280029296875,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.78,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x64",
+      "token_symbol": "xDAI",
+      "tx_hash": "0x424ed05c373d79140b9303e11e24aca1e1c22e3012ca55b89e2c02f43485ea24",
+      "success": false,
+      "response_time": 0.2059779167175293,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.29,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x64",
+      "token_symbol": "xDAI",
+      "tx_hash": "0x80253bd6824506ab4653b0f31d9f0039d499546ab2ab608e669ae2f518e12f0d",
+      "success": false,
+      "response_time": 0.21361804008483887,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 2.0,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x64",
+      "token_symbol": "xDAI",
+      "tx_hash": "0x604f9d899dc9c56f20a7a39f6768c4379e71fd3459a60b822fd905d08113a0f1",
+      "success": false,
+      "response_time": 0.21532750129699707,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.96,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x64",
+      "token_symbol": "xDAI",
+      "tx_hash": "0x8a965ea4280edfc6006aca8c45afc44024b2cf7288030f1c01533914be8e8783",
+      "success": false,
+      "response_time": 0.2133011817932129,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 2.0,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x64",
+      "token_symbol": "xDAI",
+      "tx_hash": "0xb5dfdcf47d79deca4f4eddac0d47d3030839338f39f50898c25232760f81a06d",
+      "success": false,
+      "response_time": 0.20920515060424805,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.29,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x64",
+      "token_symbol": "xDAI",
+      "tx_hash": "0x8cc7c472be3a21ec5ca74e486857eed9ccbcb3bdb7edf81e05fe08aab0a077a4",
+      "success": false,
+      "response_time": 0.20920515060424805,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.59,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x64",
+      "token_symbol": "xDAI",
+      "tx_hash": "0x73abe1a67861bbd49065c6d118aafd24be58e180c0d8f5635a4cd2bf222b3707",
+      "success": false,
+      "response_time": 0.25293660163879395,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.3,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x507",
+      "token_symbol": "GLMR",
+      "tx_hash": "0x0cce0663268739b6c3f7597ba98789715bb8a30091a449b29b2e287c6e763796",
+      "success": false,
+      "response_time": 0.2167186737060547,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.69,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x507",
+      "token_symbol": "GLMR",
+      "tx_hash": "0x2d47f68c226bc11a5d15744fc3f4fdb8ca8e0b667f68812ec984cfd6052aca76",
+      "success": false,
+      "response_time": 0.22631144523620605,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 2.0,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x507",
+      "token_symbol": "GLMR",
+      "tx_hash": "0x566b9c9b9296205c97dbec5514176270e1e9d5f806f1726d5fd04eed2f75e933",
+      "success": false,
+      "response_time": 0.230482816696167,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.29,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x507",
+      "token_symbol": "GLMR",
+      "tx_hash": "0xeb0aecf8f8063ea489c8e8ec89030d0bc56510a6cecce4155355b308a993616d",
+      "success": false,
+      "response_time": 0.22631144523620605,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 2.0,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x507",
+      "token_symbol": "GLMR",
+      "tx_hash": "0x8509e41fded992160acb69bc5f29d282b2acfc64c9ea1cbf898687715eb8163d",
+      "success": false,
+      "response_time": 0.22329044342041016,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 2.0,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x507",
+      "token_symbol": "GLMR",
+      "tx_hash": "0xe69f2b9e2a84ce0741848b40bbbbbe52dd5ef24a83cec09469b98a1bc644edbd",
+      "success": false,
+      "response_time": 0.21631956100463867,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.94,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x507",
+      "token_symbol": "GLMR",
+      "tx_hash": "0xcf5127c39bf22b9864f184b33c9051d12115ca64c8f72f394559f73e4e8c9a6a",
+      "success": false,
+      "response_time": 0.22775030136108398,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 2.0,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x507",
+      "token_symbol": "GLMR",
+      "tx_hash": "0xd52e8ef4bd89e35ca2372e8402318a868d919cf9e5f36ee693f9f8b8e7d38ad0",
+      "success": false,
+      "response_time": 0.1935591697692871,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 2.0,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x507",
+      "token_symbol": "GLMR",
+      "tx_hash": "0x012b6361629fe5b778680397b4ff3ad35c2e2f67192dfc16c649655f5a4e1bd0",
+      "success": false,
+      "response_time": 0.22775030136108398,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.95,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x507",
+      "token_symbol": "GLMR",
+      "tx_hash": "0xfae2293ed89debd02b1d8a8e7c71743e02d300a9cc4fb0d18a5fb102bdc1a8f3",
+      "success": false,
+      "response_time": 0.21528863906860352,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.56,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x505",
+      "token_symbol": "MOVR",
+      "tx_hash": "0x50ea20f46ec89319ae01fa1da2737a7162569d51604a72468bcdd4a190f2b37d",
+      "success": false,
+      "response_time": 0.21264171600341797,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.26,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x505",
+      "token_symbol": "MOVR",
+      "tx_hash": "0xc0694db5a96b9d8c88e0ff37bb21dfdc26d5221d30ab2a8d2fce4941ce7e57bf",
+      "success": false,
+      "response_time": 0.21264171600341797,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 2.0,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x505",
+      "token_symbol": "MOVR",
+      "tx_hash": "0x7dc45b5024a360cba6e88588d80aed818e87d1a87dbd737ba81ed611ff3f338b",
+      "success": false,
+      "response_time": 0.21575665473937988,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.31,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x505",
+      "token_symbol": "MOVR",
+      "tx_hash": "0xc4e0ed6145a2f7d1ba6dfeb22f1cb21f84bbe0b7b2479fe3898f3a4a2e4cf784",
+      "success": false,
+      "response_time": 0.23008131980895996,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.06,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x505",
+      "token_symbol": "MOVR",
+      "tx_hash": "0x961ed120975523a20f45cf35f5fac1a069f479984983f8f39f27b4315554af16",
+      "success": false,
+      "response_time": 0.21888470649719238,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.07,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x505",
+      "token_symbol": "MOVR",
+      "tx_hash": "0x2212e9f744b3219785d5a7965ee8ed5aaae8512be7689fb2417ac8c70131c3cf",
+      "success": false,
+      "response_time": 0.21017861366271973,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 2.0,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x505",
+      "token_symbol": "MOVR",
+      "tx_hash": "0x72eaa487cd531cedf451098b1f34ef11286388d4ca39c13ff2b3146d8a5f1022",
+      "success": false,
+      "response_time": 0.22403430938720703,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 2.0,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x505",
+      "token_symbol": "MOVR",
+      "tx_hash": "0x64d7e934934932eee5ff61677a452515790984184fabea34d9d822f6b05685df",
+      "success": false,
+      "response_time": 0.21530652046203613,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.46,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x505",
+      "token_symbol": "MOVR",
+      "tx_hash": "0x0e1e8dc3bd5ec52e2dd46fa0e4cccc4e871cd6229116d50eb1ddd048d099fda5",
+      "success": false,
+      "response_time": 0.21745586395263672,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 2.0,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x505",
+      "token_symbol": "MOVR",
+      "tx_hash": "0xfbf19781d3df4321e9bb8613ff885b9598872dda7f955b427bb35677b8aa7847",
+      "success": false,
+      "response_time": 0.22353076934814453,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.01,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x19",
+      "token_symbol": "CRO",
+      "tx_hash": "0xc48c49d1a99df2ca074a86594540ab189025759ab2e2bfba9506e99a1d18defc",
+      "success": false,
+      "response_time": 0.21262621879577637,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 2.0,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x19",
+      "token_symbol": "CRO",
+      "tx_hash": "0xad401e866bf5ea1538aeac955d5d65cfe6ab8db55fee6726bea8845cd6aaef9c",
+      "success": false,
+      "response_time": 0.22305846214294434,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.91,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x19",
+      "token_symbol": "CRO",
+      "tx_hash": "0x81b4bdf84abdfd48d675d4e1dc49f63491d7c0bfa7a8eb22885d3aa689b5db2c",
+      "success": false,
+      "response_time": 0.20193123817443848,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.93,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x19",
+      "token_symbol": "CRO",
+      "tx_hash": "0xce41dc95a82dad4ff7505e6e3504b54b4116bf37a7ee216b497c554dc3c95607",
+      "success": false,
+      "response_time": 0.21899771690368652,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 2.0,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x19",
+      "token_symbol": "CRO",
+      "tx_hash": "0xf417fc06e2618ef9998b810e1288d8c7d80bc7673755efadb877043e5de2a0f1",
+      "success": false,
+      "response_time": 0.22305846214294434,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.2,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x19",
+      "token_symbol": "CRO",
+      "tx_hash": "0x2dc5ee80d03d7469e103de513cbaef60791bd9e4816f69010522d9d096b8abfe",
+      "success": false,
+      "response_time": 0.19914746284484863,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.18,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x19",
+      "token_symbol": "CRO",
+      "tx_hash": "0xebb2437e10499fac93f52ac389e22efcf9086166d00f69fcc61a9db8811913c4",
+      "success": false,
+      "response_time": 0.21149706840515137,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.12,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x19",
+      "token_symbol": "CRO",
+      "tx_hash": "0xee16fc7f668eb69612fc553371ddbbc57e15a236acdca6f6ba4e404359a1dd22",
+      "success": false,
+      "response_time": 0.23152756690979004,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.06,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x19",
+      "token_symbol": "CRO",
+      "tx_hash": "0xd95c24addbdf2c7902d6c6338e33f9421d0d26ddf9f6f285fdec8e441de120bd",
+      "success": false,
+      "response_time": 0.2195119857788086,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.29,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x19",
+      "token_symbol": "CRO",
+      "tx_hash": "0x72b1016ca87fd9c4e07029172338beafb9602aed4835ff760948897a1aa42fde",
+      "success": false,
+      "response_time": 0.19814729690551758,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.16,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x7a69",
+      "token_symbol": "ETH",
+      "tx_hash": "0xf83ea35fd09a27c526c71c12f8ee50bf8e55a42d02f81faeab249ed0578d4d95",
+      "success": false,
+      "response_time": 0.21650409698486328,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 2.0,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x7a69",
+      "token_symbol": "ETH",
+      "tx_hash": "0x53352532900f1695035edf1d60a468dc0c26c001bd2bf77ed1aa998d220923b3",
+      "success": false,
+      "response_time": 0.21650409698486328,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 2.0,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x7a69",
+      "token_symbol": "ETH",
+      "tx_hash": "0x871228f786dc39121917166e425080282fcb7bf37112012acb7c8508b3956f12",
+      "success": false,
+      "response_time": 0.20870494842529297,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.58,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x7a69",
+      "token_symbol": "ETH",
+      "tx_hash": "0x6ee6e99ed38015c7c08757457d8b78d1b74fb683ca2f62b4289f56f2ec61cdf0",
+      "success": false,
+      "response_time": 0.21751117706298828,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.43,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x7a69",
+      "token_symbol": "ETH",
+      "tx_hash": "0xf96ff695048e78542d0219f27672ba9a0b89719a43f82c5b7c06bf9bbff337e9",
+      "success": false,
+      "response_time": 0.21549010276794434,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 2.0,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x7a69",
+      "token_symbol": "ETH",
+      "tx_hash": "0x9528c88262ceadd1902b8d306c5395ee4332a2fbd5999d3b69379ecde1d6904e",
+      "success": false,
+      "response_time": 0.2100541591644287,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.55,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x7a69",
+      "token_symbol": "ETH",
+      "tx_hash": "0x61204b9b64905bde79ce8e473708a8210df9738796ffbf0eb728c455736b54af",
+      "success": false,
+      "response_time": 0.22173309326171875,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 2.0,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x7a69",
+      "token_symbol": "ETH",
+      "tx_hash": "0x7010c761c20b034851065eae5f8b88636d56805af29d5f5855f5d268ac73d96d",
+      "success": false,
+      "response_time": 0.21056675910949707,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.98,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x7a69",
+      "token_symbol": "ETH",
+      "tx_hash": "0xc53b1c2a6622e9f1d46978741a4d3215d660b40f10bdaf2166318131da1b422a",
+      "success": false,
+      "response_time": 0.2237565517425537,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.83,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x7a69",
+      "token_symbol": "ETH",
+      "tx_hash": "0x13e7f1610b19b44b9ec4f4c948cf403fa9496f24bf3eedee1aeaa9a21e24cd88",
+      "success": false,
+      "response_time": 0.21809935569763184,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 2.0,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x1b3",
+      "token_symbol": "APE",
+      "tx_hash": "0x9d62f8581ed733b9f704f5091937ed6711f06c5fcb240816f866dbfab5a80cdb",
+      "success": false,
+      "response_time": 0.21178913116455078,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.64,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x1b3",
+      "token_symbol": "APE",
+      "tx_hash": "0x6eed371069b256bedc9958e5406c1cadfe05f7b760a94489113b461ddfe01a39",
+      "success": false,
+      "response_time": 0.21078109741210938,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.26,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x1b3",
+      "token_symbol": "APE",
+      "tx_hash": "0x54c5c683f7c19443094cc76b5643c2ddeb961895c11ae5597ffd5a69224af3e8",
+      "success": false,
+      "response_time": 0.22368407249450684,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.86,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x1b3",
+      "token_symbol": "APE",
+      "tx_hash": "0x5cf329796f085a899afe20a858ba8c3321b1d9ee34e7330ad100c1065e63868a",
+      "success": false,
+      "response_time": 0.21956729888916016,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 2.0,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x1b3",
+      "token_symbol": "APE",
+      "tx_hash": "0x482afb34f6c3940c71536d537ae15fa6c34a4ac7c13c717cb5ebbe37e2624e73",
+      "success": false,
+      "response_time": 0.2185530662536621,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 2.0,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x1b3",
+      "token_symbol": "APE",
+      "tx_hash": "0xdfe310217ad62b1ebdc4c5741eb4d2bd37212d49ad1601268af81a9014c5ab59",
+      "success": false,
+      "response_time": 0.22922301292419434,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 2.0,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x1b3",
+      "token_symbol": "APE",
+      "tx_hash": "0xad2b89d6455ca5186726b05ed033be6f261b9f5da5d6763a316a091c1b9aa6b7",
+      "success": false,
+      "response_time": 0.2201249599456787,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.24,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x1b3",
+      "token_symbol": "APE",
+      "tx_hash": "0x2b156085eac861e84e3cc073e86a486939fa4011c0cd23c53a3bdb62211b2f3b",
+      "success": false,
+      "response_time": 0.22922301292419434,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.3,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x1b3",
+      "token_symbol": "APE",
+      "tx_hash": "0x8c61fc9763942e032d0f335478184f1d9c9ace4e5f4ceab09018bcdb78331802",
+      "success": false,
+      "response_time": 0.2323594093322754,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.2,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x1b3",
+      "token_symbol": "APE",
+      "tx_hash": "0x1f43aafecaffb535cf09be7d498b7e43536644cbb2b4c675e3daa6d86ddd742f",
+      "success": false,
+      "response_time": 0.2129838466644287,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.85,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x2710",
+      "token_symbol": "ETH",
+      "tx_hash": "0x0b8c577ee410631481cb62c95da6cac12ede4f7d326545222cdf4899f30f4c8c",
+      "success": false,
+      "response_time": 0.21960973739624023,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.88,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x2710",
+      "token_symbol": "ETH",
+      "tx_hash": "0xf822246bbddadcf2dc3f08d66660b1fe869b8b3a4cbc9d6ffd5295f17fbfd2dc",
+      "success": false,
+      "response_time": 0.286637544631958,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 2.0,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x2710",
+      "token_symbol": "ETH",
+      "tx_hash": "0xe0b3ec6e4aac627cbf86899741bc21cdff2ec9c0fa9c5862eba20608e344aecf",
+      "success": false,
+      "response_time": 0.21743297576904297,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.83,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x2710",
+      "token_symbol": "ETH",
+      "tx_hash": "0x4f28eeaaf7528f850cefffa3ebf5cf0ef6a17fa87b35ba5e8c7d54a7bf3cb894",
+      "success": false,
+      "response_time": 0.3235154151916504,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 2.0,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x2710",
+      "token_symbol": "ETH",
+      "tx_hash": "0xea9f60708c855fabea63dba38047ea83d90378b15bd0cdee06113c425ceddf11",
+      "success": false,
+      "response_time": 0.21635007858276367,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 2.0,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x2710",
+      "token_symbol": "ETH",
+      "tx_hash": "0xf83029d8d516bc98e77823d6800e58e8e8ea76b6ca146292f74b8ddd4a2ecc43",
+      "success": false,
+      "response_time": 0.21958160400390625,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 2.0,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x2710",
+      "token_symbol": "ETH",
+      "tx_hash": "0x453a9cc3d08586436ea2035a02e1d4236686a790c415517c88cd8b41ee7926a4",
+      "success": false,
+      "response_time": 0.21745085716247559,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 2.0,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x2710",
+      "token_symbol": "ETH",
+      "tx_hash": "0xd804c1d2b6d071a38516c53bbdccd068bae3334202fb83c3197b82aac4902cbe",
+      "success": false,
+      "response_time": 0.21526885032653809,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.92,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x2710",
+      "token_symbol": "ETH",
+      "tx_hash": "0x60497dd3415da86e7ed877823c91dee429b86bd4a959acddc2fcd973db3473b9",
+      "success": false,
+      "response_time": 0.2162773609161377,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.52,
+      "status_code": 400
+    },
+    {
+      "chain_id": "0x2710",
+      "token_symbol": "ETH",
+      "tx_hash": "0x27a61538783c65fc58ebe050d43b9b12dce9dc794bb98c4008887ba5619c44c6",
+      "success": false,
+      "response_time": 0.21958446502685547,
+      "error_message": "HTTP 400: {\"detail\":\"uid e hash s\u00e3o obrigat\u00f3rios\"}",
+      "usd_amount": 1.78,
+      "status_code": 400
+    }
+  ]
+}
