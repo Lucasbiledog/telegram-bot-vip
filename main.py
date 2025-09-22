@@ -611,7 +611,7 @@ def ensure_schema():
 # Helpers
 # =========================
 # Quais comandos usuários comuns podem usar
-ALLOWED_FOR_NON_ADM = {"pagar", "tx", "start", "novopack", "getid" }
+ALLOWED_FOR_NON_ADM = {"pagar", "tx", "start", "novopack", "getid", "comandos", "listar_comandos" }
 
 def esc(s): return html.escape(str(s) if s is not None else "")
 def now_utc(): return dt.datetime.now(dt.timezone.utc)
@@ -2070,7 +2070,7 @@ async def _block_non_admin_commands(update: Update, context: ContextTypes.DEFAUL
         return  # /tx liberado
 
     # Bloqueia o resto
-    await update.effective_message.reply_text("🚫 Comando restrito. Comandos permitidos: /tx, /novopack, /getid")
+    await update.effective_message.reply_text("🚫 Comando restrito. Comandos permitidos: /tx, /novopack, /getid, /comandos")
     raise ApplicationHandlerStop
 
 def header_key(chat_id: int, message_id: int) -> int:
@@ -5993,7 +5993,7 @@ async def keepalive_job(context: ContextTypes.DEFAULT_TYPE):
     except Exception as e: logging.warning(f"[keepalive] erro: {e}")
 
 # ===== Guard global: só permite /tx para não-admin (em qualquer chat)
-ALLOWED_NON_ADMIN = {"tx", "status", "novopack"}
+ALLOWED_NON_ADMIN = {"tx", "status", "novopack", "getid", "comandos", "listar_comandos"}
 
 async def _block_non_admin_everywhere(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.effective_message
