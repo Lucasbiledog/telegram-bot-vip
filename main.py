@@ -611,7 +611,7 @@ def ensure_schema():
 # Helpers
 # =========================
 # Quais comandos usuários comuns podem usar
-ALLOWED_FOR_NON_ADM = {"pagar", "tx", "start", "novopack" }
+ALLOWED_FOR_NON_ADM = {"pagar", "tx", "start", "novopack", "getid" }
 
 def esc(s): return html.escape(str(s) if s is not None else "")
 def now_utc(): return dt.datetime.now(dt.timezone.utc)
@@ -2070,7 +2070,7 @@ async def _block_non_admin_commands(update: Update, context: ContextTypes.DEFAUL
         return  # /tx liberado
 
     # Bloqueia o resto
-    await update.effective_message.reply_text("🚫 Comando restrito. Comandos permitidos: /tx, /novopack")
+    await update.effective_message.reply_text("🚫 Comando restrito. Comandos permitidos: /tx, /novopack, /getid")
     raise ApplicationHandlerStop
 
 def header_key(chat_id: int, message_id: int) -> int:
