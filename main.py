@@ -375,29 +375,36 @@ def ensure_vip_notification_columns():
     try:
         logging.info("Iniciando migração das colunas de notificação VIP...")
         with engine.begin() as conn:
+            # Adicionar coluna first_name se não existir
+            try:
+                conn.execute(text("ALTER TABLE vip_memberships ADD COLUMN first_name VARCHAR"))
+                logging.info("✅ Coluna first_name adicionada")
+            except Exception as e:
+                logging.debug(f"Coluna first_name já existe ou erro: {e}")
+
             # Adicionar colunas de notificação
-            try: 
+            try:
                 conn.execute(text("ALTER TABLE vip_memberships ADD COLUMN notified_7_days BOOLEAN DEFAULT FALSE"))
                 logging.info("✅ Coluna notified_7_days adicionada")
-            except Exception as e: 
+            except Exception as e:
                 logging.debug(f"Coluna notified_7_days já existe ou erro: {e}")
-            
-            try: 
+
+            try:
                 conn.execute(text("ALTER TABLE vip_memberships ADD COLUMN notified_3_days BOOLEAN DEFAULT FALSE"))
                 logging.info("✅ Coluna notified_3_days adicionada")
-            except Exception as e: 
+            except Exception as e:
                 logging.debug(f"Coluna notified_3_days já existe ou erro: {e}")
-            
-            try: 
+
+            try:
                 conn.execute(text("ALTER TABLE vip_memberships ADD COLUMN notified_1_day BOOLEAN DEFAULT FALSE"))
                 logging.info("✅ Coluna notified_1_day adicionada")
-            except Exception as e: 
+            except Exception as e:
                 logging.debug(f"Coluna notified_1_day já existe ou erro: {e}")
-            
-            try: 
+
+            try:
                 conn.execute(text("ALTER TABLE vip_memberships ADD COLUMN removal_scheduled BOOLEAN DEFAULT FALSE"))
                 logging.info("✅ Coluna removal_scheduled adicionada")
-            except Exception as e: 
+            except Exception as e:
                 logging.debug(f"Coluna removal_scheduled já existe ou erro: {e}")
             
             # Garantir que valores NULL sejam FALSE
@@ -611,7 +618,7 @@ def ensure_schema():
 # Helpers
 # =========================
 # Quais comandos usuários comuns podem usar
-ALLOWED_FOR_NON_ADM = {"pagar", "tx", "start", "novopack", "getid", "comandos", "listar_comandos" }
+ALLOWED_FOR_NON_ADM = {"pagar", "tx", "start", "novopack", "novopackvip", "novopackfree", "getid", "comandos", "listar_comandos" }
 
 def esc(s): return html.escape(str(s) if s is not None else "")
 def now_utc(): return dt.datetime.now(dt.timezone.utc)
@@ -2070,7 +2077,7 @@ async def _block_non_admin_commands(update: Update, context: ContextTypes.DEFAUL
         return  # /tx liberado
 
     # Bloqueia o resto
-    await update.effective_message.reply_text("🚫 Comando restrito. Comandos permitidos: /tx, /novopack, /getid, /comandos")
+    await update.effective_message.reply_text("🚫 Comando restrito. Comandos permitidos: /tx, /novopack, /novopackvip, /novopackfree, /getid, /comandos")
     raise ApplicationHandlerStop
 
 def header_key(chat_id: int, message_id: int) -> int:
@@ -2788,6 +2795,7 @@ async def comandos_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "💸 Pagamento (MetaMask):",
         "• Pagamentos automáticos junto às imagens",
         "• /tx <hash> — valida e libera o VIP",
+        "• /pagar_vip — envia mensagem com link de pagamento (admin)",
         "",
         "🧩 Packs:",
         "• /novopack (privado) — fluxo guiado (VIP/FREE)",
@@ -5131,26 +5139,62 @@ async def comprovante_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="HTML"
         )
 
+async def status_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Comando para ver status do VIP (alias para comprovante)"""
+    await comprovante_cmd(update, context)
+
+async def pagar_vip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Comando para enviar mensagem de pagamento VIP"""
+    if not (update.effective_user and is_admin(update.effective_user.id)):
+        return await update.effective_message.reply_text("❌ Apenas admins podem usar este comando.")
+
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton(
+            "💳 Abrir Página de Pagamento",
+            callback_data="checkout_callback"
+        )]
+    ])
+
+    checkout_msg = (
+        "💸 <b>Quer ver o conteúdo completo?</b>\n\n"
+        "✅ Clique no botão abaixo para abrir a página de pagamento\n"
+        "🔒 Pague com qualquer criptomoeda\n"
+        "⚡ Ativação automática\n\n"
+        "💰 <b>Planos:</b>\n"
+        "• 30 dias: $30.00 USD (Mensal)\n"
+        "• 90 dias: $70.00 USD (Trimestral)\n"
+        "• 180 dias: $110.00 USD (Semestral)\n"
+        "• 365 dias: $179.00 USD (Anual)"
+    )
+
+    await update.effective_message.reply_text(
+        checkout_msg,
+        parse_mode="HTML",
+        reply_markup=keyboard
+    )
+
 async def migrate_vip_columns_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Comando para executar migração das colunas de notificação VIP"""
     if not (update.effective_user and is_admin(update.effective_user.id)):
         return await update.effective_message.reply_text("❌ Apenas admins.")
-    
+
     try:
         await update.effective_message.reply_text("🔄 Executando migração das colunas VIP...")
-        
+
         # Executar migração
         ensure_vip_notification_columns()
-        
+
         await update.effective_message.reply_text(
             "✅ Migração concluída!\n"
-            "Colunas adicionadas:\n"
+            "Colunas verificadas/adicionadas:\n"
+            "• first_name\n"
             "• notified_7_days\n"
             "• notified_3_days\n"
             "• notified_1_day\n"
-            "• removal_scheduled"
+            "• removal_scheduled\n\n"
+            "⚠️ Agora o comando /vip_list deve funcionar corretamente!"
         )
-        
+
     except Exception as e:
         await update.effective_message.reply_text(f"❌ Erro na migração: {e}")
         logging.error(f"Erro na migração VIP: {e}")
@@ -5993,7 +6037,7 @@ async def keepalive_job(context: ContextTypes.DEFAULT_TYPE):
     except Exception as e: logging.warning(f"[keepalive] erro: {e}")
 
 # ===== Guard global: só permite /tx para não-admin (em qualquer chat)
-ALLOWED_NON_ADMIN = {"tx", "status", "novopack", "getid", "comandos", "listar_comandos"}
+ALLOWED_NON_ADMIN = {"tx", "status", "novopack", "novopackvip", "novopackfree", "getid", "comandos", "listar_comandos"}
 
 async def _block_non_admin_everywhere(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.effective_message
@@ -6276,6 +6320,8 @@ async def on_startup():
         application.add_handler(CommandHandler("migrate_vip_columns", migrate_vip_columns_cmd), group=1)
         application.add_handler(CommandHandler("comprovante", comprovante_cmd), group=1)
         application.add_handler(CommandHandler("recibo", comprovante_cmd), group=1)  # Alias
+        application.add_handler(CommandHandler("status", status_cmd), group=1)
+        application.add_handler(CommandHandler("pagar_vip", pagar_vip_cmd), group=1)
 
         # ===== Member Join Handlers - para capturar ID quando usuário ENTRA no grupo
         
