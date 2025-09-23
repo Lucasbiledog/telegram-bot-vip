@@ -6187,19 +6187,19 @@ async def on_startup():
             states={CHOOSE_TIER: [MessageHandler(filters.TEXT & ~filters.COMMAND, novopack_choose_tier)], **states_map},
             fallbacks=[CommandHandler("cancelar", novopack_cancel)], allow_reentry=True,
         )
-        application.add_handler(conv_main, group=0)
+        application.add_handler(conv_main, group=-50)
 
         conv_vip = ConversationHandler(
             entry_points=[CommandHandler("novopackvip", novopackvip_start, filters=filters.ChatType.PRIVATE)],
             states=states_map, fallbacks=[CommandHandler("cancelar", novopack_cancel)], allow_reentry=True,
         )
-        application.add_handler(conv_vip, group=0)
+        application.add_handler(conv_vip, group=-50)
 
         conv_free = ConversationHandler(
             entry_points=[CommandHandler("novopackfree", novopackfree_start, filters=filters.ChatType.PRIVATE)],
             states=states_map, fallbacks=[CommandHandler("cancelar", novopack_cancel)], allow_reentry=True,
         )
-        application.add_handler(conv_free, group=0)
+        application.add_handler(conv_free, group=-50)
 
         # ===== Conversa /excluir_pack
         excluir_conv = ConversationHandler(
@@ -6207,16 +6207,16 @@ async def on_startup():
             states={DELETE_PACK_CONFIRM: [MessageHandler(filters.TEXT & ~filters.COMMAND, excluir_pack_confirm)]},
             fallbacks=[], allow_reentry=True,
         )
-        application.add_handler(excluir_conv, group=0)
+        application.add_handler(excluir_conv, group=-50)
 
         # ===== Conversa /excluir_todos_packs
         excluir_todos_conv = ConversationHandler(
             entry_points=[CommandHandler("excluir_todos_packs", excluir_todos_packs_cmd)],
             states={EXCLUIR_TODOS_CONFIRM: [MessageHandler(filters.TEXT & ~filters.COMMAND, excluir_todos_packs_confirm)]},
-            fallbacks=[CommandHandler("cancelar", lambda u, c: ConversationHandler.END)], 
+            fallbacks=[CommandHandler("cancelar", lambda u, c: ConversationHandler.END)],
             allow_reentry=True,
         )
-        application.add_handler(excluir_todos_conv, group=0)
+        application.add_handler(excluir_todos_conv, group=-50)
 
         # ===== Handlers de storage
         application.add_handler(
