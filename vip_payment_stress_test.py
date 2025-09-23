@@ -169,10 +169,10 @@ class PaymentValidator:
 
         # Faixas de valor VIP (baseado no endpoint /vip_pricing)
         self.vip_tiers = [
-            {"min_usd": 0.05, "max_usd": 0.99, "days": 30, "plan": "BASIC"},
-            {"min_usd": 1.00, "max_usd": 1.49, "days": 60, "plan": "STANDARD"},
-            {"min_usd": 1.50, "max_usd": 1.99, "days": 180, "plan": "PREMIUM"},
-            {"min_usd": 2.00, "max_usd": 10.00, "days": 365, "plan": "ANNUAL"}
+            {"min_usd": 30.00, "max_usd": 69.99, "days": 30, "plan": "MENSAL"},
+            {"min_usd": 70.00, "max_usd": 109.99, "days": 90, "plan": "TRIMESTRAL"},
+            {"min_usd": 110.00, "max_usd": 178.99, "days": 180, "plan": "SEMESTRAL"},
+            {"min_usd": 179.00, "max_usd": 500.00, "days": 365, "plan": "ANUAL"}
         ]
 
     def generate_realistic_payment_scenarios(self, num_tests: int = 100) -> List[Dict[str, Any]]:

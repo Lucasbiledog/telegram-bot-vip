@@ -345,12 +345,12 @@ async function loadBasicInfo() {
     // Mostrar carteira padrão (pode ser obtida da API)
     $("addr").value = "0x40dDBD27F878d07808339F9965f013F1CBc2F812";
 
-    // Mostrar planos padrão - valores mínimos atualizados
+    // Mostrar planos padrão - valores atualizados
     const defaultPlans = {
-      "30": 0.05,
-      "60": 1.00,
-      "180": 2.00,  // Atualizado de 1.50 para 2.00
-      "365": 3.00   // Atualizado de 2.00 para 3.00
+      "30": 30.00,   // Mensal
+      "90": 70.00,   // Trimestral
+      "180": 110.00, // Semestral
+      "365": 179.00  // Anual
     };
     console.log("[loadBasicInfo] Renderizando planos padrão:", defaultPlans);
     renderPlans(defaultPlans);

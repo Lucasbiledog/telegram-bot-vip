@@ -5498,10 +5498,10 @@ async def get_vip_pricing():
     return {
         "wallet_address": WALLET_ADDRESS,
         "value_tiers": {
-            "$0.05 - $0.99": "30 dias",
-            "$1.00 - $1.49": "60 dias", 
-            "$1.50 - $1.99": "180 dias",
-            "$2.00+": "365 dias"
+            "$30.00": "30 dias (Mensal)",
+            "$70.00": "90 dias (Trimestral)",
+            "$110.00": "180 dias (Semestral)",
+            "$179.00": "365 dias (Anual)"
         },
         "min_confirmations": 3
     }
@@ -5560,10 +5560,10 @@ async def api_config(uid: str = None, ts: str = None, sig: str = None):
         
         # Obter configurações (sempre disponível) - preços mínimos para compatibilidade com webapp
         value_tiers = {
-            "30": 0.05,   # Mínimo para 1 mês
-            "60": 1.00,   # Mínimo para 2 meses
-            "180": 1.50,  # Mínimo para 6 meses
-            "365": 2.00   # Mínimo para 1 ano
+            "30": 30.00,   # Preço para 1 mês
+            "90": 70.00,   # Preço para 3 meses
+            "180": 110.00, # Preço para 6 meses
+            "365": 179.00  # Preço para 1 ano
         }
         
         return {
@@ -5815,12 +5815,12 @@ async def renew_vip_callback_handler(update: Update, context: ContextTypes.DEFAU
             # Criar botões para planos
             keyboard = InlineKeyboardMarkup([
                 [
-                    InlineKeyboardButton("💎 1 MÊS - $0.50", callback_data="renew_plan_30"),
-                    InlineKeyboardButton("💎 2 MESES - $1.50", callback_data="renew_plan_60")
+                    InlineKeyboardButton("💎 1 MÊS - $30.00", callback_data="renew_plan_30"),
+                    InlineKeyboardButton("💎 3 MESES - $70.00", callback_data="renew_plan_90")
                 ],
                 [
-                    InlineKeyboardButton("💎 6 MESES - $2.50", callback_data="renew_plan_180"),
-                    InlineKeyboardButton("💎 1 ANO - $4.00", callback_data="renew_plan_365")
+                    InlineKeyboardButton("💎 6 MESES - $110.00", callback_data="renew_plan_180"),
+                    InlineKeyboardButton("💎 1 ANO - $179.00", callback_data="renew_plan_365")
                 ],
                 [InlineKeyboardButton("❌ Cancelar", callback_data="cancel_renewal")]
             ])
@@ -5870,10 +5870,10 @@ async def renew_plan_callback_handler(update: Update, context: ContextTypes.DEFA
     
     # Mapeamento de dias para preços e descrições
     plan_info = {
-        30: {"price": 0.50, "name": "1 Mês"},
-        60: {"price": 1.50, "name": "2 Meses"}, 
-        180: {"price": 2.50, "name": "6 Meses"},
-        365: {"price": 4.00, "name": "1 Ano"}
+        30: {"price": 30.00, "name": "1 Mês"},
+        90: {"price": 70.00, "name": "3 Meses"},
+        180: {"price": 110.00, "name": "6 Meses"},
+        365: {"price": 179.00, "name": "1 Ano"}
     }
     
     if days not in plan_info:
