@@ -25,15 +25,15 @@ def choose_plan_from_usd(amount_usd: float, prices: Dict[int, float] = None) -> 
     
     # Faixas de valor dinâmicas baseadas no valor real pago
     # CORRIGIDO: Agora consistente com plan_from_amount em main.py
-    if amount_usd < 0.05:  # Menos de 5 centavos - não elegível
+    if amount_usd < 30.0:  # Menos de $30 - não elegível
         return None
-    elif amount_usd < 1.0:  # $0.05 - $0.99
+    elif amount_usd < 70.0:  # $30.00 - $69.99
         return 30   # 1 mês (MENSAL)
-    elif amount_usd < 1.5:  # $1.00 - $1.49
-        return 60   # 2 meses (TRIMESTRAL - nome confuso mas é 60 dias)
-    elif amount_usd < 2.0:  # $1.50 - $1.99
+    elif amount_usd < 110.0:  # $70.00 - $109.99
+        return 90   # 3 meses (TRIMESTRAL)
+    elif amount_usd < 179.0:  # $110.00 - $178.99
         return 180  # 6 meses (SEMESTRAL)
-    else:  # $2.00+
+    else:  # $179.00+
         return 365  # 1 ano (ANUAL)
     
     # Fallback para compatibilidade (caso ainda existam preços fixos)
@@ -163,16 +163,16 @@ from enum import Enum
 
 class VipPlan(Enum):
     MENSAL = "mensal"      # 30 dias
-    BIMESTRAL = "bimestral"   # 60 dias
-    TRIMESTRAL = "trimestral" # 180 dias (3 meses + bônus)
+    TRIMESTRAL = "trimestral" # 90 dias
+    SEMESTRAL = "semestral"   # 180 dias
     ANUAL = "anual"        # 365 dias
 
 def plan_to_days(plan: VipPlan) -> int:
     """Converte plano VIP para número de dias."""
     mapping = {
         VipPlan.MENSAL: 30,
-        VipPlan.BIMESTRAL: 60,
-        VipPlan.TRIMESTRAL: 180,
+        VipPlan.TRIMESTRAL: 90,
+        VipPlan.SEMESTRAL: 180,
         VipPlan.ANUAL: 365,
     }
     return mapping.get(plan, 30)

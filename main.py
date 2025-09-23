@@ -455,7 +455,7 @@ class VipPlan(str, Enum):
 
 PLAN_DAYS = {
     VipPlan.MENSAL: 30,
-    VipPlan.TRIMESTRAL: 60,     # Renomeado para 60 dias
+    VipPlan.TRIMESTRAL: 90,     # Trimestral agora é 90 dias
     VipPlan.SEMESTRAL: 180,
     VipPlan.ANUAL: 365,
 }
@@ -2377,11 +2377,11 @@ async def _send_preview_media(context: ContextTypes.DEFAULT_TYPE, target_chat_id
             "✅ Clique no botão abaixo para abrir a página de pagamento\n"
             "🔒 Pague com qualquer criptomoeda\n"
             "⚡ Ativação automática\n\n"
-            "💰 <b>Planos (Ranges):</b>\n"
-            "• 30 dias: $0.05 - $0.99\n"
-            "• 60 dias: $1.00 - $1.49\n"
-            "• 180 dias: $1.50 - $1.99\n"
-            "• 365 dias: $2.00+"
+            "💰 <b>Planos:</b>\n"
+            "• 30 dias: $30.00 USD (Mensal)\n"
+            "• 90 dias: $70.00 USD (Trimestral)\n"
+            "• 180 dias: $110.00 USD (Semestral)\n"
+            "• 365 dias: $179.00 USD (Anual)"
         )
         
         try:
@@ -2698,11 +2698,11 @@ async def checkout_callback_handler(update: Update, context: ContextTypes.DEFAUL
                 f"✅ Pagamento será associado quando você entrar no grupo VIP\n"
                 f"🔒 Pague com qualquer criptomoeda\n"
                 f"⚡ Ativação automática do VIP\n\n"
-                f"💰 <b>Planos (Ranges):</b>\n"
-                f"• 30 dias: $0.05 - $0.99\n"
-                f"• 60 dias: $1.00 - $1.49\n"
-                f"• 180 dias: $1.50 - $1.99\n"
-                f"• 365 dias: $2.00+\n\n"
+                f"💰 <b>Planos:</b>\n"
+                f"• 30 dias: $30.00 USD (Mensal)\n"
+                f"• 90 dias: $70.00 USD (Trimestral)\n"
+                f"• 180 dias: $110.00 USD (Semestral)\n"
+                f"• 365 dias: $179.00 USD (Anual)\n\n"
                 f"📋 <b>Como funciona:</b>\n"
                 f"1. Clique no botão abaixo para pagar\n"
                 f"2. Após o pagamento, aguarde a confirmação\n"
@@ -3185,8 +3185,8 @@ async def listar_hashes_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                 # Fallback para plano salvo no VIP
                                 plan_names = {
                                     "mensal": "30 dias",
-                                    "bimestral": "60 dias", 
-                                    "trimestral": "180 dias",
+                                    "trimestral": "90 dias",
+                                    "semestral": "180 dias",
                                     "anual": "365 dias"
                                 }
                                 plan_desc = plan_names.get(vip.plan, vip.plan or "indefinido")
@@ -4371,10 +4371,10 @@ def _to_wei(amount_native: float, decimals: int = 18) -> int:
 PRICE_TOLERANCE = float(os.getenv("PRICE_TOLERANCE", "0.01"))  # 1%
 
 PLAN_PRICE_USD = {
-    VipPlan.MENSAL: 0.05,      # 30 dias
-    VipPlan.TRIMESTRAL: 1.00,  # 60 dias (foi renomeado de TRIMESTRAL para 60 dias)
-    VipPlan.SEMESTRAL: 1.50,   # 180 dias
-    VipPlan.ANUAL: 2.00,       # 365 dias
+    VipPlan.MENSAL: 30.00,      # 30 dias
+    VipPlan.TRIMESTRAL: 70.00,  # 90 dias
+    VipPlan.SEMESTRAL: 110.00,  # 180 dias
+    VipPlan.ANUAL: 179.00,      # 365 dias
 }
 
 def plan_from_amount(amount_usd: float) -> Optional[VipPlan]:
@@ -4382,18 +4382,18 @@ def plan_from_amount(amount_usd: float) -> Optional[VipPlan]:
     Determina o plano VIP baseado no valor pago usando ranges ao invés de valores exatos.
     
     Ranges:
-    - $0.05 - $0.99: VIP 30 dias (MENSAL)
-    - $1.00 - $1.49: VIP 60 dias (TRIMESTRAL) 
-    - $1.50 - $1.99: VIP 180 dias (SEMESTRAL)
-    - $2.00+: VIP 365 dias (ANUAL)
+    - $30.00 - $69.99: VIP 30 dias (MENSAL)
+    - $70.00 - $109.99: VIP 90 dias (TRIMESTRAL)
+    - $110.00 - $178.99: VIP 180 dias (SEMESTRAL)
+    - $179.00+: VIP 365 dias (ANUAL)
     """
-    if amount_usd < 0.05:
+    if amount_usd < 30.00:
         return None  # Valor muito baixo
-    elif amount_usd < 1.00:
+    elif amount_usd < 70.00:
         return VipPlan.MENSAL      # 30 dias
-    elif amount_usd < 1.50:
-        return VipPlan.TRIMESTRAL  # 60 dias
-    elif amount_usd < 2.00:
+    elif amount_usd < 110.00:
+        return VipPlan.TRIMESTRAL  # 90 dias
+    elif amount_usd < 179.00:
         return VipPlan.SEMESTRAL   # 180 dias
     else:
         return VipPlan.ANUAL       # 365 dias
