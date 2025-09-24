@@ -19,7 +19,7 @@ import uvicorn
 import httpx
 
 from telegram import Update, InputMediaPhoto, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
-from telegram.error import BadRequest
+from telegram.error import BadRequest, RetryAfter, TimedOut, NetworkError
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
@@ -77,6 +77,39 @@ from sqlalchemy.orm import declarative_base, sessionmaker, relationship
 from sqlalchemy.engine import make_url
 
 from models import Pack
+
+# === Funções de Retry Automático ===
+async def send_with_retry(func, *args, max_retries=3, **kwargs):
+    """Executa função com retry automático para rate limits e erros de rede"""
+    last_exception = None
+
+    for attempt in range(max_retries):
+        try:
+            return await func(*args, **kwargs)
+        except RetryAfter as e:
+            if attempt < max_retries - 1:
+                wait_time = e.retry_after + 1
+                logging.warning(f"Rate limit hit, waiting {wait_time}s (attempt {attempt + 1}/{max_retries})")
+                await asyncio.sleep(wait_time)
+                last_exception = e
+                continue
+            else:
+                raise e
+        except (TimedOut, NetworkError) as e:
+            if attempt < max_retries - 1:
+                wait_time = 2 ** attempt  # Exponential backoff
+                logging.warning(f"Network error, retrying in {wait_time}s (attempt {attempt + 1}/{max_retries}): {e}")
+                await asyncio.sleep(wait_time)
+                last_exception = e
+                continue
+            else:
+                raise e
+        except Exception as e:
+            # Para outros erros, não fazer retry
+            raise e
+
+    # Se chegou aqui, todos os retries falharam
+    raise last_exception
 from config import WEBAPP_URL
 
 from payments import (
@@ -2567,11 +2600,119 @@ async def enviar_pack_job(context: ContextTypes.DEFAULT_TYPE, tier: str, target_
         SENDING_PACKS.discard(pack.id if 'pack' in locals() and pack else None)
 
 async def enviar_pack_vip_job(context: ContextTypes.DEFAULT_TYPE):
-    return await enviar_pack_job(context, tier="vip", target_chat_id=GROUP_VIP_ID)
+    """Job agendado para envio automático de packs VIP com notificações de falha"""
+    try:
+        hhmm_vip = cfg_get("daily_pack_vip_hhmm") or "09:00"
+        logging.info(f"[SCHEDULE-VIP] Executando envio automático às {hhmm_vip}")
+
+        result = await send_with_retry(
+            enviar_pack_job,
+            context,
+            tier="vip",
+            target_chat_id=GROUP_VIP_ID
+        )
+
+        if result and ("Nenhum pack" in result or "já marcado" in result):
+            logging.info(f"[SCHEDULE-VIP] {result}")
+        elif result and "❌" in result:
+            # Falha no envio - notificar admin
+            logging.error(f"[SCHEDULE-VIP] Falha no envio: {result}")
+            admin_ids = get_admin_ids()
+            for admin_id in admin_ids:
+                try:
+                    await send_with_retry(
+                        context.bot.send_message,
+                        chat_id=admin_id,
+                        text=f"⚠️ **Falha no envio automático do pack VIP**\n\n"
+                             f"🕒 Horário: {hhmm_vip}\n"
+                             f"❌ Erro: {result}\n\n"
+                             f"Verifique o bot e tente novamente com /enviar_pack_agora vip"
+                    )
+                except Exception as e:
+                    logging.error(f"Erro ao notificar admin {admin_id}: {e}")
+        else:
+            logging.info(f"[SCHEDULE-VIP] Pack VIP enviado com sucesso: {result}")
+
+        return result
+
+    except Exception as e:
+        error_msg = f"Erro crítico no envio automático VIP: {e}"
+        logging.exception(f"[SCHEDULE-VIP] {error_msg}")
+
+        # Notificar todos os admins sobre erro crítico
+        admin_ids = get_admin_ids()
+        for admin_id in admin_ids:
+            try:
+                await send_with_retry(
+                    context.bot.send_message,
+                    chat_id=admin_id,
+                    text=f"🚨 **ERRO CRÍTICO - Pack VIP**\n\n"
+                         f"❌ {error_msg}\n\n"
+                         f"O envio automático falhou completamente. "
+                         f"Verifique os logs e tente manualmente com /enviar_pack_agora vip"
+                )
+            except Exception as notify_error:
+                logging.error(f"Falha ao notificar admin {admin_id}: {notify_error}")
+
+        return f"❌ {error_msg}"
 
 
 async def enviar_pack_free_job(context: ContextTypes.DEFAULT_TYPE):
-    return await enviar_pack_job(context, tier="free", target_chat_id=GROUP_FREE_ID)
+    """Job agendado para envio automático de packs FREE com notificações de falha"""
+    try:
+        hhmm_free = cfg_get("daily_pack_free_hhmm") or "09:30"
+        logging.info(f"[SCHEDULE-FREE] Executando envio automático às {hhmm_free} (quartas-feiras)")
+
+        result = await send_with_retry(
+            enviar_pack_job,
+            context,
+            tier="free",
+            target_chat_id=GROUP_FREE_ID
+        )
+
+        if result and ("Nenhum pack" in result or "já marcado" in result):
+            logging.info(f"[SCHEDULE-FREE] {result}")
+        elif result and "❌" in result:
+            # Falha no envio - notificar admin
+            logging.error(f"[SCHEDULE-FREE] Falha no envio: {result}")
+            admin_ids = get_admin_ids()
+            for admin_id in admin_ids:
+                try:
+                    await send_with_retry(
+                        context.bot.send_message,
+                        chat_id=admin_id,
+                        text=f"⚠️ **Falha no envio automático do pack FREE**\n\n"
+                             f"🕒 Horário: {hhmm_free} (quartas-feiras)\n"
+                             f"❌ Erro: {result}\n\n"
+                             f"Verifique o bot e tente novamente com /enviar_pack_agora free"
+                    )
+                except Exception as e:
+                    logging.error(f"Erro ao notificar admin {admin_id}: {e}")
+        else:
+            logging.info(f"[SCHEDULE-FREE] Pack FREE enviado com sucesso: {result}")
+
+        return result
+
+    except Exception as e:
+        error_msg = f"Erro crítico no envio automático FREE: {e}"
+        logging.exception(f"[SCHEDULE-FREE] {error_msg}")
+
+        # Notificar todos os admins sobre erro crítico
+        admin_ids = get_admin_ids()
+        for admin_id in admin_ids:
+            try:
+                await send_with_retry(
+                    context.bot.send_message,
+                    chat_id=admin_id,
+                    text=f"🚨 **ERRO CRÍTICO - Pack FREE**\n\n"
+                         f"❌ {error_msg}\n\n"
+                         f"O envio automático falhou completamente. "
+                         f"Verifique os logs e tente manualmente com /enviar_pack_agora free"
+                )
+            except Exception as notify_error:
+                logging.error(f"Falha ao notificar admin {admin_id}: {notify_error}")
+
+        return f"❌ {error_msg}"
 
 # Função removida - agendamento individual não é mais usado
 
@@ -4641,35 +4782,57 @@ def _register_all_scheduled_messages(job_queue: JobQueue):
         job_queue.run_daily(_scheduled_message_job, time=dt.time(hour=h, minute=k, tzinfo=tz), name=f"{JOB_PREFIX_SM}{m.id}")
 
 async def _reschedule_daily_packs():
+    """Reagenda jobs diários de packs com logs detalhados"""
     if not application or not application.job_queue:
-        logging.warning("Application ou job_queue não disponível para reagendar packs")
-        return
-    
+        logging.warning("[RESCHEDULE] Application ou job_queue não disponível para reagendar packs")
+        return False
+
     # Remover jobs existentes
     removed_jobs = []
     for j in list(application.job_queue.jobs()):
         if j.name in {"daily_pack_vip", "daily_pack_free", "weekly_pack_free"}:
             j.schedule_removal()
             removed_jobs.append(j.name)
-    
+
     if removed_jobs:
-        logging.info(f"Jobs removidos: {removed_jobs}")
-    
+        logging.info(f"[RESCHEDULE] Jobs removidos: {removed_jobs}")
+    else:
+        logging.info("[RESCHEDULE] Nenhum job anterior para remover")
+
     tz = pytz.timezone("America/Sao_Paulo")
     hhmm_vip  = cfg_get("daily_pack_vip_hhmm")  or "09:00"
     hhmm_free = cfg_get("daily_pack_free_hhmm") or "09:30"
-    
+
     try:
-        hv, mv = parse_hhmm(hhmm_vip); hf, mf = parse_hhmm(hhmm_free)
-        
+        hv, mv = parse_hhmm(hhmm_vip)
+        hf, mf = parse_hhmm(hhmm_free)
+
+        # Calcular próximas execuções
+        now = dt.datetime.now(tz)
+        next_vip = now.replace(hour=hv, minute=mv, second=0, microsecond=0)
+        if next_vip <= now:
+            next_vip += dt.timedelta(days=1)
+
+        next_free = now.replace(hour=hf, minute=mf, second=0, microsecond=0)
+        while next_free.weekday() != 2:  # 2 = quarta-feira
+            next_free += dt.timedelta(days=1)
+        if next_free <= now:
+            next_free += dt.timedelta(weeks=1)
+
         # Agendar novos jobs
         application.job_queue.run_daily(enviar_pack_vip_job,  time=dt.time(hour=hv, minute=mv, tzinfo=tz), name="daily_pack_vip")
-        # Pack FREE: envio semanal (toda quarta-feira)
         application.job_queue.run_daily(enviar_pack_free_job, time=dt.time(hour=hf, minute=mf, tzinfo=tz), days=(2,), name="weekly_pack_free")
-        
-        logging.info(f"✅ Jobs reagendados - VIP: {hhmm_vip} (diário), FREE: {hhmm_free} (quartas-feiras) (America/Sao_Paulo)")
+
+        logging.info(f"[RESCHEDULE] ✅ Jobs reagendados com sucesso:")
+        logging.info(f"[RESCHEDULE]   📧 VIP: {hhmm_vip} (diário) - próximo: {next_vip.strftime('%d/%m %H:%M')}")
+        logging.info(f"[RESCHEDULE]   📧 FREE: {hhmm_free} (quartas) - próximo: {next_free.strftime('%d/%m %H:%M')}")
+        logging.info(f"[RESCHEDULE]   🌍 Timezone: {tz}")
+
+        return True
+
     except Exception as e:
-        logging.error(f"Erro ao reagendar jobs: {e}")
+        logging.error(f"[RESCHEDULE] ❌ Erro ao reagendar jobs: {e}")
+        return False
 
 async def _add_msg_tier(update: Update, context: ContextTypes.DEFAULT_TYPE, tier: str):
     if not (update.effective_user and is_admin(update.effective_user.id)): return await update.effective_message.reply_text("Apenas admins.")
@@ -4760,68 +4923,124 @@ async def del_msg_vip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):  
 async def del_msg_free_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE): await _del_msg_tier(update, context, "free")
 
 async def set_pack_horario_vip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not (update.effective_user and is_admin(update.effective_user.id)): 
+    if not (update.effective_user and is_admin(update.effective_user.id)):
         return await update.effective_message.reply_text("Apenas admins.")
-    if not context.args: 
+    if not context.args:
         return await update.effective_message.reply_text("Uso: /set_pack_horario_vip HH:MM")
-    
+
     try:
         hhmm = context.args[0]
+        old_time = cfg_get("daily_pack_vip_hhmm") or "09:00"
         parse_hhmm(hhmm)  # Validar formato
-        
+
         # Salvar configuração
         cfg_set("daily_pack_vip_hhmm", hhmm)
-        
-        # Reagendar jobs
-        await _reschedule_daily_packs()
-        
+
+        # Reagendar jobs com feedback
+        reschedule_success = await _reschedule_daily_packs()
+
         # Verificar se foi salvo corretamente
         saved_time = cfg_get("daily_pack_vip_hhmm")
-        
-        await update.effective_message.reply_text(
-            f"✅ Horário diário dos packs VIP atualizado!\n"
+
+        # Calcular próximo envio
+        tz = pytz.timezone("America/Sao_Paulo")
+        now = dt.datetime.now(tz)
+        hv, mv = parse_hhmm(saved_time)
+        next_send = now.replace(hour=hv, minute=mv, second=0, microsecond=0)
+        if next_send <= now:
+            next_send += dt.timedelta(days=1)
+
+        if reschedule_success:
+            status_emoji = "✅"
+            status_text = "Jobs reagendados com sucesso!"
+            log_level = "INFO"
+        else:
+            status_emoji = "⚠️"
+            status_text = "Horário salvo, mas houve problema no reagendamento. Reinicie o bot."
+            log_level = "WARNING"
+
+        await send_with_retry(
+            update.effective_message.reply_text,
+            f"{status_emoji} **Horário VIP atualizado!**\n\n"
+            f"🕒 Horário anterior: {old_time}\n"
             f"🕒 Novo horário: {saved_time}\n"
-            f"📅 Próximo envio: Hoje às {saved_time} (Horário de Brasília)\n"
-            f"🔄 Jobs reagendados com sucesso!"
+            f"📅 Próximo envio: {next_send.strftime('%d/%m às %H:%M')} (Brasília)\n"
+            f"🔄 {status_text}"
         )
-        
-        logging.info(f"Horário VIP alterado para {hhmm} pelo usuário {update.effective_user.id}")
-        
-    except Exception as e: 
-        await update.effective_message.reply_text(f"❌ Hora inválida: {e}")
-        logging.error(f"Erro ao alterar horário VIP: {e}")
+
+        logging.log(
+            getattr(logging, log_level),
+            f"[CONFIG] Horário VIP alterado: {old_time} → {hhmm} pelo usuário {update.effective_user.id}"
+        )
+
+    except Exception as e:
+        logging.error(f"[CONFIG] Erro ao alterar horário VIP: {e}")
+        await send_with_retry(
+            update.effective_message.reply_text,
+            f"❌ **Erro ao alterar horário:**\n\n{e}\n\n"
+            f"Formato correto: HH:MM (ex: 10:30)"
+        )
 
 async def set_pack_horario_free_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not (update.effective_user and is_admin(update.effective_user.id)): 
+    if not (update.effective_user and is_admin(update.effective_user.id)):
         return await update.effective_message.reply_text("Apenas admins.")
-    if not context.args: 
+    if not context.args:
         return await update.effective_message.reply_text("Uso: /set_pack_horario_free HH:MM")
-    
+
     try:
         hhmm = context.args[0]
+        old_time = cfg_get("daily_pack_free_hhmm") or "09:30"
         parse_hhmm(hhmm)  # Validar formato
-        
+
         # Salvar configuração
         cfg_set("daily_pack_free_hhmm", hhmm)
-        
-        # Reagendar jobs
-        await _reschedule_daily_packs()
-        
+
+        # Reagendar jobs com feedback
+        reschedule_success = await _reschedule_daily_packs()
+
         # Verificar se foi salvo corretamente
         saved_time = cfg_get("daily_pack_free_hhmm")
-        
-        await update.effective_message.reply_text(
-            f"✅ Horário semanal dos packs FREE atualizado!\n"
+
+        # Calcular próximo envio (quarta-feira)
+        tz = pytz.timezone("America/Sao_Paulo")
+        now = dt.datetime.now(tz)
+        hf, mf = parse_hhmm(saved_time)
+        next_send = now.replace(hour=hf, minute=mf, second=0, microsecond=0)
+        while next_send.weekday() != 2:  # 2 = quarta-feira
+            next_send += dt.timedelta(days=1)
+        if next_send <= now:
+            next_send += dt.timedelta(weeks=1)
+
+        if reschedule_success:
+            status_emoji = "✅"
+            status_text = "Jobs reagendados com sucesso!"
+            log_level = "INFO"
+        else:
+            status_emoji = "⚠️"
+            status_text = "Horário salvo, mas houve problema no reagendamento. Reinicie o bot."
+            log_level = "WARNING"
+
+        await send_with_retry(
+            update.effective_message.reply_text,
+            f"{status_emoji} **Horário FREE atualizado!**\n\n"
+            f"🕒 Horário anterior: {old_time}\n"
             f"🕒 Novo horário: {saved_time}\n"
-            f"📅 Próximo envio: Quarta-feira às {saved_time} (Horário de Brasília)\n"
-            f"🔄 Jobs reagendados com sucesso!"
+            f"📅 Próximo envio: {next_send.strftime('%d/%m às %H:%M')} (quarta-feira)\n"
+            f"🔄 {status_text}"
         )
-        
-        logging.info(f"Horário FREE alterado para {hhmm} pelo usuário {update.effective_user.id}")
-        
-    except Exception as e: 
-        await update.effective_message.reply_text(f"❌ Hora inválida: {e}")
-        logging.error(f"Erro ao alterar horário FREE: {e}")
+
+        logging.log(
+            getattr(logging, log_level),
+            f"[CONFIG] Horário FREE alterado: {old_time} → {hhmm} pelo usuário {update.effective_user.id}"
+        )
+
+    except Exception as e:
+        logging.error(f"[CONFIG] Erro ao alterar horário FREE: {e}")
+        await send_with_retry(
+            update.effective_message.reply_text,
+            f"❌ **Erro ao alterar horário:**\n\n{e}\n\n"
+            f"Formato correto: HH:MM (ex: 14:30)"
+        )
 
 async def listar_jobs_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Lista todos os jobs ativos para debug"""
