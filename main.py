@@ -4610,11 +4610,23 @@ def _tz(tz_name: str):
 async def _scheduled_message_job(context: ContextTypes.DEFAULT_TYPE):
     job = context.job; sid = int(job.name.replace(JOB_PREFIX_SM, "")) if job and job.name else None
     if sid is None: return
-    m = scheduled_get(sid); 
+    m = scheduled_get(sid);
     if not m or not m.enabled: return
     try:
         target_chat = GROUP_VIP_ID if m.tier == "vip" else GROUP_FREE_ID
+
+        # Enviar mensagem de texto
         await context.application.bot.send_message(chat_id=target_chat, text=m.text)
+
+        # Verificar se deve enviar pack junto com a mensagem
+        if "[ENVIAR_PACK]" in m.text.upper():
+            if m.tier == "vip":
+                pack_result = await enviar_pack_vip_job(context)
+                logging.info(f"Pack VIP enviado via agendamento (msg id={sid}): {pack_result}")
+            elif m.tier == "free":
+                pack_result = await enviar_pack_free_job(context)
+                logging.info(f"Pack FREE enviado via agendamento (msg id={sid}): {pack_result}")
+
     except Exception as e: logging.warning(f"Falha ao enviar scheduled_message id={sid}: {e}")
 
 def _register_all_scheduled_messages(job_queue: JobQueue):
