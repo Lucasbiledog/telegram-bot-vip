@@ -1153,7 +1153,7 @@ async def health_check():
 
         health_data = {
             "status": "healthy",
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": dt.datetime.now().isoformat(),
             "version": "2.0.0",
             "services": {
                 "database": db_status,
@@ -1176,7 +1176,7 @@ async def health_check():
             content={
                 "status": "unhealthy",
                 "error": str(e),
-                "timestamp": datetime.now().isoformat()
+                "timestamp": dt.datetime.now().isoformat()
             },
             status_code=503
         )
