@@ -1089,6 +1089,15 @@ async def startup_event():
         # Atualizar cache de admins
         await refresh_admin_cache()
 
+        # Iniciar sistema keep-alive para manter bot ativo 24/7
+        from keep_alive import keep_alive_ping
+        SELF_URL = os.getenv("SELF_URL", "")
+        if SELF_URL:
+            logging.info("🔄 Sistema Keep-Alive iniciado (ping a cada 10 minutos)")
+            asyncio.create_task(keep_alive_ping())
+        else:
+            logging.warning("⚠️ SELF_URL não configurada - sistema keep-alive não será iniciado")
+
         logging.info("✅ Sistemas de alta performance inicializados com sucesso")
 
     except Exception as e:
@@ -2118,10 +2127,13 @@ def header_key(chat_id: int, message_id: int) -> int:
     if chat_id == STORAGE_GROUP_FREE_ID: return int(-message_id)
     return int(message_id)
 
+
 async def storage_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.effective_message
     if not msg or msg.chat.id not in {STORAGE_GROUP_ID, STORAGE_GROUP_FREE_ID, PACK_ADMIN_CHAT_ID}: return
     if msg.reply_to_message: return
+
+    if update.effective_user and not is_admin(update.effective_user.id): return
 
     title = (msg.text or "").strip()
     if not title: return
@@ -2135,8 +2147,6 @@ async def storage_text_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         len(words) >= 2 or lower.startswith(("pack ", "#pack ", "pack:", "[pack]"))
     )
     if not looks_like_title: return
-
-    if update.effective_user and not is_admin(update.effective_user.id): return
 
     hkey = header_key(msg.chat.id, msg.message_id)
 
@@ -3016,6 +3026,7 @@ Variáveis ENV:
 • GROUP_VIP_ID: {os.getenv('GROUP_VIP_ID', 'não definido')}"""
     
     await update.effective_message.reply_text(info)
+
 
 async def debug_packs_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Comando para debug detalhado dos packs no banco"""
