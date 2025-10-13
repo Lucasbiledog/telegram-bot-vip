@@ -7,17 +7,12 @@ services:
     startCommand: uvicorn main:app --host=0.0.0.0 --port=$PORT
     pythonVersion: 3.10
     autoDeploy: true
+    # Disco persistente para SQLite
+    disk:
+      name: telegram-bot-data
+      mountPath: /opt/render/project/.data
+      sizeGB: 1
     envVars:
       - key: PYTHON_VERSION
         value: 3.10
-      - key: DATABASE_URL
-        fromDatabase:
-          name: telegram-bot-db
-          property: connectionString
-
-databases:
-  - name: telegram-bot-db
-    databaseName: telegram_bot
-    user: telegram_user
-    plan: free
 

@@ -236,23 +236,41 @@ def get_database_url():
         print("   - The DATABASE_URL will be automatically provided")
         print("")
         
-        # Try to use /tmp SQLite as temporary fallback
-        tmp_db = "/tmp/telegram_bot.db"
-        try:
-            # Test if we can write to /tmp
-            with open(tmp_db + ".test", 'w') as f:
-                f.write("test")
-            os.remove(tmp_db + ".test")
-            print(f"TEMPORARY FALLBACK: Using SQLite database: {tmp_db}")
-            print("WARNING: Data will be lost on restart/redeploy!")
-            print("Configure PostgreSQL immediately for data persistence!")
-            return f"sqlite:///{tmp_db}"
-        except Exception as e:
-            print(f"Cannot write to /tmp ({e})")
-            print("FALLING BACK TO IN-MEMORY DATABASE!")
-            print("ALL DATA WILL BE LOST ON RESTART!")
-            print("CONFIGURE PostgreSQL DATABASE IMMEDIATELY!")
-            return "sqlite:///:memory:"
+        # Try to use persistent volume (Render /opt/render/project/.data)
+        # or fallback to /tmp
+        persistent_paths = [
+            "/opt/render/project/.data/telegram_bot.db",
+            "/data/telegram_bot.db",
+            "/tmp/telegram_bot.db"
+        ]
+
+        for db_path in persistent_paths:
+            try:
+                # Ensure directory exists
+                db_dir = os.path.dirname(db_path)
+                os.makedirs(db_dir, exist_ok=True)
+
+                # Test write permission
+                with open(db_path + ".test", 'w') as f:
+                    f.write("test")
+                os.remove(db_path + ".test")
+
+                if db_path.startswith("/tmp"):
+                    print(f"⚠️  TEMPORARY: Using SQLite at {db_path}")
+                    print("   Data will be LOST on restart/redeploy!")
+                else:
+                    print(f"✅ PERSISTENT: Using SQLite at {db_path}")
+                    print("   Data will be PRESERVED between restarts!")
+
+                return f"sqlite:///{db_path}"
+            except Exception as e:
+                continue
+
+        # Last resort: in-memory
+        print("❌ CRITICAL: Cannot write to any persistent location!")
+        print("   Falling back to IN-MEMORY database")
+        print("   ALL DATA WILL BE LOST ON RESTART!")
+        return "sqlite:///:memory:"
     
     # Try different SQLite paths in order of preference (for local development)
     # Use absolute path based on script location
