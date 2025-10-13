@@ -624,32 +624,32 @@ def ensure_schema():
             DB_URL = "sqlite:///:memory:"
             url = make_url(DB_URL)
             # Configuração condicional baseada no tipo de banco
-if url.drivername.startswith("sqlite"):
-    # SQLite não suporta pool_size, max_overflow, pool_timeout
-    engine = create_engine(
-        url,
-        future=True,
-        echo=False,
-        connect_args={"check_same_thread": False}
-    )
-else:
-    # PostgreSQL e outros bancos suportam pooling
-    engine = create_engine(
-        url,
-        pool_pre_ping=True,
-        future=True,
-        pool_size=50,
-        max_overflow=100,
-        pool_timeout=5,
-        pool_recycle=1800,
-        echo=False,
-        connect_args={
-            "application_name": "telegram_bot",
-            "connect_timeout": 10,
-        } if url.drivername.startswith("postgresql") else {}
-    )
+            if url.drivername.startswith("sqlite"):
+                # SQLite não suporta pool_size, max_overflow, pool_timeout
+                engine = create_engine(
+                    url,
+                    future=True,
+                    echo=False,
+                    connect_args={"check_same_thread": False}
+                )
+            else:
+                # PostgreSQL e outros bancos suportam pooling
+                engine = create_engine(
+                    url,
+                    pool_pre_ping=True,
+                    future=True,
+                    pool_size=50,
+                    max_overflow=100,
+                    pool_timeout=5,
+                    pool_recycle=1800,
+                    echo=False,
+                    connect_args={
+                        "application_name": "telegram_bot",
+                        "connect_timeout": 10,
+                    } if url.drivername.startswith("postgresql") else {}
+                )
             SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
-            
+
             try:
                 Base.metadata.create_all(bind=engine)
                 ensure_bigint_columns()
