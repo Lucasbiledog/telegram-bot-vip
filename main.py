@@ -338,6 +338,14 @@ if url.drivername.startswith("sqlite"):
     )
 else:
     # PostgreSQL e outros bancos suportam pooling
+    connect_args = {}
+    if url.drivername.startswith("postgresql"):
+        connect_args = {
+            "application_name": "telegram_bot",
+            "connect_timeout": 10,
+            "sslmode": "require"  # Render requer SSL
+        }
+
     engine = create_engine(
         url,
         pool_pre_ping=True,
@@ -347,10 +355,7 @@ else:
         pool_timeout=5,
         pool_recycle=1800,
         echo=False,
-        connect_args={
-            "application_name": "telegram_bot",
-            "connect_timeout": 10,
-        } if url.drivername.startswith("postgresql") else {}
+        connect_args=connect_args
     )
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 Base = declarative_base()
@@ -634,6 +639,14 @@ def ensure_schema():
                 )
             else:
                 # PostgreSQL e outros bancos suportam pooling
+                connect_args = {}
+                if url.drivername.startswith("postgresql"):
+                    connect_args = {
+                        "application_name": "telegram_bot",
+                        "connect_timeout": 10,
+                        "sslmode": "require"  # Render requer SSL
+                    }
+
                 engine = create_engine(
                     url,
                     pool_pre_ping=True,
@@ -643,10 +656,7 @@ def ensure_schema():
                     pool_timeout=5,
                     pool_recycle=1800,
                     echo=False,
-                    connect_args={
-                        "application_name": "telegram_bot",
-                        "connect_timeout": 10,
-                    } if url.drivername.startswith("postgresql") else {}
+                    connect_args=connect_args
                 )
             SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
