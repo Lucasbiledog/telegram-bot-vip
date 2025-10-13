@@ -327,21 +327,31 @@ if url.get_backend_name() == "sqlite":
     elif url.drivername == "sqlite+aiosqlite":
         url = url.set(drivername="sqlite")
 
-engine = create_engine(
-    url,
-    pool_pre_ping=True,
-    future=True,
-    pool_size=50,  # Conexões simultâneas aumentadas para alta concorrência
-    max_overflow=100,  # Total máximo: 150 conexões
-    pool_timeout=5,  # Timeout reduzido para falhar rápido
-    pool_recycle=1800,  # Reciclar a cada 30min para evitar timeouts
-    echo=False,  # Desabilitar logs SQL em produção
-    # Otimizações adicionais para alta performance
-    connect_args={
-        "application_name": "telegram_bot",
-        "connect_timeout": 10,
-    } if url.drivername.startswith("postgresql") else {}
-)
+# Configuração condicional baseada no tipo de banco
+if url.drivername.startswith("sqlite"):
+    # SQLite não suporta pool_size, max_overflow, pool_timeout
+    engine = create_engine(
+        url,
+        future=True,
+        echo=False,
+        connect_args={"check_same_thread": False}
+    )
+else:
+    # PostgreSQL e outros bancos suportam pooling
+    engine = create_engine(
+        url,
+        pool_pre_ping=True,
+        future=True,
+        pool_size=50,
+        max_overflow=100,
+        pool_timeout=5,
+        pool_recycle=1800,
+        echo=False,
+        connect_args={
+            "application_name": "telegram_bot",
+            "connect_timeout": 10,
+        } if url.drivername.startswith("postgresql") else {}
+    )
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 Base = declarative_base()
 
@@ -613,21 +623,31 @@ def ensure_schema():
             # Try to reinitialize with in-memory database
             DB_URL = "sqlite:///:memory:"
             url = make_url(DB_URL)
-            engine = create_engine(
-    url,
-    pool_pre_ping=True,
-    future=True,
-    pool_size=50,  # Conexões simultâneas aumentadas para alta concorrência
-    max_overflow=100,  # Total máximo: 150 conexões
-    pool_timeout=5,  # Timeout reduzido para falhar rápido
-    pool_recycle=1800,  # Reciclar a cada 30min para evitar timeouts
-    echo=False,  # Desabilitar logs SQL em produção
-    # Otimizações adicionais para alta performance
-    connect_args={
-        "application_name": "telegram_bot",
-        "connect_timeout": 10,
-    } if url.drivername.startswith("postgresql") else {}
-)
+            # Configuração condicional baseada no tipo de banco
+if url.drivername.startswith("sqlite"):
+    # SQLite não suporta pool_size, max_overflow, pool_timeout
+    engine = create_engine(
+        url,
+        future=True,
+        echo=False,
+        connect_args={"check_same_thread": False}
+    )
+else:
+    # PostgreSQL e outros bancos suportam pooling
+    engine = create_engine(
+        url,
+        pool_pre_ping=True,
+        future=True,
+        pool_size=50,
+        max_overflow=100,
+        pool_timeout=5,
+        pool_recycle=1800,
+        echo=False,
+        connect_args={
+            "application_name": "telegram_bot",
+            "connect_timeout": 10,
+        } if url.drivername.startswith("postgresql") else {}
+    )
             SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
             
             try:
