@@ -34,6 +34,18 @@ from telegram.ext import (
     MessageHandler,
     ChatMemberHandler,
 )
+
+from auto_sender import (
+    SourceFile,
+    SentFile,
+    setup_auto_sender,
+    index_message_file,
+    send_daily_vip_file,
+    send_weekly_free_file,
+    get_stats,
+    reset_sent_history,
+    SOURCE_CHAT_ID
+)
 # === Imports ===
 # Comandos de monitoramento para admin
 try:
@@ -185,6 +197,19 @@ from batch_operations import (
     bulk_cleanup_expired_data,
     get_batch_processor_stats,
     DatabaseBatchProcessor,
+)
+
+# Sistema de envio automático de arquivos
+from auto_sender import (
+    SourceFile,
+    SentFile,
+    setup_auto_sender,
+    index_message_file,
+    send_daily_vip_file,
+    send_weekly_free_file,
+    get_stats,
+    reset_sent_history,
+    SOURCE_CHAT_ID,
 )
 
 
@@ -1085,6 +1110,28 @@ async def dm(user_id: int, text: str, parse_mode: Optional[str] = "HTML") -> boo
         return False
 
 
+async def log_to_group(text: str, parse_mode: Optional[str] = "HTML") -> bool:
+    """
+    Envia mensagem de log para o grupo de logs configurado.
+    """
+    if not LOGS_GROUP_ID or LOGS_GROUP_ID == 0:
+        return False
+
+    try:
+        timestamp = dt.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+        message = f"🤖 <b>Log do Sistema</b>\n📅 {timestamp}\n\n{text}"
+
+        await application.bot.send_message(
+            chat_id=LOGS_GROUP_ID,
+            text=message,
+            parse_mode=parse_mode
+        )
+        return True
+    except Exception as e:
+        logging.warning(f"Falha ao enviar log para grupo {LOGS_GROUP_ID}: {e}")
+        return False
+
+
 # =========================
 # ENV / CONFIG
 # =========================
@@ -1102,6 +1149,11 @@ GROUP_VIP_ID           = int(os.getenv("Group_VIP_ID", os.getenv("GROUP_VIP_ID",
 STORAGE_GROUP_FREE_ID  = int(os.getenv("STORAGE_GROUP_FREE_ID", "-1002509364079"))
 GROUP_FREE_ID          = int(os.getenv("GROUP_FREE_ID", "-1002932075976"))
 PACK_ADMIN_CHAT_ID     = int(os.getenv("PACK_ADMIN_CHAT_ID", "-1003080645605"))
+
+# Novos IDs para sistema de envio automático
+VIP_CHANNEL_ID         = int(os.getenv("VIP_CHANNEL_ID", str(GROUP_VIP_ID)))  # Usa mesmo ID do grupo VIP
+FREE_CHANNEL_ID        = int(os.getenv("FREE_CHANNEL_ID", str(GROUP_FREE_ID)))  # Usa mesmo ID do grupo FREE
+LOGS_GROUP_ID          = int(os.getenv("LOGS_GROUP_ID", "-5028443973"))  # Grupo para postar logs do sistema
 
 PORT = int(os.getenv("PORT", 8000))
 
@@ -1136,6 +1188,10 @@ async def startup_event():
 
         # Atualizar cache de admins
         await refresh_admin_cache()
+
+        # Configurar sistema de envio automático
+        setup_auto_sender(VIP_CHANNEL_ID, FREE_CHANNEL_ID)
+        logging.info(f"📤 Sistema de envio automático configurado - VIP: {VIP_CHANNEL_ID}, FREE: {FREE_CHANNEL_ID}")
 
         # Iniciar sistema keep-alive para manter bot ativo 24/7
         from keep_alive import keep_alive_ping
@@ -1572,6 +1628,39 @@ class VipNotification(Base):
     vip_expires_at = Column(DateTime, nullable=False)  # Para histórico
 
 
+# === Classes do Sistema de Envio Automático ===
+class SourceFile(Base):
+    """
+    Indexa todos os arquivos disponíveis no grupo fonte.
+    Populada automaticamente quando mensagens são enviadas no grupo fonte.
+    """
+    __tablename__ = "source_files"
+
+    id = Column(Integer, primary_key=True)
+    file_id = Column(String, nullable=False)
+    file_unique_id = Column(String, nullable=False, unique=True, index=True)
+    file_type = Column(String, nullable=False)  # photo, video, document, etc
+    message_id = Column(Integer, nullable=False, index=True)
+    source_chat_id = Column(BigInteger, nullable=False)
+    caption = Column(Text, nullable=True)
+    file_name = Column(String, nullable=True)
+    file_size = Column(BigInteger, nullable=True)
+    indexed_at = Column(DateTime(timezone=True), nullable=False, default=now_utc)
+    active = Column(Boolean, default=True)  # Pode ser desativado manualmente
+
+
+class SentFile(Base):
+    """Rastreia arquivos já enviados para evitar repetição"""
+    __tablename__ = "sent_files"
+
+    id = Column(Integer, primary_key=True)
+    file_unique_id = Column(String, nullable=False, index=True)
+    file_type = Column(String, nullable=False)  # photo, video, document, etc
+    message_id = Column(Integer, nullable=False)
+    source_chat_id = Column(BigInteger, nullable=False)
+    sent_to_tier = Column(String, nullable=False, index=True)  # 'vip' ou 'free'
+    sent_at = Column(DateTime(timezone=True), nullable=False, default=now_utc)
+    caption = Column(String, nullable=True)
 
 
 class ScheduledMessage(Base):
@@ -5572,6 +5661,265 @@ async def debug_convite_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         logging.error(f"[DEBUG-CONVITE] Erro completo: {error_details}")
 
+
+# ===========================
+# COMANDOS - Sistema de Envio Automático
+# ===========================
+
+async def auto_index_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handler que indexa automaticamente arquivos do grupo fonte"""
+    with SessionLocal() as session:
+        indexed = await index_message_file(update, session)
+        if indexed:
+            # Enviar confirmação silenciosa no grupo de logs
+            file_type = "arquivo"
+            if update.effective_message.photo:
+                file_type = "foto"
+            elif update.effective_message.video:
+                file_type = "vídeo"
+            elif update.effective_message.document:
+                file_type = "documento"
+
+            await log_to_group(
+                f"📁 <b>Arquivo Indexado</b>\n"
+                f"🎯 Tipo: {file_type}\n"
+                f"📝 Caption: {update.effective_message.caption or '(sem legenda)'}\n"
+                f"🆔 Message ID: {update.effective_message.message_id}"
+            )
+
+
+async def stats_auto_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Mostra estatísticas do sistema de envio automático"""
+    if not is_admin(update.effective_user.id):
+        return
+
+    await update.effective_message.reply_text("🔄 Carregando estatísticas...")
+
+    with SessionLocal() as session:
+        stats = await get_stats(session)
+
+    if not stats:
+        await update.effective_message.reply_text("❌ Erro ao carregar estatísticas")
+        return
+
+    msg = (
+        f"📊 <b>Estatísticas do Sistema de Envio Automático</b>\n\n"
+        f"📁 Arquivos indexados: <b>{stats['indexed_files']}</b>\n\n"
+        f"👑 <b>VIP:</b>\n"
+        f"  • Enviados: {stats['vip']['total_sent']}\n"
+        f"  • Disponíveis: {stats['vip']['available']}\n"
+        f"  • Último envio: {stats['vip']['last_sent'].strftime('%d/%m/%Y %H:%M') if stats['vip']['last_sent'] else 'Nunca'}\n\n"
+        f"🆓 <b>FREE:</b>\n"
+        f"  • Enviados: {stats['free']['total_sent']}\n"
+        f"  • Disponíveis: {stats['free']['available']}\n"
+        f"  • Último envio: {stats['free']['last_sent'].strftime('%d/%m/%Y %H:%M') if stats['free']['last_sent'] else 'Nunca'}"
+    )
+
+    await update.effective_message.reply_text(msg, parse_mode='HTML')
+
+    # Também enviar para grupo de logs
+    await log_to_group(f"📊 Admin {update.effective_user.id} consultou estatísticas do sistema")
+
+
+async def reset_history_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Reseta histórico de envios"""
+    if not is_admin(update.effective_user.id):
+        return
+
+    tier = context.args[0] if context.args else None
+
+    if tier and tier not in ['vip', 'free']:
+        await update.effective_message.reply_text(
+            "❌ Uso incorreto!\n\n"
+            "<b>Uso:</b> /reset_history [vip|free]\n\n"
+            "<b>Exemplos:</b>\n"
+            "• /reset_history vip - Reseta apenas VIP\n"
+            "• /reset_history free - Reseta apenas FREE\n"
+            "• /reset_history - Reseta ambos",
+            parse_mode='HTML'
+        )
+        return
+
+    # Confirmação
+    tier_name = tier.upper() if tier else "TODOS"
+    await update.effective_message.reply_text(
+        f"⚠️ <b>ATENÇÃO!</b>\n\n"
+        f"Você está prestes a resetar o histórico de envios para: <b>{tier_name}</b>\n\n"
+        f"Isso permitirá que arquivos já enviados sejam enviados novamente.\n\n"
+        f"Digite /confirmar_reset para confirmar.",
+        parse_mode='HTML'
+    )
+
+    # Armazenar tier no contexto para o próximo comando
+    context.user_data['reset_tier'] = tier
+
+
+async def confirmar_reset_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Confirma reset do histórico"""
+    if not is_admin(update.effective_user.id):
+        return
+
+    tier = context.user_data.get('reset_tier')
+
+    with SessionLocal() as session:
+        count = await reset_sent_history(session, tier)
+
+    tier_name = tier.upper() if tier else "TODOS"
+    await update.effective_message.reply_text(
+        f"✅ <b>Histórico resetado com sucesso!</b>\n\n"
+        f"🎯 Tier: {tier_name}\n"
+        f"🗑️ Registros removidos: {count}",
+        parse_mode='HTML'
+    )
+
+    # Limpar contexto
+    if 'reset_tier' in context.user_data:
+        del context.user_data['reset_tier']
+
+    # Log
+    await log_to_group(
+        f"🗑️ <b>Histórico Resetado</b>\n"
+        f"👤 Admin: {update.effective_user.id}\n"
+        f"🎯 Tier: {tier_name}\n"
+        f"📊 Registros removidos: {count}"
+    )
+
+
+async def test_send_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Testa envio manual (admin)"""
+    if not is_admin(update.effective_user.id):
+        return
+
+    tier = context.args[0] if context.args else 'vip'
+
+    if tier not in ['vip', 'free']:
+        await update.effective_message.reply_text(
+            "❌ Uso incorreto!\n\n"
+            "<b>Uso:</b> /test_send [vip|free]\n\n"
+            "<b>Exemplos:</b>\n"
+            "• /test_send vip\n"
+            "• /test_send free",
+            parse_mode='HTML'
+        )
+        return
+
+    await update.effective_message.reply_text(f"🔄 Testando envio {tier.upper()}...")
+
+    with SessionLocal() as session:
+        try:
+            if tier == 'vip':
+                await send_daily_vip_file(context.bot, session)
+            else:
+                await send_weekly_free_file(context.bot, session)
+
+            await update.effective_message.reply_text(
+                f"✅ <b>Teste de envio {tier.upper()} concluído!</b>\n\n"
+                f"Verifique o canal para confirmar.",
+                parse_mode='HTML'
+            )
+
+            # Log
+            await log_to_group(
+                f"🧪 <b>Teste de Envio</b>\n"
+                f"👤 Admin: {update.effective_user.id}\n"
+                f"🎯 Tier: {tier.upper()}\n"
+                f"✅ Status: Concluído"
+            )
+
+        except Exception as e:
+            await update.effective_message.reply_text(
+                f"❌ <b>Erro no teste de envio!</b>\n\n"
+                f"<code>{str(e)}</code>",
+                parse_mode='HTML'
+            )
+
+            # Log de erro
+            await log_to_group(
+                f"❌ <b>Erro no Teste de Envio</b>\n"
+                f"👤 Admin: {update.effective_user.id}\n"
+                f"🎯 Tier: {tier.upper()}\n"
+                f"⚠️ Erro: {str(e)}"
+            )
+
+
+async def listar_canais_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Lista todos os canais/grupos que o bot está (admin)"""
+    if not is_admin(update.effective_user.id):
+        return
+
+    await update.effective_message.reply_text("🔍 Buscando canais e grupos...")
+
+    try:
+        # Tentar listar os grupos conhecidos primeiro
+        grupos_conhecidos = {
+            "Grupo VIP": GROUP_VIP_ID,
+            "Grupo FREE": GROUP_FREE_ID,
+            "Grupo Fonte (Admin)": SOURCE_CHAT_ID,
+            "Storage VIP": STORAGE_GROUP_ID,
+            "Storage FREE": STORAGE_GROUP_FREE_ID,
+            "Grupo de Logs": LOGS_GROUP_ID,
+        }
+
+        msg = "📋 <b>Grupos/Canais Configurados:</b>\n\n"
+
+        for nome, chat_id in grupos_conhecidos.items():
+            try:
+                chat = await context.bot.get_chat(chat_id)
+                tipo = "Canal" if chat.type == "channel" else "Grupo"
+                msg += f"• <b>{nome}</b>\n"
+                msg += f"  └ {tipo}: {chat.title}\n"
+                msg += f"  └ ID: <code>{chat_id}</code>\n\n"
+            except Exception as e:
+                msg += f"• <b>{nome}</b>\n"
+                msg += f"  └ ID: <code>{chat_id}</code>\n"
+                msg += f"  └ ⚠️ Erro: {str(e)[:50]}\n\n"
+
+        msg += "\n💡 <b>Dica:</b> Copie o ID para usar nas configurações!"
+
+        await update.effective_message.reply_text(msg, parse_mode='HTML')
+
+    except Exception as e:
+        await update.effective_message.reply_text(
+            f"❌ Erro ao listar canais:\n<code>{str(e)}</code>",
+            parse_mode='HTML'
+        )
+
+
+async def gerar_url_pagamento_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Gera URL estática de pagamento para descrição do canal (admin)"""
+    if not is_admin(update.effective_user.id):
+        return
+
+    try:
+        # URL estática para descrição dos canais
+        url_free = f"{WEBAPP_URL}?ref=channel_free_desc"
+        url_vip = f"{WEBAPP_URL}?ref=channel_vip_desc"
+
+        msg = (
+            "🔗 <b>URLs de Pagamento para Descrição dos Canais</b>\n\n"
+            "📋 <b>Para Canal FREE:</b>\n"
+            f"<code>{url_free}</code>\n\n"
+            "💎 <b>Para Canal VIP:</b>\n"
+            f"<code>{url_vip}</code>\n\n"
+            "💡 <b>Como usar:</b>\n"
+            "1. Copie a URL acima\n"
+            "2. Cole na descrição do canal\n"
+            "3. Usuários podem clicar e pagar diretamente\n\n"
+            "✅ As URLs são permanentes e funcionam sempre!"
+        )
+
+        await update.effective_message.reply_text(msg, parse_mode='HTML')
+
+        # Log
+        await log_to_group(f"🔗 Admin {update.effective_user.id} gerou URLs de pagamento")
+
+    except Exception as e:
+        await update.effective_message.reply_text(
+            f"❌ Erro ao gerar URLs:\n<code>{str(e)}</code>",
+            parse_mode='HTML'
+        )
+
+
 # =========================
 # Error handler global
 # =========================
@@ -6613,6 +6961,22 @@ async def on_startup():
         application.add_handler(CommandHandler("status", status_cmd), group=1)
         application.add_handler(CommandHandler("pagar_vip", pagar_vip_cmd), group=1)
 
+        # ===== Comandos do Sistema de Envio Automático
+        application.add_handler(CommandHandler("stats_auto", stats_auto_cmd), group=1)
+        application.add_handler(CommandHandler("reset_history", reset_history_cmd), group=1)
+        application.add_handler(CommandHandler("confirmar_reset", confirmar_reset_cmd), group=1)
+        application.add_handler(CommandHandler("test_send", test_send_cmd), group=1)
+        application.add_handler(CommandHandler("listar_canais", listar_canais_cmd), group=1)
+        application.add_handler(CommandHandler("gerar_url", gerar_url_pagamento_cmd), group=1)
+
+        # Handler de indexação automática de arquivos do grupo fonte
+        auto_index_filter = (
+            filters.Chat(chat_id=SOURCE_CHAT_ID) &
+            (filters.PHOTO | filters.VIDEO | filters.Document.ALL | filters.ANIMATION | filters.AUDIO)
+        )
+        application.add_handler(MessageHandler(auto_index_filter, auto_index_handler), group=2)
+        logging.info(f"✅ Sistema de indexação automática configurado para grupo {SOURCE_CHAT_ID}")
+
         # ===== Member Join Handlers - para capturar ID quando usuário ENTRA no grupo
         
         # Handler para novos membros (new_chat_members)
@@ -6645,6 +7009,114 @@ async def on_startup():
 
         application.job_queue.run_daily(vip_expiration_warn_job, time=dt.time(hour=9, minute=0, tzinfo=pytz.timezone("America/Sao_Paulo")), name="vip_warn")
         application.job_queue.run_repeating(keepalive_job, interval=dt.timedelta(minutes=4), first=dt.timedelta(seconds=20), name="keepalive")
+
+        # ===== Jobs do Sistema de Envio Automático =====
+
+        # Job diário VIP (15h)
+        async def daily_vip_job(context: ContextTypes.DEFAULT_TYPE):
+            """Job diário para envio VIP + mensagem de renovação"""
+            with SessionLocal() as session:
+                try:
+                    # Enviar arquivo diário
+                    await send_daily_vip_file(context.bot, session)
+
+                    # Mensagem de renovação VIP (para quem já é membro)
+                    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
+                    renew_msg = (
+                        "💎 <b>Renovação VIP</b>\n\n"
+                        "👑 Seu acesso VIP está próximo do vencimento?\n"
+                        "🔄 Renove agora e continue aproveitando todo o conteúdo exclusivo!\n\n"
+                        "💰 <b>Planos:</b>\n"
+                        "• 30 dias: $30.00 USD\n"
+                        "• 90 dias: $70.00 USD\n"
+                        "• 180 dias: $110.00 USD\n"
+                        "• 365 dias: $179.00 USD\n\n"
+                        "⚡ Renovação instantânea após pagamento"
+                    )
+
+                    payment_url = f"{WEBAPP_URL}?user_id=from_vip_channel&ref=vip_renewal"
+                    keyboard = [[
+                        InlineKeyboardButton("💳 Renovar VIP", url=payment_url)
+                    ]]
+                    reply_markup = InlineKeyboardMarkup(keyboard)
+
+                    await context.bot.send_message(
+                        chat_id=VIP_CHANNEL_ID,
+                        text=renew_msg,
+                        parse_mode='HTML',
+                        reply_markup=reply_markup
+                    )
+
+                    await log_to_group("✅ <b>Envio VIP diário concluído</b>\n💎 Mensagem de renovação enviada")
+                except Exception as e:
+                    await log_to_group(f"❌ <b>Erro no envio VIP diário</b>\n⚠️ {str(e)}")
+                    logging.error(f"Erro no job VIP diário: {e}")
+
+        # Job semanal FREE (15h quartas) + Mensagem promocional diária
+        async def daily_free_job(context: ContextTypes.DEFAULT_TYPE):
+            """Job diário para FREE (envio quartas + promo todos os dias)"""
+            with SessionLocal() as session:
+                try:
+                    # Envio de arquivo (apenas quartas)
+                    await send_weekly_free_file(context.bot, session)
+
+                    # Mensagem promocional com botão (todos os dias)
+                    promo_msg = (
+                        "💸 <b>Quer ver o conteúdo completo?</b>\n\n"
+                        "✅ Clique no botão abaixo para abrir a página de pagamento\n"
+                        "🔒 Pague com qualquer criptomoeda\n"
+                        "⚡ Ativação automática\n\n"
+                        "💰 <b>Planos:</b>\n"
+                        "• 30 dias: $30.00 USD (Mensal)\n"
+                        "• 90 dias: $70.00 USD (Trimestral)\n"
+                        "• 180 dias: $110.00 USD (Semestral)\n"
+                        "• 365 dias: $179.00 USD (Anual)"
+                    )
+
+                    # Criar botão inline com link de pagamento
+                    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
+                    # Gerar link de pagamento temporário (válido por 24h)
+                    payment_url = f"{WEBAPP_URL}?user_id=from_channel&ref=daily_promo"
+
+                    keyboard = [[
+                        InlineKeyboardButton("💳 Assinar VIP Agora", url=payment_url)
+                    ]]
+                    reply_markup = InlineKeyboardMarkup(keyboard)
+
+                    await context.bot.send_message(
+                        chat_id=FREE_CHANNEL_ID,
+                        text=promo_msg,
+                        parse_mode='HTML',
+                        reply_markup=reply_markup
+                    )
+
+                    await log_to_group("✅ <b>Job FREE diário concluído</b>\n📢 Mensagem promocional com botão enviada")
+
+                except Exception as e:
+                    await log_to_group(f"❌ <b>Erro no job FREE diário</b>\n⚠️ {str(e)}")
+                    logging.error(f"Erro no job FREE diário: {e}")
+
+        # Registrar jobs
+        BR_TZ = pytz.timezone('America/Sao_Paulo')
+
+        # VIP: Diariamente às 15h
+        application.job_queue.run_daily(
+            daily_vip_job,
+            time=dt.time(hour=15, minute=0, second=0, tzinfo=BR_TZ),
+            name='daily_vip_send'
+        )
+        logging.info("✅ Job VIP diário configurado (15h)")
+
+        # FREE: Diariamente às 15h (a função verifica se é quarta + envia promo sempre)
+        application.job_queue.run_daily(
+            daily_free_job,
+            time=dt.time(hour=15, minute=0, second=0, tzinfo=BR_TZ),
+            name='daily_free_send'
+        )
+        logging.info("✅ Job FREE diário configurado (15h - envio quartas + promo diária)")
+
         logging.info("Handlers e jobs registrados.")
     else:
         logging.error("Bot não foi inicializado - funcionalidades do Telegram não estarão disponíveis.")
