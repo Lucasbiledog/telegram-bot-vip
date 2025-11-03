@@ -504,6 +504,19 @@ async def get_stats(session: Session) -> Dict[str, Any]:
     Retorna estatísticas do sistema de envio automático.
     """
     try:
+        # Verificar se tabelas existem
+        from sqlalchemy import inspect
+        inspector = inspect(session.bind)
+        tables = inspector.get_table_names()
+
+        if 'source_files' not in tables or 'sent_files' not in tables:
+            LOG.warning("[STATS] Tabelas ainda não criadas")
+            return {
+                'indexed_files': 0,
+                'vip': {'total_sent': 0, 'available': 0, 'last_sent': None},
+                'free': {'total_sent': 0, 'available': 0, 'last_sent': None}
+            }
+
         total_indexed = session.query(SourceFile).filter(
             SourceFile.source_chat_id == SOURCE_CHAT_ID,
             SourceFile.active == True
@@ -519,14 +532,16 @@ async def get_stats(session: Session) -> Dict[str, Any]:
             SentFile.source_chat_id == SOURCE_CHAT_ID
         ).count()
 
-        # Arquivos disponíveis
-        sent_vip_ids = {f.file_unique_id for f in session.query(SentFile.file_unique_id).filter(
+        # Arquivos disponíveis - corrigir para retornar apenas o valor único
+        sent_vip_query = session.query(SentFile.file_unique_id).filter(
             SentFile.sent_to_tier == 'vip'
-        ).all()}
+        ).all()
+        sent_vip_ids = {row[0] if isinstance(row, tuple) else row.file_unique_id for row in sent_vip_query}
 
-        sent_free_ids = {f.file_unique_id for f in session.query(SentFile.file_unique_id).filter(
+        sent_free_query = session.query(SentFile.file_unique_id).filter(
             SentFile.sent_to_tier == 'free'
-        ).all()}
+        ).all()
+        sent_free_ids = {row[0] if isinstance(row, tuple) else row.file_unique_id for row in sent_free_query}
 
         available_vip = session.query(SourceFile).filter(
             SourceFile.source_chat_id == SOURCE_CHAT_ID,
