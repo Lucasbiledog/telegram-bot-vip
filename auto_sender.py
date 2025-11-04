@@ -7,6 +7,8 @@ Sistema de envio automático de arquivos para canais VIP e FREE
 Sistema de 2 tabelas:
 - SourceFile: Indexa TODOS os arquivos disponíveis no grupo fonte
 - SentFile: Rastreia arquivos já enviados (histórico)
+
+VERSION: 2.0.1 - Fixed SQL query bug with empty sets (2025-11-04 02:45)
 """
 
 import asyncio
@@ -14,6 +16,10 @@ import logging
 import random
 from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
+
+# Version marker to force module reload
+__version__ = "2.0.1"
+__updated__ = "2025-11-04 02:45:00"
 
 from telegram import Bot, Message, Update
 from telegram.error import TelegramError

@@ -5903,6 +5903,7 @@ async def debug_version_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     import subprocess
     import os
+    from auto_sender import __version__ as auto_sender_version, __updated__ as auto_sender_updated
 
     try:
         # Tentar pegar commit hash atual
@@ -5928,11 +5929,14 @@ async def debug_version_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"📍 <b>Git Info:</b>\n"
         f"  • Branch: <code>{branch}</code>\n"
         f"  • Commit: <code>{commit}</code>\n\n"
-        f"🐛 <b>Status do Bug:</b>\n"
+        f"📦 <b>Módulo Importado:</b>\n"
+        f"  • Versão: <code>{auto_sender_version}</code>\n"
+        f"  • Atualizado: <code>{auto_sender_updated}</code>\n\n"
+        f"🐛 <b>Status do Bug (arquivo):</b>\n"
         f"  • Código antigo (bug): {'❌ SIM' if has_old_bug else '✅ NÃO'}\n"
         f"  • Código novo (fix): {'✅ SIM' if has_new_fix else '❌ NÃO'}\n\n"
         f"💡 <b>Esperado:</b>\n"
-        f"  • Commit: <code>de55576</code> ou <code>16d9969</code>\n"
+        f"  • Versão: <code>2.0.1</code> ou superior\n"
         f"  • Código antigo: ❌ NÃO\n"
         f"  • Código novo: ✅ SIM"
     )
