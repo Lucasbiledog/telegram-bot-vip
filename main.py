@@ -5896,6 +5896,50 @@ async def test_send_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
 
 
+async def debug_version_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Mostra versão do código em execução (admin)"""
+    if not is_admin(update.effective_user.id):
+        return
+
+    import subprocess
+    import os
+
+    try:
+        # Tentar pegar commit hash atual
+        cwd = os.path.dirname(os.path.abspath(__file__))
+        commit = subprocess.check_output(['git', 'rev-parse', '--short', 'HEAD'], cwd=cwd).decode().strip()
+        branch = subprocess.check_output(['git', 'rev-parse', '--abbrev-ref', 'HEAD'], cwd=cwd).decode().strip()
+    except:
+        commit = "unknown"
+        branch = "unknown"
+
+    # Verificar se o auto_sender.py tem o código correto
+    try:
+        with open('auto_sender.py', 'r', encoding='utf-8') as f:
+            content = f.read()
+            has_old_bug = 'if sent_file_ids else True' in content
+            has_new_fix = 'if sent_file_ids:' in content and 'query = query.filter' in content
+    except:
+        has_old_bug = "?"
+        has_new_fix = "?"
+
+    msg = (
+        f"🔍 <b>Debug - Versão do Código</b>\n\n"
+        f"📍 <b>Git Info:</b>\n"
+        f"  • Branch: <code>{branch}</code>\n"
+        f"  • Commit: <code>{commit}</code>\n\n"
+        f"🐛 <b>Status do Bug:</b>\n"
+        f"  • Código antigo (bug): {'❌ SIM' if has_old_bug else '✅ NÃO'}\n"
+        f"  • Código novo (fix): {'✅ SIM' if has_new_fix else '❌ NÃO'}\n\n"
+        f"💡 <b>Esperado:</b>\n"
+        f"  • Commit: <code>de55576</code> ou <code>16d9969</code>\n"
+        f"  • Código antigo: ❌ NÃO\n"
+        f"  • Código novo: ✅ SIM"
+    )
+
+    await update.effective_message.reply_text(msg, parse_mode='HTML')
+
+
 async def listar_canais_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Lista todos os canais/grupos que o bot está (admin)"""
     if not is_admin(update.effective_user.id):
@@ -7020,6 +7064,7 @@ async def on_startup():
         application.add_handler(CommandHandler("reset_history", reset_history_cmd), group=1)
         application.add_handler(CommandHandler("confirmar_reset", confirmar_reset_cmd), group=1)
         application.add_handler(CommandHandler("test_send", test_send_cmd), group=1)
+        application.add_handler(CommandHandler("debug_version", debug_version_cmd), group=1)
         application.add_handler(CommandHandler("listar_canais", listar_canais_cmd), group=1)
         application.add_handler(CommandHandler("gerar_url", gerar_url_pagamento_cmd), group=1)
 
