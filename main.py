@@ -385,20 +385,27 @@ else:
     if url.drivername.startswith("postgresql"):
         connect_args = {
             "application_name": "telegram_bot",
-            "connect_timeout": 10,
-            "sslmode": "require"  # Render requer SSL
+            "connect_timeout": 30,  # Aumentado para 30s
+            "sslmode": "prefer",  # prefer é mais tolerante que require
+            "keepalives": 1,
+            "keepalives_idle": 30,
+            "keepalives_interval": 10,
+            "keepalives_count": 5
         }
 
     engine = create_engine(
         url,
-        pool_pre_ping=True,
+        pool_pre_ping=True,  # Testa conexão antes de usar
         future=True,
-        pool_size=50,
-        max_overflow=100,
-        pool_timeout=5,
-        pool_recycle=1800,
+        pool_size=20,  # Reduzido de 50 para 20
+        max_overflow=40,  # Reduzido de 100 para 40
+        pool_timeout=30,  # Aumentado de 5 para 30s
+        pool_recycle=3600,  # 1 hora (aumentado de 30min)
         echo=False,
-        connect_args=connect_args
+        connect_args=connect_args,
+        execution_options={
+            "isolation_level": "READ COMMITTED"
+        }
     )
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 Base = declarative_base()
@@ -559,7 +566,27 @@ PLAN_DAYS = {
 }
 
 def init_db():
-    Base.metadata.create_all(bind=engine)
+    """Inicializa banco de dados com retry automático"""
+    import time
+    max_retries = 3
+    retry_delay = 2
+
+    for attempt in range(max_retries):
+        try:
+            logging.info(f"[DB] Tentativa {attempt + 1}/{max_retries} de conectar ao banco...")
+            Base.metadata.create_all(bind=engine)
+            logging.info(f"[DB] ✅ Conexão estabelecida com sucesso!")
+            break
+        except Exception as e:
+            if attempt < max_retries - 1:
+                logging.warning(f"[DB] ⚠️ Falha na tentativa {attempt + 1}: {e}")
+                logging.info(f"[DB] 🔄 Aguardando {retry_delay}s antes de tentar novamente...")
+                time.sleep(retry_delay)
+                retry_delay *= 2  # Exponential backoff
+            else:
+                logging.error(f"[DB] ❌ Todas as tentativas falharam!")
+                raise
+
     initial_admin_id = os.getenv("INITIAL_ADMIN_ID")
     if initial_admin_id:
         with SessionLocal() as s:
@@ -686,20 +713,27 @@ def ensure_schema():
                 if url.drivername.startswith("postgresql"):
                     connect_args = {
                         "application_name": "telegram_bot",
-                        "connect_timeout": 10,
-                        "sslmode": "require"  # Render requer SSL
+                        "connect_timeout": 30,  # Aumentado para 30s
+                        "sslmode": "prefer",  # prefer é mais tolerante que require
+                        "keepalives": 1,
+                        "keepalives_idle": 30,
+                        "keepalives_interval": 10,
+                        "keepalives_count": 5
                     }
 
                 engine = create_engine(
                     url,
-                    pool_pre_ping=True,
+                    pool_pre_ping=True,  # Testa conexão antes de usar
                     future=True,
-                    pool_size=50,
-                    max_overflow=100,
-                    pool_timeout=5,
-                    pool_recycle=1800,
+                    pool_size=20,  # Reduzido de 50 para 20
+                    max_overflow=40,  # Reduzido de 100 para 40
+                    pool_timeout=30,  # Aumentado de 5 para 30s
+                    pool_recycle=3600,  # 1 hora (aumentado de 30min)
                     echo=False,
-                    connect_args=connect_args
+                    connect_args=connect_args,
+                    execution_options={
+                        "isolation_level": "READ COMMITTED"
+                    }
                 )
             SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
@@ -1744,30 +1778,50 @@ def ensure_schema_once():
     """Executa ensure_schema apenas uma vez por sessão para melhor performance"""
     global _schema_initialized
     if not _schema_initialized:
-        # Versão otimizada para melhor performance
-        try:
-            Base.metadata.create_all(bind=engine)
-            # Pular verificações de schema que são demoradas em produção
-            # ensure_bigint_columns()
-            # ensure_pack_tier_column()
-            # ensure_pack_scheduled_for_column()
-            # ensure_packfile_src_columns()
-            # ensure_vip_invite_column()
-            # ensure_vip_plan_column()
-            # ensure_payment_fields()
-            
-            # MIGRAÇÃO CRÍTICA: Colunas de notificação VIP (necessárias para funcionamento)
-            ensure_vip_notification_columns()
-            
-            # Configurações básicas
-            init_db()
-            _schema_initialized = True
-        except Exception as e:
-            logging.error(f"Schema initialization failed: {e}")
-            # Fallback para versão completa se necessário
-            ensure_schema()
-            init_db()
-            _schema_initialized = True
+        # Versão otimizada para melhor performance com retry
+        import time
+        max_retries = 3
+
+        for attempt in range(max_retries):
+            try:
+                logging.info(f"[SCHEMA] Inicializando schema (tentativa {attempt + 1}/{max_retries})...")
+                Base.metadata.create_all(bind=engine)
+
+                # Pular verificações de schema que são demoradas em produção
+                # ensure_bigint_columns()
+                # ensure_pack_tier_column()
+                # ensure_pack_scheduled_for_column()
+                # ensure_packfile_src_columns()
+                # ensure_vip_invite_column()
+                # ensure_vip_plan_column()
+                # ensure_payment_fields()
+
+                # MIGRAÇÃO CRÍTICA: Colunas de notificação VIP (necessárias para funcionamento)
+                ensure_vip_notification_columns()
+
+                # Configurações básicas
+                init_db()
+                _schema_initialized = True
+                logging.info("[SCHEMA] ✅ Schema inicializado com sucesso!")
+                break
+
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    logging.warning(f"[SCHEMA] ⚠️ Tentativa {attempt + 1} falhou: {e}")
+                    logging.info(f"[SCHEMA] 🔄 Aguardando 3s antes de tentar novamente...")
+                    time.sleep(3)
+                else:
+                    logging.warning(f"[SCHEMA] ⚠️ Fast path falhou após {max_retries} tentativas")
+                    logging.info(f"[SCHEMA] 🔄 Usando fallback para ensure_schema() completo...")
+                    # Fallback para versão completa se necessário
+                    try:
+                        ensure_schema()
+                        init_db()
+                        _schema_initialized = True
+                        logging.info("[SCHEMA] ✅ Schema inicializado via fallback!")
+                    except Exception as fallback_error:
+                        logging.error(f"[SCHEMA] ❌ Fallback também falhou: {fallback_error}")
+                        raise
 
 # Executar apenas quando necessário (na inicialização do bot)
 if __name__ == "__main__":
