@@ -543,17 +543,23 @@ async def get_stats(session: Session) -> Dict[str, Any]:
         ).all()
         sent_free_ids = {row[0] if isinstance(row, tuple) else row.file_unique_id for row in sent_free_query}
 
-        available_vip = session.query(SourceFile).filter(
+        # Contar arquivos disponíveis para VIP
+        query_vip = session.query(SourceFile).filter(
             SourceFile.source_chat_id == SOURCE_CHAT_ID,
-            SourceFile.active == True,
-            ~SourceFile.file_unique_id.in_(sent_vip_ids) if sent_vip_ids else True
-        ).count()
+            SourceFile.active == True
+        )
+        if sent_vip_ids:  # Só aplica filtro se houver IDs enviados
+            query_vip = query_vip.filter(~SourceFile.file_unique_id.in_(sent_vip_ids))
+        available_vip = query_vip.count()
 
-        available_free = session.query(SourceFile).filter(
+        # Contar arquivos disponíveis para FREE
+        query_free = session.query(SourceFile).filter(
             SourceFile.source_chat_id == SOURCE_CHAT_ID,
-            SourceFile.active == True,
-            ~SourceFile.file_unique_id.in_(sent_free_ids) if sent_free_ids else True
-        ).count()
+            SourceFile.active == True
+        )
+        if sent_free_ids:  # Só aplica filtro se houver IDs enviados
+            query_free = query_free.filter(~SourceFile.file_unique_id.in_(sent_free_ids))
+        available_free = query_free.count()
 
         # Últimos envios
         last_vip = session.query(SentFile).filter(
