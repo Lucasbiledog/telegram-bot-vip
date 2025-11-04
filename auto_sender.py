@@ -222,9 +222,12 @@ async def get_random_file_from_source(
         # Buscar arquivos disponíveis (não enviados ainda)
         query = session.query(SourceFile).filter(
             SourceFile.source_chat_id == SOURCE_CHAT_ID,
-            SourceFile.active == True,
-            ~SourceFile.file_unique_id.in_(sent_file_ids) if sent_file_ids else True
+            SourceFile.active == True
         )
+
+        # Só aplica filtro de "já enviados" se houver arquivos enviados
+        if sent_file_ids:
+            query = query.filter(~SourceFile.file_unique_id.in_(sent_file_ids))
 
         # Filtros específicos para FREE
         if tier == 'free':
