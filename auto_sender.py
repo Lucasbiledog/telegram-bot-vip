@@ -264,6 +264,9 @@ async def send_file_to_channel(
     """
     Envia um arquivo indexado para o canal.
 
+    IMPORTANTE: Usa copy_message para copiar diretamente do grupo fonte,
+    pois file_id pode não funcionar se o arquivo foi indexado por outra conta.
+
     Args:
         bot: Instância do bot
         source_file: Objeto SourceFile do arquivo a enviar
@@ -274,55 +277,78 @@ async def send_file_to_channel(
         Message enviada ou None se falhar
     """
     try:
-        file_type = source_file.file_type
-        file_id = source_file.file_id
+        # Método 1: Copiar mensagem diretamente do grupo fonte (RECOMENDADO)
+        # Este método funciona independente de quem indexou o arquivo
+        LOG.info(
+            f"[AUTO-SEND] Copiando mensagem {source_file.message_id} "
+            f"de {source_file.source_chat_id} para {channel_id}"
+        )
 
-        # Usar legenda original se não especificada
-        if caption is None:
-            caption = source_file.caption
+        try:
+            # Tentar copiar a mensagem
+            msg = await bot.copy_message(
+                chat_id=channel_id,
+                from_chat_id=source_file.source_chat_id,
+                message_id=source_file.message_id,
+                caption=caption if caption else source_file.caption
+            )
 
-        LOG.info(f"[AUTO-SEND] Enviando {file_type} para canal {channel_id}")
+            LOG.info(f"[AUTO-SEND] ✅ Mensagem copiada com sucesso para {channel_id}")
+            return msg
 
-        # Enviar baseado no tipo
-        if file_type == 'photo':
-            msg = await bot.send_photo(
-                chat_id=channel_id,
-                photo=file_id,
-                caption=caption
-            )
-        elif file_type == 'video':
-            msg = await bot.send_video(
-                chat_id=channel_id,
-                video=file_id,
-                caption=caption
-            )
-        elif file_type == 'document':
-            msg = await bot.send_document(
-                chat_id=channel_id,
-                document=file_id,
-                caption=caption
-            )
-        elif file_type == 'animation':
-            msg = await bot.send_animation(
-                chat_id=channel_id,
-                animation=file_id,
-                caption=caption
-            )
-        elif file_type == 'audio':
-            msg = await bot.send_audio(
-                chat_id=channel_id,
-                audio=file_id,
-                caption=caption
-            )
-        else:
-            LOG.error(f"[AUTO-SEND] Tipo de arquivo não suportado: {file_type}")
-            return None
+        except TelegramError as copy_error:
+            # Se copy_message falhar, tentar com file_id (fallback)
+            LOG.warning(f"[AUTO-SEND] ⚠️ Falha ao copiar mensagem: {copy_error}")
+            LOG.info(f"[AUTO-SEND] Tentando método alternativo com file_id...")
 
-        LOG.info(f"[AUTO-SEND] ✅ Arquivo enviado com sucesso para {channel_id}")
-        return msg
+            file_type = source_file.file_type
+            file_id = source_file.file_id
+
+            # Usar legenda original se não especificada
+            if caption is None:
+                caption = source_file.caption
+
+            # Enviar baseado no tipo
+            if file_type == 'photo':
+                msg = await bot.send_photo(
+                    chat_id=channel_id,
+                    photo=file_id,
+                    caption=caption
+                )
+            elif file_type == 'video':
+                msg = await bot.send_video(
+                    chat_id=channel_id,
+                    video=file_id,
+                    caption=caption
+                )
+            elif file_type == 'document':
+                msg = await bot.send_document(
+                    chat_id=channel_id,
+                    document=file_id,
+                    caption=caption
+                )
+            elif file_type == 'animation':
+                msg = await bot.send_animation(
+                    chat_id=channel_id,
+                    animation=file_id,
+                    caption=caption
+                )
+            elif file_type == 'audio':
+                msg = await bot.send_audio(
+                    chat_id=channel_id,
+                    audio=file_id,
+                    caption=caption
+                )
+            else:
+                LOG.error(f"[AUTO-SEND] Tipo de arquivo não suportado: {file_type}")
+                return None
+
+            LOG.info(f"[AUTO-SEND] ✅ Arquivo enviado com sucesso (fallback) para {channel_id}")
+            return msg
 
     except TelegramError as e:
         LOG.error(f"[AUTO-SEND] ❌ Erro ao enviar arquivo: {e}")
+        LOG.error(f"[AUTO-SEND] Detalhes: message_id={source_file.message_id}, source_chat={source_file.source_chat_id}")
         return None
 
 
