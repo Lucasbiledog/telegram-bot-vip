@@ -6434,6 +6434,47 @@ async def listar_canais_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
+async def get_chat_id_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Mostra o ID do chat/canal de onde a mensagem veio"""
+    if not is_admin(update.effective_user.id):
+        return
+
+    msg = update.effective_message
+
+    # Se for uma mensagem encaminhada
+    if msg.forward_from_chat:
+        chat = msg.forward_from_chat
+        info = (
+            f"📋 <b>Informações do Canal/Grupo Encaminhado:</b>\n\n"
+            f"📌 <b>Título:</b> {chat.title}\n"
+            f"🆔 <b>ID:</b> <code>{chat.id}</code>\n"
+            f"📊 <b>Tipo:</b> {chat.type}\n"
+        )
+        if chat.username:
+            info += f"🔗 <b>Username:</b> @{chat.username}\n"
+
+        info += f"\n💡 <b>Copie o ID acima para usar nas configurações!</b>"
+
+    else:
+        # Informações do chat atual
+        chat = msg.chat
+        info = (
+            f"📋 <b>Informações deste Chat:</b>\n\n"
+            f"📌 <b>Título:</b> {chat.title if chat.title else 'Chat Privado'}\n"
+            f"🆔 <b>ID:</b> <code>{chat.id}</code>\n"
+            f"📊 <b>Tipo:</b> {chat.type}\n"
+        )
+        if chat.username:
+            info += f"🔗 <b>Username:</b> @{chat.username}\n"
+
+        info += (
+            f"\n💡 <b>Dica:</b> Encaminhe uma mensagem de um canal "
+            f"para descobrir o ID dele!"
+        )
+
+    await msg.reply_text(info, parse_mode='HTML')
+
+
 async def check_permissions_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Verifica permissões do bot nos canais VIP e FREE"""
     if not is_admin(update.effective_user.id):
@@ -7600,6 +7641,7 @@ async def on_startup():
         application.add_handler(CommandHandler("test_send", test_send_cmd), group=1)
         application.add_handler(CommandHandler("debug_version", debug_version_cmd), group=1)
         application.add_handler(CommandHandler("check_files", check_files_cmd), group=1)
+        application.add_handler(CommandHandler("get_chat_id", get_chat_id_cmd), group=1)
         application.add_handler(CommandHandler("check_permissions", check_permissions_cmd), group=1)
         application.add_handler(CommandHandler("scan_history", scan_history_cmd), group=1)
         application.add_handler(CommandHandler("scan_full", scan_full_cmd), group=1)
