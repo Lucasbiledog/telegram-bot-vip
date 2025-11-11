@@ -6434,6 +6434,89 @@ async def listar_canais_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
+async def check_permissions_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Verifica permissões do bot nos canais VIP e FREE"""
+    if not is_admin(update.effective_user.id):
+        return
+
+    await update.effective_message.reply_text("🔍 Verificando permissões do bot...")
+
+    canais_para_testar = [
+        ("Canal VIP", VIP_CHANNEL_ID),
+        ("Canal FREE", FREE_CHANNEL_ID),
+    ]
+
+    msg = "🔐 <b>Verificação de Permissões</b>\n\n"
+
+    for nome, channel_id in canais_para_testar:
+        try:
+            # Obter informações do chat
+            chat = await context.bot.get_chat(channel_id)
+
+            msg += f"📢 <b>{nome}</b>\n"
+            msg += f"  └ Título: {chat.title}\n"
+            msg += f"  └ ID: <code>{channel_id}</code>\n"
+            msg += f"  └ Tipo: {chat.type}\n"
+
+            # Tentar obter as permissões do bot
+            try:
+                me = await context.bot.get_me()
+                member = await context.bot.get_chat_member(channel_id, me.id)
+
+                msg += f"  └ Status do bot: {member.status}\n"
+
+                if member.status == "administrator":
+                    # Verificar permissões específicas
+                    perms = []
+                    if member.can_post_messages:
+                        perms.append("✅ Postar mensagens")
+                    else:
+                        perms.append("❌ Postar mensagens")
+
+                    if member.can_edit_messages:
+                        perms.append("✅ Editar mensagens")
+                    else:
+                        perms.append("❌ Editar mensagens")
+
+                    if member.can_delete_messages:
+                        perms.append("✅ Deletar mensagens")
+                    else:
+                        perms.append("❌ Deletar mensagens")
+
+                    msg += "  └ Permissões:\n"
+                    for perm in perms:
+                        msg += f"     • {perm}\n"
+
+                    # Verificar se pode postar
+                    if not member.can_post_messages:
+                        msg += "  └ ⚠️ <b>PROBLEMA: Bot não pode postar!</b>\n"
+                    else:
+                        msg += "  └ ✅ <b>OK: Bot pode postar!</b>\n"
+
+                elif member.status == "member":
+                    msg += "  └ ⚠️ <b>PROBLEMA: Bot é apenas membro!</b>\n"
+                    msg += "  └ 💡 Promova o bot para administrador\n"
+                else:
+                    msg += f"  └ ⚠️ Status inesperado: {member.status}\n"
+
+            except Exception as e:
+                msg += f"  └ ❌ Erro ao verificar permissões: {str(e)[:100]}\n"
+
+            msg += "\n"
+
+        except Exception as e:
+            msg += f"📢 <b>{nome}</b>\n"
+            msg += f"  └ ID: <code>{channel_id}</code>\n"
+            msg += f"  └ ❌ Erro: {str(e)[:100]}\n\n"
+
+    msg += "\n💡 <b>Como corrigir problemas:</b>\n"
+    msg += "1. Adicione o bot como administrador do canal\n"
+    msg += "2. Ative a permissão 'Postar mensagens'\n"
+    msg += "3. Rode /test_send novamente\n"
+
+    await update.effective_message.reply_text(msg, parse_mode='HTML')
+
+
 async def gerar_url_pagamento_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Gera URL estática de pagamento para descrição do canal (admin)"""
     if not is_admin(update.effective_user.id):
@@ -7517,6 +7600,7 @@ async def on_startup():
         application.add_handler(CommandHandler("test_send", test_send_cmd), group=1)
         application.add_handler(CommandHandler("debug_version", debug_version_cmd), group=1)
         application.add_handler(CommandHandler("check_files", check_files_cmd), group=1)
+        application.add_handler(CommandHandler("check_permissions", check_permissions_cmd), group=1)
         application.add_handler(CommandHandler("scan_history", scan_history_cmd), group=1)
         application.add_handler(CommandHandler("scan_full", scan_full_cmd), group=1)
         application.add_handler(CommandHandler("listar_canais", listar_canais_cmd), group=1)
