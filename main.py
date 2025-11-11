@@ -5840,7 +5840,7 @@ async def confirmar_reset_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 async def test_send_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Testa envio manual (admin)"""
+    """Testa envio manual (admin) com debug detalhado"""
     if not is_admin(update.effective_user.id):
         return
 
@@ -5857,18 +5857,40 @@ async def test_send_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    await update.effective_message.reply_text(f"🔄 Testando envio {tier.upper()}...")
+    await update.effective_message.reply_text(f"🔄 Testando envio {tier.upper()}...\n⏳ Aguarde...")
 
     with SessionLocal() as session:
         try:
+            # 1. Verificar stats antes
+            from auto_sender import get_stats
+            stats_before = await get_stats(session)
+
+            indexed = stats_before.get('indexed_files', 0)
+            available = stats_before.get(tier, {}).get('available', 0)
+
+            status_msg = (
+                f"📊 <b>Status Antes do Envio:</b>\n"
+                f"📁 Arquivos indexados: {indexed}\n"
+                f"✅ Disponíveis para {tier.upper()}: {available}\n"
+                f"🆔 Canal destino: {VIP_CHANNEL_ID if tier == 'vip' else FREE_CHANNEL_ID}\n\n"
+                f"🔄 Enviando..."
+            )
+            await update.effective_message.reply_text(status_msg, parse_mode='HTML')
+
+            # 2. Tentar enviar
             if tier == 'vip':
                 await send_daily_vip_file(context.bot, session)
             else:
                 await send_weekly_free_file(context.bot, session)
 
+            # 3. Verificar stats depois
+            stats_after = await get_stats(session)
+            sent_after = stats_after.get(tier, {}).get('total_sent', 0)
+
             await update.effective_message.reply_text(
                 f"✅ <b>Teste de envio {tier.upper()} concluído!</b>\n\n"
-                f"Verifique o canal para confirmar.",
+                f"📤 Total enviados: {sent_after}\n"
+                f"📍 Verifique o canal: {VIP_CHANNEL_ID if tier == 'vip' else FREE_CHANNEL_ID}",
                 parse_mode='HTML'
             )
 
@@ -5877,22 +5899,31 @@ async def test_send_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"🧪 <b>Teste de Envio</b>\n"
                 f"👤 Admin: {update.effective_user.id}\n"
                 f"🎯 Tier: {tier.upper()}\n"
-                f"✅ Status: Concluído"
+                f"✅ Status: Concluído\n"
+                f"📊 Total enviados: {sent_after}"
             )
 
         except Exception as e:
+            import traceback
+            error_details = traceback.format_exc()
+
             await update.effective_message.reply_text(
                 f"❌ <b>Erro no teste de envio!</b>\n\n"
-                f"<code>{str(e)}</code>",
+                f"<code>{str(e)}</code>\n\n"
+                f"💡 Verifique:\n"
+                f"• Arquivos indexados: use /stats_auto\n"
+                f"• Canal configurado: {VIP_CHANNEL_ID if tier == 'vip' else FREE_CHANNEL_ID}\n"
+                f"• Bot é admin no canal?",
                 parse_mode='HTML'
             )
 
-            # Log de erro
+            # Log de erro detalhado
             await log_to_group(
                 f"❌ <b>Erro no Teste de Envio</b>\n"
                 f"👤 Admin: {update.effective_user.id}\n"
                 f"🎯 Tier: {tier.upper()}\n"
-                f"⚠️ Erro: {str(e)}"
+                f"⚠️ Erro: {str(e)}\n\n"
+                f"📋 Detalhes:\n<code>{error_details[:500]}</code>"
             )
 
 
