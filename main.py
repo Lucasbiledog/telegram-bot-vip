@@ -6061,6 +6061,109 @@ async def check_files_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
+async def scan_history_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Faz scan do histórico do grupo fonte e indexa arquivos antigos"""
+    if not is_admin(update.effective_user.id):
+        return
+
+    # Obter limite (padrão 100)
+    try:
+        limit = int(context.args[0]) if context.args else 100
+    except:
+        limit = 100
+
+    await update.effective_message.reply_text(
+        f"🔄 Iniciando scan do histórico...\n"
+        f"📊 Limite: {limit} mensagens\n\n"
+        f"⏳ Isso pode demorar alguns minutos...",
+        parse_mode='HTML'
+    )
+
+    from auto_sender import index_message_file
+
+    total_processadas = 0
+    total_indexadas = 0
+    total_duplicadas = 0
+    total_erros = 0
+
+    with SessionLocal() as session:
+        try:
+            # Buscar updates recentes
+            updates = await context.bot.get_updates(limit=100, timeout=30)
+
+            for upd in updates:
+                if not upd.message or upd.message.chat_id != SOURCE_CHAT_ID:
+                    continue
+
+                total_processadas += 1
+
+                # Tentar indexar
+                try:
+                    indexed = await index_message_file(upd, session)
+                    if indexed:
+                        total_indexadas += 1
+                    else:
+                        # Já existia
+                        total_duplicadas += 1
+
+                except Exception as e:
+                    total_erros += 1
+                    logging.error(f"Erro ao indexar message_id {upd.message.message_id}: {e}")
+
+                if total_processadas >= limit:
+                    break
+
+            # Relatório
+            msg = (
+                f"✅ <b>Scan Concluído!</b>\n\n"
+                f"📨 Mensagens processadas: {total_processadas}\n"
+                f"✅ Novas indexadas: {total_indexadas}\n"
+                f"⏭️ Já existentes: {total_duplicadas}\n"
+                f"❌ Erros: {total_erros}\n\n"
+            )
+
+            # Verificar total no banco
+            total_banco = session.query(SourceFile).filter(
+                SourceFile.source_chat_id == SOURCE_CHAT_ID,
+                SourceFile.active == True
+            ).count()
+
+            msg += (
+                f"💾 <b>Total no banco:</b> {total_banco} arquivos\n\n"
+                f"💡 <b>Dica:</b> O Bot API tem limite de ~100 mensagens recentes.\n"
+                f"Para histórico completo, envie arquivos antigos novamente\n"
+                f"ou encaminhe para o grupo fonte."
+            )
+
+            await update.effective_message.reply_text(msg, parse_mode='HTML')
+
+            # Log
+            await log_to_group(
+                f"📊 <b>Scan de Histórico</b>\n"
+                f"👤 Admin: {update.effective_user.id}\n"
+                f"📨 Processadas: {total_processadas}\n"
+                f"✅ Indexadas: {total_indexadas}\n"
+                f"💾 Total no banco: {total_banco}"
+            )
+
+        except Exception as e:
+            import traceback
+            error_details = traceback.format_exc()
+
+            await update.effective_message.reply_text(
+                f"❌ <b>Erro no scan:</b>\n\n"
+                f"<code>{str(e)}</code>",
+                parse_mode='HTML'
+            )
+
+            await log_to_group(
+                f"❌ <b>Erro no Scan de Histórico</b>\n"
+                f"👤 Admin: {update.effective_user.id}\n"
+                f"⚠️ Erro: {str(e)}\n\n"
+                f"<code>{error_details[:500]}</code>"
+            )
+
+
 async def listar_canais_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Lista todos os canais/grupos que o bot está (admin)"""
     if not is_admin(update.effective_user.id):
@@ -7187,6 +7290,7 @@ async def on_startup():
         application.add_handler(CommandHandler("test_send", test_send_cmd), group=1)
         application.add_handler(CommandHandler("debug_version", debug_version_cmd), group=1)
         application.add_handler(CommandHandler("check_files", check_files_cmd), group=1)
+        application.add_handler(CommandHandler("scan_history", scan_history_cmd), group=1)
         application.add_handler(CommandHandler("listar_canais", listar_canais_cmd), group=1)
         application.add_handler(CommandHandler("gerar_url", gerar_url_pagamento_cmd), group=1)
 
