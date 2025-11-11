@@ -18,12 +18,11 @@ from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
 
 # Version marker to force module reload
-__version__ = "2.0.1"
-__updated__ = "2025-11-04 02:45:00"
+__version__ = "2.0.2"
+__updated__ = "2025-11-11 11:00:00"
 
 from telegram import Bot, Message, Update
 from telegram.error import TelegramError
-from sqlalchemy import Column, Integer, String, DateTime, Boolean, BigInteger, Text
 from sqlalchemy.orm import Session
 
 LOG = logging.getLogger(__name__)
@@ -36,39 +35,11 @@ FREE_CHANNEL_ID = None  # Será configurado via variável de ambiente
 # Tipos de arquivo suportados
 SUPPORTED_TYPES = ['photo', 'video', 'document', 'animation', 'audio']
 
-
-class SourceFile:
-    """
-    Indexa todos os arquivos disponíveis no grupo fonte.
-    Populada automaticamente quando mensagens são enviadas no grupo fonte.
-    """
-    __tablename__ = "source_files"
-
-    id = Column(Integer, primary_key=True)
-    file_id = Column(String, nullable=False)
-    file_unique_id = Column(String, nullable=False, unique=True, index=True)
-    file_type = Column(String, nullable=False)  # photo, video, document, etc
-    message_id = Column(Integer, nullable=False, index=True)
-    source_chat_id = Column(BigInteger, nullable=False)
-    caption = Column(Text, nullable=True)
-    file_name = Column(String, nullable=True)
-    file_size = Column(BigInteger, nullable=True)
-    indexed_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
-    active = Column(Boolean, default=True)  # Pode ser desativado manualmente
-
-
-class SentFile:
-    """Rastreia arquivos já enviados para evitar repetição"""
-    __tablename__ = "sent_files"
-
-    id = Column(Integer, primary_key=True)
-    file_unique_id = Column(String, nullable=False, index=True)
-    file_type = Column(String, nullable=False)  # photo, video, document, etc
-    message_id = Column(Integer, nullable=False)
-    source_chat_id = Column(BigInteger, nullable=False)
-    sent_to_tier = Column(String, nullable=False, index=True)  # 'vip' ou 'free'
-    sent_at = Column(DateTime(timezone=True), nullable=False)
-    caption = Column(String, nullable=True)
+# IMPORTANTE: SourceFile e SentFile são importadas de main.py
+# Elas são definidas lá e herdam corretamente de Base
+# Não redefinir aqui para evitar conflitos!
+SourceFile = None
+SentFile = None
 
 
 async def index_message_file(update: Update, session: Session) -> bool:
@@ -469,14 +440,30 @@ async def send_weekly_free_file(bot: Bot, session: Session):
         LOG.error(traceback.format_exc())
 
 
-def setup_auto_sender(vip_channel: int, free_channel: int):
+def setup_auto_sender(vip_channel: int, free_channel: int, source_file_class=None, sent_file_class=None):
     """
-    Configura os IDs dos canais para o sistema de envio automático.
+    Configura os IDs dos canais e classes de modelo para o sistema de envio automático.
+
+    Args:
+        vip_channel: ID do canal VIP
+        free_channel: ID do canal FREE
+        source_file_class: Classe SourceFile do main.py (herda de Base)
+        sent_file_class: Classe SentFile do main.py (herda de Base)
     """
-    global VIP_CHANNEL_ID, FREE_CHANNEL_ID
+    global VIP_CHANNEL_ID, FREE_CHANNEL_ID, SourceFile, SentFile
+
     VIP_CHANNEL_ID = vip_channel
     FREE_CHANNEL_ID = free_channel
+
+    # Atribuir classes de modelo (se fornecidas)
+    if source_file_class:
+        SourceFile = source_file_class
+    if sent_file_class:
+        SentFile = sent_file_class
+
     LOG.info(f"[AUTO-SEND] Configurado - VIP: {vip_channel}, FREE: {free_channel}")
+    if source_file_class and sent_file_class:
+        LOG.info(f"[AUTO-SEND] Classes de modelo configuradas corretamente")
 
 
 # ===== COMANDOS DE ADMINISTRAÇÃO =====

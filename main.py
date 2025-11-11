@@ -1223,8 +1223,8 @@ async def startup_event():
         # Atualizar cache de admins
         await refresh_admin_cache()
 
-        # Configurar sistema de envio automático
-        setup_auto_sender(VIP_CHANNEL_ID, FREE_CHANNEL_ID)
+        # Configurar sistema de envio automático (passar classes de modelo)
+        setup_auto_sender(VIP_CHANNEL_ID, FREE_CHANNEL_ID, SourceFile, SentFile)
         logging.info(f"📤 Sistema de envio automático configurado - VIP: {VIP_CHANNEL_ID}, FREE: {FREE_CHANNEL_ID}")
 
         # Iniciar sistema keep-alive para manter bot ativo 24/7
