@@ -453,6 +453,108 @@ async def mark_file_as_sent(
         session.rollback()
 
 
+async def send_teaser_to_free(bot: Bot, all_parts: list):
+    """
+    Envia um arquivo .txt com informações do arquivo VIP para o canal FREE.
+    Serve como "teaser" para incentivar assinatura VIP.
+
+    Args:
+        bot: Instância do bot
+        all_parts: Lista de SourceFile (todas as partes do arquivo)
+    """
+    if not FREE_CHANNEL_ID:
+        LOG.warning("[AUTO-SEND] FREE_CHANNEL_ID não configurado, pulando teaser")
+        return
+
+    try:
+        import tempfile
+        import os
+
+        # Criar conteúdo do arquivo .txt
+        first_part = all_parts[0]
+
+        # Nome base do arquivo (sem extensão de parte)
+        if len(all_parts) > 1:
+            base_name = extract_base_name(first_part.file_name) or "Arquivo"
+            file_list = "\n".join([f"  • {p.file_name}" for p in all_parts])
+            txt_name = f"{base_name}.txt"
+        else:
+            file_name = first_part.file_name or "Arquivo.txt"
+            txt_name = file_name.rsplit('.', 1)[0] + ".txt" if '.' in file_name else file_name + ".txt"
+            file_list = f"  • {first_part.file_name}"
+
+        # Calcular tamanho total
+        total_size = sum(p.file_size or 0 for p in all_parts)
+        size_mb = total_size / (1024 * 1024)
+
+        # Conteúdo do .txt
+        content = f"""╔════════════════════════════════════════╗
+║   🔒 CONTEÚDO EXCLUSIVO VIP 🔒        ║
+╚════════════════════════════════════════╝
+
+📅 Data: {datetime.now().strftime('%d/%m/%Y')}
+📦 Arquivo: {first_part.file_name or 'Arquivo'}
+📊 Tipo: {first_part.file_type.upper()}
+💾 Tamanho: {size_mb:.2f} MB
+
+"""
+
+        if len(all_parts) > 1:
+            content += f"""🗂️ PARTES ({len(all_parts)} arquivos):
+{file_list}
+
+"""
+
+        if first_part.caption:
+            content += f"""📝 DESCRIÇÃO:
+{first_part.caption}
+
+"""
+
+        content += """════════════════════════════════════════
+
+💎 QUER TER ACESSO A ESTE E OUTROS CONTEÚDOS?
+
+✅ Assine o canal VIP e receba:
+   • Conteúdos diários exclusivos
+   • Arquivos completos (sem limites)
+   • Acesso vitalício
+   • Suporte prioritário
+
+🔗 Para assinar, clique no link do canal!
+
+════════════════════════════════════════
+"""
+
+        # Criar arquivo temporário
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8') as f:
+            f.write(content)
+            temp_path = f.name
+
+        try:
+            # Enviar arquivo .txt para o canal FREE
+            with open(temp_path, 'rb') as f:
+                await bot.send_document(
+                    chat_id=FREE_CHANNEL_ID,
+                    document=f,
+                    filename=txt_name,
+                    caption=f"👀 <b>Preview do conteúdo VIP de hoje!</b>\n\n💎 Quer ter acesso completo? Assine o VIP!",
+                    parse_mode='HTML'
+                )
+
+            LOG.info(f"[AUTO-SEND] ✅ Teaser enviado para o canal FREE: {txt_name}")
+
+        finally:
+            # Deletar arquivo temporário
+            if os.path.exists(temp_path):
+                os.unlink(temp_path)
+
+    except Exception as e:
+        LOG.error(f"[AUTO-SEND] ❌ Erro ao enviar teaser para FREE: {e}")
+        import traceback
+        LOG.error(traceback.format_exc())
+
+
 async def send_daily_vip_file(bot: Bot, session: Session):
     """
     Envia arquivo diário para o canal VIP (executa às 15h).
@@ -507,6 +609,11 @@ async def send_daily_vip_file(bot: Bot, session: Session):
 
         if success_count == len(all_parts):
             LOG.info(f"[AUTO-SEND] ✅ Envio VIP diário concluído: {success_count} parte(s)")
+
+            # Enviar teaser para o canal FREE
+            LOG.info("[AUTO-SEND] 📤 Enviando teaser para canal FREE...")
+            await send_teaser_to_free(bot, all_parts)
+
         elif success_count > 0:
             LOG.warning(f"[AUTO-SEND] ⚠️ Envio parcial: {success_count}/{len(all_parts)} partes")
         else:
