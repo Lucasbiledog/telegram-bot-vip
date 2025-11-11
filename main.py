@@ -7117,41 +7117,13 @@ async def on_startup():
 
         # Job diário VIP (15h)
         async def daily_vip_job(context: ContextTypes.DEFAULT_TYPE):
-            """Job diário para envio VIP + mensagem de renovação"""
+            """Job diário para envio VIP (APENAS arquivo, sem mensagem de renovação no canal)"""
             with SessionLocal() as session:
                 try:
                     # Enviar arquivo diário
                     await send_daily_vip_file(context.bot, session)
 
-                    # Mensagem de renovação VIP (para quem já é membro)
-                    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-
-                    renew_msg = (
-                        "💎 <b>Renovação VIP</b>\n\n"
-                        "👑 Seu acesso VIP está próximo do vencimento?\n"
-                        "🔄 Renove agora e continue aproveitando todo o conteúdo exclusivo!\n\n"
-                        "💰 <b>Planos:</b>\n"
-                        "• 30 dias: $30.00 USD\n"
-                        "• 90 dias: $70.00 USD\n"
-                        "• 180 dias: $110.00 USD\n"
-                        "• 365 dias: $179.00 USD\n\n"
-                        "⚡ Renovação instantânea após pagamento"
-                    )
-
-                    payment_url = f"{WEBAPP_URL}?user_id=from_vip_channel&ref=vip_renewal"
-                    keyboard = [[
-                        InlineKeyboardButton("💳 Renovar VIP", url=payment_url)
-                    ]]
-                    reply_markup = InlineKeyboardMarkup(keyboard)
-
-                    await context.bot.send_message(
-                        chat_id=VIP_CHANNEL_ID,
-                        text=renew_msg,
-                        parse_mode='HTML',
-                        reply_markup=reply_markup
-                    )
-
-                    await log_to_group("✅ <b>Envio VIP diário concluído</b>\n💎 Mensagem de renovação enviada")
+                    await log_to_group("✅ <b>Envio VIP diário concluído</b>")
                 except Exception as e:
                     await log_to_group(f"❌ <b>Erro no envio VIP diário</b>\n⚠️ {str(e)}")
                     logging.error(f"Erro no job VIP diário: {e}")
