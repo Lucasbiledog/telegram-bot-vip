@@ -6164,6 +6164,233 @@ async def scan_history_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
 
 
+async def scan_full_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Faz scan COMPLETO do histórico usando Pyrogram (User API)"""
+    if not is_admin(update.effective_user.id):
+        return
+
+    await update.effective_message.reply_text(
+        "🔄 <b>Scan Completo do Histórico</b>\n\n"
+        "⏳ Verificando Pyrogram...",
+        parse_mode='HTML'
+    )
+
+    # Verificar se Pyrogram está instalado
+    try:
+        from pyrogram import Client
+        from pyrogram.enums import ChatType
+    except ImportError:
+        await update.effective_message.reply_text(
+            "❌ <b>Pyrogram não instalado!</b>\n\n"
+            "Para fazer scan completo, instale:\n"
+            "<code>pip install pyrogram tgcrypto</code>\n\n"
+            "Ou use: /scan_history (limitado a ~100 mensagens)",
+            parse_mode='HTML'
+        )
+        return
+
+    # Obter credenciais
+    api_id = os.getenv("TELEGRAM_API_ID")
+    api_hash = os.getenv("TELEGRAM_API_HASH")
+
+    if not api_id or not api_hash:
+        await update.effective_message.reply_text(
+            "❌ <b>Credenciais não configuradas!</b>\n\n"
+            "Configure no .env:\n"
+            "<code>TELEGRAM_API_ID=seu_id\n"
+            "TELEGRAM_API_HASH=seu_hash</code>\n\n"
+            "Obtenha em: https://my.telegram.org",
+            parse_mode='HTML'
+        )
+        return
+
+    # Obter limite (padrão 0 = ilimitado)
+    try:
+        limit = int(context.args[0]) if context.args else 0
+    except:
+        limit = 0
+
+    await update.effective_message.reply_text(
+        f"✅ Pyrogram OK!\n\n"
+        f"🔄 Iniciando scan completo...\n"
+        f"📊 Limite: {'Ilimitado' if limit == 0 else f'{limit} mensagens'}\n\n"
+        f"⏳ Isso pode demorar vários minutos...\n\n"
+        f"💡 <b>Primeira vez?</b> Você receberá código SMS.",
+        parse_mode='HTML'
+    )
+
+    total_processadas = 0
+    total_indexadas = 0
+    total_duplicadas = 0
+    total_erros = 0
+    tipos_encontrados = {}
+
+    with SessionLocal() as session:
+        try:
+            # Criar cliente Pyrogram (User API)
+            app = Client(
+                "bot_scanner",
+                api_id=int(api_id),
+                api_hash=api_hash,
+                workdir="."
+            )
+
+            async with app:
+                # Verificar se está autenticado
+                me = await app.get_me()
+                await update.effective_message.reply_text(
+                    f"👤 <b>Autenticado como:</b> {me.first_name}\n\n"
+                    f"🔍 Escaneando grupo {SOURCE_CHAT_ID}...",
+                    parse_mode='HTML'
+                )
+
+                # Iterar por TODAS as mensagens do grupo
+                async for message in app.get_chat_history(SOURCE_CHAT_ID, limit=limit if limit > 0 else None):
+                    total_processadas += 1
+
+                    # Progress a cada 100 mensagens
+                    if total_processadas % 100 == 0:
+                        await update.effective_message.reply_text(
+                            f"📊 Progresso: {total_processadas} mensagens processadas...",
+                            parse_mode='HTML'
+                        )
+
+                    # Verificar se tem arquivo
+                    file_data = None
+
+                    if message.photo:
+                        file_data = {
+                            'file_id': message.photo.file_id,
+                            'file_unique_id': message.photo.file_unique_id,
+                            'file_type': 'photo',
+                            'file_size': message.photo.file_size,
+                            'file_name': None
+                        }
+                    elif message.video:
+                        file_data = {
+                            'file_id': message.video.file_id,
+                            'file_unique_id': message.video.file_unique_id,
+                            'file_type': 'video',
+                            'file_size': message.video.file_size,
+                            'file_name': message.video.file_name
+                        }
+                    elif message.document:
+                        file_data = {
+                            'file_id': message.document.file_id,
+                            'file_unique_id': message.document.file_unique_id,
+                            'file_type': 'document',
+                            'file_size': message.document.file_size,
+                            'file_name': message.document.file_name
+                        }
+                    elif message.animation:
+                        file_data = {
+                            'file_id': message.animation.file_id,
+                            'file_unique_id': message.animation.file_unique_id,
+                            'file_type': 'animation',
+                            'file_size': message.animation.file_size,
+                            'file_name': message.animation.file_name
+                        }
+                    elif message.audio:
+                        file_data = {
+                            'file_id': message.audio.file_id,
+                            'file_unique_id': message.audio.file_unique_id,
+                            'file_type': 'audio',
+                            'file_size': message.audio.file_size,
+                            'file_name': message.audio.file_name
+                        }
+
+                    if not file_data:
+                        continue
+
+                    # Contar tipos
+                    tipo = file_data['file_type']
+                    tipos_encontrados[tipo] = tipos_encontrados.get(tipo, 0) + 1
+
+                    # Verificar se já existe
+                    existing = session.query(SourceFile).filter(
+                        SourceFile.file_unique_id == file_data['file_unique_id']
+                    ).first()
+
+                    if existing:
+                        total_duplicadas += 1
+                        continue
+
+                    # Criar novo registro
+                    try:
+                        source_file = SourceFile(
+                            file_id=file_data['file_id'],
+                            file_unique_id=file_data['file_unique_id'],
+                            file_type=file_data['file_type'],
+                            message_id=message.id,
+                            source_chat_id=SOURCE_CHAT_ID,
+                            caption=message.caption,
+                            file_name=file_data.get('file_name'),
+                            file_size=file_data.get('file_size'),
+                            indexed_at=datetime.now(timezone.utc),
+                            active=True
+                        )
+                        session.add(source_file)
+                        session.commit()
+
+                        total_indexadas += 1
+
+                    except Exception as e:
+                        session.rollback()
+                        total_erros += 1
+                        logging.error(f"Erro ao indexar {message.id}: {e}")
+
+            # Relatório final
+            total_banco = session.query(SourceFile).filter(
+                SourceFile.source_chat_id == SOURCE_CHAT_ID,
+                SourceFile.active == True
+            ).count()
+
+            tipos_str = "\n".join([f"  • {tipo}: {count}" for tipo, count in tipos_encontrados.items()])
+
+            msg = (
+                f"✅ <b>Scan Completo Finalizado!</b>\n\n"
+                f"📨 Mensagens processadas: {total_processadas}\n"
+                f"✅ Novas indexadas: {total_indexadas}\n"
+                f"⏭️ Já existentes: {total_duplicadas}\n"
+                f"❌ Erros: {total_erros}\n\n"
+                f"📁 <b>Tipos encontrados:</b>\n{tipos_str}\n\n"
+                f"💾 <b>Total no banco:</b> {total_banco} arquivos\n\n"
+                f"🎉 Histórico completo indexado!"
+            )
+
+            await update.effective_message.reply_text(msg, parse_mode='HTML')
+
+            # Log
+            await log_to_group(
+                f"📊 <b>Scan Completo (Pyrogram)</b>\n"
+                f"👤 Admin: {update.effective_user.id}\n"
+                f"📨 Processadas: {total_processadas}\n"
+                f"✅ Indexadas: {total_indexadas}\n"
+                f"💾 Total no banco: {total_banco}"
+            )
+
+        except Exception as e:
+            import traceback
+            error_details = traceback.format_exc()
+
+            await update.effective_message.reply_text(
+                f"❌ <b>Erro no scan completo:</b>\n\n"
+                f"<code>{str(e)}</code>\n\n"
+                f"💡 Verifique:\n"
+                f"• API_ID e API_HASH corretos\n"
+                f"• Primeira vez? Digite código SMS\n"
+                f"• Bot tem acesso ao grupo?",
+                parse_mode='HTML'
+            )
+
+            await log_to_group(
+                f"❌ <b>Erro no Scan Completo</b>\n"
+                f"👤 Admin: {update.effective_user.id}\n"
+                f"⚠️ Erro: {str(e)}\n\n"
+                f"<code>{error_details[:500]}</code>"
+            )
+
+
 async def listar_canais_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Lista todos os canais/grupos que o bot está (admin)"""
     if not is_admin(update.effective_user.id):
@@ -7291,6 +7518,7 @@ async def on_startup():
         application.add_handler(CommandHandler("debug_version", debug_version_cmd), group=1)
         application.add_handler(CommandHandler("check_files", check_files_cmd), group=1)
         application.add_handler(CommandHandler("scan_history", scan_history_cmd), group=1)
+        application.add_handler(CommandHandler("scan_full", scan_full_cmd), group=1)
         application.add_handler(CommandHandler("listar_canais", listar_canais_cmd), group=1)
         application.add_handler(CommandHandler("gerar_url", gerar_url_pagamento_cmd), group=1)
 
