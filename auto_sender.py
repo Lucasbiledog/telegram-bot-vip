@@ -144,6 +144,7 @@ async def index_message_file(update: Update, session: Session) -> bool:
 def is_part_file(file_name: Optional[str], caption: Optional[str]) -> bool:
     """
     Verifica se arquivo é uma parte (part 1, part 2, etc).
+    Detecta padrões como: 001, 002, part1, parte 1, etc.
     """
     if not file_name and not caption:
         return False
@@ -162,7 +163,76 @@ def is_part_file(file_name: Optional[str], caption: Optional[str]) -> bool:
         'disco1', 'disco2', 'disco3',
     ]
 
-    return any(pattern in text_to_check for pattern in part_patterns)
+    # Verificar padrões de texto
+    if any(pattern in text_to_check for pattern in part_patterns):
+        return True
+
+    # Verificar padrões numéricos: 001, 002, 003, etc (3 dígitos)
+    import re
+    if re.search(r'\b\d{3}\b', file_name or ''):
+        return True
+
+    return False
+
+
+def extract_base_name(file_name: Optional[str]) -> Optional[str]:
+    """
+    Extrai o nome base de um arquivo com partes, removendo números de parte.
+    Exemplo:
+        "Movie.2024.1080p.001.mkv" -> "Movie.2024.1080p"
+        "Game.part1.rar" -> "Game"
+    """
+    if not file_name:
+        return None
+
+    import re
+
+    # Remover extensão
+    base = file_name.rsplit('.', 1)[0] if '.' in file_name else file_name
+
+    # Remover padrões de parte:
+    # - .001, .002, etc (3 dígitos no final)
+    base = re.sub(r'\.\d{3}$', '', base)
+    # - .part1, .part2, etc
+    base = re.sub(r'\.part\d+$', '', base, flags=re.IGNORECASE)
+    # - .parte1, .parte2, etc
+    base = re.sub(r'\.parte\d+$', '', base, flags=re.IGNORECASE)
+    # - _001, _002, etc
+    base = re.sub(r'_\d{3}$', '', base)
+    # - -001, -002, etc
+    base = re.sub(r'-\d{3}$', '', base)
+
+    return base
+
+
+def get_all_parts(session: Session, source_file: SourceFile) -> list:
+    """
+    Busca todas as partes relacionadas a um arquivo.
+    Retorna lista ordenada de SourceFile (todas as partes).
+    """
+    # Se não for arquivo com partes, retorna só ele mesmo
+    if not is_part_file(source_file.file_name, source_file.caption):
+        return [source_file]
+
+    # Extrair nome base
+    base_name = extract_base_name(source_file.file_name)
+    if not base_name:
+        return [source_file]
+
+    LOG.info(f"[AUTO-SEND] Detectado arquivo com partes. Base: {base_name}")
+
+    # Buscar todos os arquivos com o mesmo nome base
+    all_files = session.query(SourceFile).filter(
+        SourceFile.source_chat_id == source_file.source_chat_id,
+        SourceFile.active == True,
+        SourceFile.file_name.like(f"{base_name}%")
+    ).order_by(SourceFile.file_name).all()
+
+    if len(all_files) > 1:
+        LOG.info(f"[AUTO-SEND] Encontradas {len(all_files)} partes para enviar juntas")
+        return all_files
+    else:
+        return [source_file]
 
 
 async def get_random_file_from_source(
@@ -200,6 +270,11 @@ async def get_random_file_from_source(
         query = session.query(SourceFile).filter(
             SourceFile.source_chat_id == SOURCE_CHAT_ID,
             SourceFile.active == True
+        )
+
+        # FILTRO: Excluir fotos (apenas documents, videos, audios, animations)
+        query = query.filter(
+            SourceFile.file_type.in_(['document', 'video', 'audio', 'animation'])
         )
 
         # Só aplica filtro de "já enviados" se houver arquivos enviados
@@ -381,6 +456,7 @@ async def mark_file_as_sent(
 async def send_daily_vip_file(bot: Bot, session: Session):
     """
     Envia arquivo diário para o canal VIP (executa às 15h).
+    Se o arquivo tiver partes (001, 002, etc), envia todas as partes juntas.
     """
     LOG.info("[AUTO-SEND] 🎯 Iniciando envio diário VIP")
 
@@ -397,21 +473,44 @@ async def send_daily_vip_file(bot: Bot, session: Session):
             # Enviar notificação ao admin se necessário
             return
 
-        # Preparar legenda
-        caption = f"🔥 Conteúdo VIP Exclusivo\n📅 {datetime.now().strftime('%d/%m/%Y')}"
-        if source_file.caption:
-            caption += f"\n\n{source_file.caption}"
+        # Buscar todas as partes relacionadas (se houver)
+        all_parts = get_all_parts(session, source_file)
 
-        # Enviar para canal VIP
-        msg = await send_file_to_channel(bot, source_file, VIP_CHANNEL_ID, caption)
+        LOG.info(f"[AUTO-SEND] Enviando {len(all_parts)} parte(s) para VIP")
 
-        if msg:
-            # Marcar como enviado
-            await mark_file_as_sent(session, source_file, 'vip')
-            LOG.info("[AUTO-SEND] ✅ Envio VIP diário concluído com sucesso")
-            LOG.info(f"[AUTO-SEND] Tipo: {source_file.file_type}, Message ID: {msg.message_id}")
+        # Enviar todas as partes em sequência
+        success_count = 0
+        for i, part in enumerate(all_parts, 1):
+            # Preparar legenda (apenas na primeira parte)
+            if i == 1:
+                caption = f"🔥 Conteúdo VIP Exclusivo\n📅 {datetime.now().strftime('%d/%m/%Y')}"
+                if part.caption:
+                    caption += f"\n\n{part.caption}"
+                if len(all_parts) > 1:
+                    caption += f"\n\n📦 Arquivo com {len(all_parts)} partes"
+            else:
+                caption = f"📦 Parte {i} de {len(all_parts)}"
+                if part.caption:
+                    caption += f"\n{part.caption}"
+
+            # Enviar para canal VIP
+            msg = await send_file_to_channel(bot, part, VIP_CHANNEL_ID, caption)
+
+            if msg:
+                # Marcar como enviado
+                await mark_file_as_sent(session, part, 'vip')
+                success_count += 1
+                LOG.info(f"[AUTO-SEND] ✅ Parte {i}/{len(all_parts)} enviada com sucesso")
+            else:
+                LOG.error(f"[AUTO-SEND] ❌ Falha ao enviar parte {i}/{len(all_parts)}")
+                # Continuar tentando enviar as outras partes
+
+        if success_count == len(all_parts):
+            LOG.info(f"[AUTO-SEND] ✅ Envio VIP diário concluído: {success_count} parte(s)")
+        elif success_count > 0:
+            LOG.warning(f"[AUTO-SEND] ⚠️ Envio parcial: {success_count}/{len(all_parts)} partes")
         else:
-            LOG.error("[AUTO-SEND] ❌ Falha no envio VIP diário")
+            LOG.error("[AUTO-SEND] ❌ Falha total no envio VIP diário")
 
     except Exception as e:
         LOG.error(f"[AUTO-SEND] ❌ Erro no envio VIP diário: {e}")
@@ -422,6 +521,7 @@ async def send_daily_vip_file(bot: Bot, session: Session):
 async def send_weekly_free_file(bot: Bot, session: Session):
     """
     Envia arquivo semanal para o canal FREE (quartas às 15h).
+    Se o arquivo tiver partes (001, 002, etc), envia todas as partes juntas.
     """
     LOG.info("[AUTO-SEND] 🎯 Verificando envio semanal FREE")
 
@@ -444,21 +544,44 @@ async def send_weekly_free_file(bot: Bot, session: Session):
             LOG.warning("[AUTO-SEND] ⚠️ Nenhum arquivo novo disponível para FREE")
             return
 
-        # Preparar legenda
-        caption = f"🆓 Conteúdo Grátis da Semana\n📅 {datetime.now().strftime('%d/%m/%Y')}"
-        if source_file.caption:
-            caption += f"\n\n{source_file.caption}"
+        # Buscar todas as partes relacionadas (se houver)
+        all_parts = get_all_parts(session, source_file)
 
-        # Enviar para canal FREE
-        msg = await send_file_to_channel(bot, source_file, FREE_CHANNEL_ID, caption)
+        LOG.info(f"[AUTO-SEND] Enviando {len(all_parts)} parte(s) para FREE")
 
-        if msg:
-            # Marcar como enviado
-            await mark_file_as_sent(session, source_file, 'free')
-            LOG.info("[AUTO-SEND] ✅ Envio FREE semanal concluído com sucesso")
-            LOG.info(f"[AUTO-SEND] Tipo: {source_file.file_type}, Message ID: {msg.message_id}")
+        # Enviar todas as partes em sequência
+        success_count = 0
+        for i, part in enumerate(all_parts, 1):
+            # Preparar legenda (apenas na primeira parte)
+            if i == 1:
+                caption = f"🆓 Conteúdo Grátis da Semana\n📅 {datetime.now().strftime('%d/%m/%Y')}"
+                if part.caption:
+                    caption += f"\n\n{part.caption}"
+                if len(all_parts) > 1:
+                    caption += f"\n\n📦 Arquivo com {len(all_parts)} partes"
+            else:
+                caption = f"📦 Parte {i} de {len(all_parts)}"
+                if part.caption:
+                    caption += f"\n{part.caption}"
+
+            # Enviar para canal FREE
+            msg = await send_file_to_channel(bot, part, FREE_CHANNEL_ID, caption)
+
+            if msg:
+                # Marcar como enviado
+                await mark_file_as_sent(session, part, 'free')
+                success_count += 1
+                LOG.info(f"[AUTO-SEND] ✅ Parte {i}/{len(all_parts)} enviada com sucesso")
+            else:
+                LOG.error(f"[AUTO-SEND] ❌ Falha ao enviar parte {i}/{len(all_parts)}")
+                # Continuar tentando enviar as outras partes
+
+        if success_count == len(all_parts):
+            LOG.info(f"[AUTO-SEND] ✅ Envio FREE semanal concluído: {success_count} parte(s)")
+        elif success_count > 0:
+            LOG.warning(f"[AUTO-SEND] ⚠️ Envio parcial: {success_count}/{len(all_parts)} partes")
         else:
-            LOG.error("[AUTO-SEND] ❌ Falha no envio FREE semanal")
+            LOG.error("[AUTO-SEND] ❌ Falha total no envio FREE semanal")
 
     except Exception as e:
         LOG.error(f"[AUTO-SEND] ❌ Erro no envio FREE semanal: {e}")
