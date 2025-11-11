@@ -5975,6 +5975,92 @@ async def debug_version_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.effective_message.reply_text(msg, parse_mode='HTML')
 
 
+async def check_files_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Verifica arquivos indexados usando SQL direto (não depende de get_stats)"""
+    if not is_admin(update.effective_user.id):
+        return
+
+    await update.effective_message.reply_text("🔍 Verificando arquivos...")
+
+    try:
+        with SessionLocal() as session:
+            # Verificar se tabelas existem
+            from sqlalchemy import inspect, text
+            inspector = inspect(session.bind)
+            tables = inspector.get_table_names()
+
+            if 'source_files' not in tables:
+                await update.effective_message.reply_text(
+                    "⚠️ Tabela source_files não existe!\n\n"
+                    "O banco foi criado mas as tabelas ainda não foram inicializadas.",
+                    parse_mode='HTML'
+                )
+                return
+
+            # Query SQL direta
+            result = session.execute(text("""
+                SELECT
+                    COUNT(*) as total,
+                    COUNT(CASE WHEN active = true THEN 1 END) as ativos,
+                    MAX(indexed_at) as ultimo
+                FROM source_files
+                WHERE source_chat_id = -1003080645605
+            """)).fetchone()
+
+            total = result[0] if result else 0
+            ativos = result[1] if result else 0
+            ultimo = result[2] if result else None
+
+            # Query para arquivos enviados
+            sent_result = session.execute(text("""
+                SELECT
+                    sent_to_tier,
+                    COUNT(*) as quantidade
+                FROM sent_files
+                WHERE source_chat_id = -1003080645605
+                GROUP BY sent_to_tier
+            """)).fetchall()
+
+            sent_vip = 0
+            sent_free = 0
+            for row in sent_result:
+                if row[0] == 'vip':
+                    sent_vip = row[1]
+                elif row[0] == 'free':
+                    sent_free = row[1]
+
+            msg = (
+                f"📊 <b>Status dos Arquivos</b>\n\n"
+                f"📁 <b>Grupo Fonte:</b> -1003080645605\n\n"
+                f"📦 <b>Indexados:</b>\n"
+                f"  • Total: {total}\n"
+                f"  • Ativos: {ativos}\n"
+                f"  • Último: {ultimo.strftime('%d/%m/%Y %H:%M') if ultimo else 'Nunca'}\n\n"
+                f"📤 <b>Enviados:</b>\n"
+                f"  • VIP: {sent_vip}\n"
+                f"  • FREE: {sent_free}\n\n"
+                f"✅ <b>Disponíveis:</b>\n"
+                f"  • VIP: {ativos - sent_vip}\n"
+                f"  • FREE: {ativos - sent_free}\n\n"
+                f"🆔 <b>Canais:</b>\n"
+                f"  • VIP: {VIP_CHANNEL_ID}\n"
+                f"  • FREE: {FREE_CHANNEL_ID}"
+            )
+
+            await update.effective_message.reply_text(msg, parse_mode='HTML')
+
+    except Exception as e:
+        import traceback
+        error_details = traceback.format_exc()
+
+        await update.effective_message.reply_text(
+            f"❌ Erro ao verificar arquivos:\n\n"
+            f"<code>{str(e)}</code>\n\n"
+            f"Detalhes: <code>{error_details[:300]}</code>",
+            parse_mode='HTML'
+        )
+
+
 async def listar_canais_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Lista todos os canais/grupos que o bot está (admin)"""
     if not is_admin(update.effective_user.id):
@@ -7100,6 +7186,7 @@ async def on_startup():
         application.add_handler(CommandHandler("confirmar_reset", confirmar_reset_cmd), group=1)
         application.add_handler(CommandHandler("test_send", test_send_cmd), group=1)
         application.add_handler(CommandHandler("debug_version", debug_version_cmd), group=1)
+        application.add_handler(CommandHandler("check_files", check_files_cmd), group=1)
         application.add_handler(CommandHandler("listar_canais", listar_canais_cmd), group=1)
         application.add_handler(CommandHandler("gerar_url", gerar_url_pagamento_cmd), group=1)
 
