@@ -6441,20 +6441,32 @@ async def get_chat_id_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     msg = update.effective_message
 
-    # Se for uma mensagem encaminhada
-    if msg.forward_from_chat:
-        chat = msg.forward_from_chat
-        info = (
-            f"📋 <b>Informações do Canal/Grupo Encaminhado:</b>\n\n"
-            f"📌 <b>Título:</b> {chat.title}\n"
-            f"🆔 <b>ID:</b> <code>{chat.id}</code>\n"
-            f"📊 <b>Tipo:</b> {chat.type}\n"
-        )
-        if chat.username:
-            info += f"🔗 <b>Username:</b> @{chat.username}\n"
+    # Se for uma mensagem encaminhada (verificar forward_origin)
+    if msg.forward_origin:
+        # forward_origin pode ser de vários tipos
+        origin = msg.forward_origin
 
-        info += f"\n💡 <b>Copie o ID acima para usar nas configurações!</b>"
+        # Tentar extrair informações do canal/chat encaminhado
+        if hasattr(origin, 'chat'):
+            chat = origin.chat
+            info = (
+                f"📋 <b>Informações do Canal/Grupo Encaminhado:</b>\n\n"
+                f"📌 <b>Título:</b> {chat.title}\n"
+                f"🆔 <b>ID:</b> <code>{chat.id}</code>\n"
+                f"📊 <b>Tipo:</b> {chat.type}\n"
+            )
+            if hasattr(chat, 'username') and chat.username:
+                info += f"🔗 <b>Username:</b> @{chat.username}\n"
 
+            info += f"\n💡 <b>Copie o ID acima para usar nas configurações!</b>"
+        else:
+            info = (
+                f"⚠️ <b>Mensagem encaminhada detectada</b>\n\n"
+                f"Mas não consegui extrair o ID do canal.\n"
+                f"Tipo de origem: {type(origin).__name__}\n\n"
+                f"💡 <b>Dica:</b> Envie o comando diretamente no canal "
+                f"ou use o bot como admin no canal."
+            )
     else:
         # Informações do chat atual
         chat = msg.chat
@@ -6468,8 +6480,10 @@ async def get_chat_id_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             info += f"🔗 <b>Username:</b> @{chat.username}\n"
 
         info += (
-            f"\n💡 <b>Dica:</b> Encaminhe uma mensagem de um canal "
-            f"para descobrir o ID dele!"
+            f"\n💡 <b>Dicas para descobrir ID de canais:</b>\n"
+            f"1. Adicione o bot como admin no canal\n"
+            f"2. Envie /get_chat_id no canal\n"
+            f"3. Ou encaminhe uma mensagem do canal pra cá"
         )
 
     await msg.reply_text(info, parse_mode='HTML')
