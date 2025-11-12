@@ -6572,6 +6572,78 @@ async def check_permissions_cmd(update: Update, context: ContextTypes.DEFAULT_TY
     await update.effective_message.reply_text(msg, parse_mode='HTML')
 
 
+async def send_promo_message_to_free(bot: Bot):
+    """
+    Envia mensagem promocional para o canal FREE incentivando assinatura VIP.
+    """
+    promo_msg = (
+        "💎 <b>QUER TER ACESSO AO CONTEÚDO COMPLETO?</b>\n\n"
+        "🔥 Assine o canal VIP e receba:\n"
+        "  ✅ Conteúdos diários exclusivos\n"
+        "  ✅ Arquivos completos (sem limites)\n"
+        "  ✅ Sem anúncios\n"
+        "  ✅ Suporte prioritário\n\n"
+        "💰 <b>Planos Disponíveis:</b>\n"
+        "  • 30 dias: $30.00 USD (Mensal)\n"
+        "  • 90 dias: $70.00 USD (Trimestral) 💰\n"
+        "  • 180 dias: $110.00 USD (Semestral)\n"
+        "  • 365 dias: $179.00 USD (Anual) 🔥\n\n"
+        "🔒 <b>Pagamento 100% Seguro</b>\n"
+        "  • Aceita qualquer criptomoeda\n"
+        "  • Ativação automática e instantânea\n"
+        "  • Acesso vitalício ao grupo VIP\n\n"
+        "👇 Clique no botão abaixo para assinar!"
+    )
+
+    # Criar botão inline com link de pagamento
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
+    # Gerar link de pagamento
+    payment_url = f"{WEBAPP_URL}?ref=weekly_promo_free"
+
+    keyboard = [[
+        InlineKeyboardButton("💳 ASSINAR VIP AGORA", url=payment_url)
+    ]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await bot.send_message(
+        chat_id=FREE_CHANNEL_ID,
+        text=promo_msg,
+        parse_mode='HTML',
+        reply_markup=reply_markup
+    )
+
+
+async def promo_free_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Envia mensagem promocional manualmente para o canal FREE (admin)"""
+    if not is_admin(update.effective_user.id):
+        return
+
+    try:
+        await update.effective_message.reply_text("📤 Enviando mensagem promocional para o canal FREE...")
+
+        await send_promo_message_to_free(context.bot)
+
+        await update.effective_message.reply_text(
+            "✅ <b>Mensagem promocional enviada!</b>\n\n"
+            f"📢 Canal: FREE ({FREE_CHANNEL_ID})\n"
+            f"💬 Mensagem com botão de assinatura VIP",
+            parse_mode='HTML'
+        )
+
+        # Log
+        await log_to_group(
+            f"📢 <b>Promoção FREE enviada manualmente</b>\n"
+            f"👤 Admin: {update.effective_user.id}"
+        )
+
+    except Exception as e:
+        await update.effective_message.reply_text(
+            f"❌ <b>Erro ao enviar promoção:</b>\n<code>{str(e)}</code>",
+            parse_mode='HTML'
+        )
+
+
 async def gerar_url_pagamento_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Gera URL estática de pagamento para descrição do canal (admin)"""
     if not is_admin(update.effective_user.id):
@@ -7661,6 +7733,7 @@ async def on_startup():
         application.add_handler(CommandHandler("scan_full", scan_full_cmd), group=1)
         application.add_handler(CommandHandler("listar_canais", listar_canais_cmd), group=1)
         application.add_handler(CommandHandler("gerar_url", gerar_url_pagamento_cmd), group=1)
+        application.add_handler(CommandHandler("promo_free", promo_free_cmd), group=1)
 
         # Handler de indexação automática de arquivos do grupo fonte
         auto_index_filter = (
@@ -7718,50 +7791,32 @@ async def on_startup():
                     await log_to_group(f"❌ <b>Erro no envio VIP diário</b>\n⚠️ {str(e)}")
                     logging.error(f"Erro no job VIP diário: {e}")
 
-        # Job semanal FREE (15h quartas) + Mensagem promocional diária
-        async def daily_free_job(context: ContextTypes.DEFAULT_TYPE):
-            """Job diário para FREE (envio quartas + promo todos os dias)"""
+        # Job semanal FREE (15h quartas) - APENAS arquivo
+        async def weekly_free_file_job(context: ContextTypes.DEFAULT_TYPE):
+            """Job semanal para envio de arquivo FREE (quartas 15h)"""
             with SessionLocal() as session:
                 try:
                     # Envio de arquivo (apenas quartas)
                     await send_weekly_free_file(context.bot, session)
-
-                    # Mensagem promocional com botão (todos os dias)
-                    promo_msg = (
-                        "💸 <b>Quer ver o conteúdo completo?</b>\n\n"
-                        "✅ Clique no botão abaixo para abrir a página de pagamento\n"
-                        "🔒 Pague com qualquer criptomoeda\n"
-                        "⚡ Ativação automática\n\n"
-                        "💰 <b>Planos:</b>\n"
-                        "• 30 dias: $30.00 USD (Mensal)\n"
-                        "• 90 dias: $70.00 USD (Trimestral)\n"
-                        "• 180 dias: $110.00 USD (Semestral)\n"
-                        "• 365 dias: $179.00 USD (Anual)"
-                    )
-
-                    # Criar botão inline com link de pagamento
-                    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-
-                    # Gerar link de pagamento temporário (válido por 24h)
-                    payment_url = f"{WEBAPP_URL}?user_id=from_channel&ref=daily_promo"
-
-                    keyboard = [[
-                        InlineKeyboardButton("💳 Assinar VIP Agora", url=payment_url)
-                    ]]
-                    reply_markup = InlineKeyboardMarkup(keyboard)
-
-                    await context.bot.send_message(
-                        chat_id=FREE_CHANNEL_ID,
-                        text=promo_msg,
-                        parse_mode='HTML',
-                        reply_markup=reply_markup
-                    )
-
-                    await log_to_group("✅ <b>Job FREE diário concluído</b>\n📢 Mensagem promocional com botão enviada")
-
+                    await log_to_group("✅ <b>Envio FREE semanal concluído</b>")
                 except Exception as e:
-                    await log_to_group(f"❌ <b>Erro no job FREE diário</b>\n⚠️ {str(e)}")
-                    logging.error(f"Erro no job FREE diário: {e}")
+                    await log_to_group(f"❌ <b>Erro no envio FREE semanal</b>\n⚠️ {str(e)}")
+                    logging.error(f"Erro no job FREE semanal: {e}")
+
+        # Job semanal de promoção FREE (15:30 quartas)
+        async def weekly_free_promo_job(context: ContextTypes.DEFAULT_TYPE):
+            """Job semanal para mensagem promocional FREE (quartas 15:30)"""
+            # Verificar se é quarta-feira
+            if datetime.now().weekday() != 2:  # 0=segunda, 2=quarta
+                logging.info(f"[PROMO] Hoje não é quarta-feira, pulando mensagem promocional")
+                return
+
+            try:
+                await send_promo_message_to_free(context.bot)
+                await log_to_group("✅ <b>Mensagem promocional FREE enviada</b>")
+            except Exception as e:
+                await log_to_group(f"❌ <b>Erro ao enviar promoção FREE</b>\n⚠️ {str(e)}")
+                logging.error(f"Erro no job de promoção FREE: {e}")
 
         # Registrar jobs
         BR_TZ = pytz.timezone('America/Sao_Paulo')
@@ -7774,13 +7829,21 @@ async def on_startup():
         )
         logging.info("✅ Job VIP diário configurado (15h)")
 
-        # FREE: Diariamente às 15h (a função verifica se é quarta + envia promo sempre)
+        # FREE: Arquivo semanal às 15h (quartas)
         application.job_queue.run_daily(
-            daily_free_job,
+            weekly_free_file_job,
             time=dt.time(hour=15, minute=0, second=0, tzinfo=BR_TZ),
-            name='daily_free_send'
+            name='weekly_free_file'
         )
-        logging.info("✅ Job FREE diário configurado (15h - envio quartas + promo diária)")
+        logging.info("✅ Job FREE arquivo configurado (15h quartas)")
+
+        # FREE: Promoção às 15:30 (quartas)
+        application.job_queue.run_daily(
+            weekly_free_promo_job,
+            time=dt.time(hour=15, minute=30, second=0, tzinfo=BR_TZ),
+            name='weekly_free_promo'
+        )
+        logging.info("✅ Job FREE promoção configurado (15:30 quartas)")
 
         logging.info("Handlers e jobs registrados.")
     else:
