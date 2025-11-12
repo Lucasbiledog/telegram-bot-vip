@@ -18,7 +18,7 @@ from fastapi.staticfiles import StaticFiles
 import uvicorn
 import httpx
 
-from telegram import Update, InputMediaPhoto, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
+from telegram import Update, Bot, InputMediaPhoto, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 from telegram.error import BadRequest, RetryAfter, TimedOut, NetworkError
 from telegram.ext import (
     ApplicationBuilder,
