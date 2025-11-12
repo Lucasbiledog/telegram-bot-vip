@@ -3090,6 +3090,53 @@ async def checkout_callback_handler(update: Update, context: ContextTypes.DEFAUL
 async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.effective_message
     chat = update.effective_chat
+    user = update.effective_user
+
+    # Verificar se há argumentos (deep link)
+    if context.args:
+        arg = context.args[0]
+
+        # Deep link para acesso VIP: /start vip_CODIGO
+        if arg.startswith('vip_'):
+            vip_code = arg[4:]  # Remove 'vip_' prefix
+
+            # Buscar link VIP salvo
+            saved_link = cfg_get(f"vip_link_{vip_code}")
+
+            if saved_link:
+                # Verificar se o código pertence a este usuário
+                user_code = cfg_get(f"vip_code_{user.id}")
+
+                if user_code == vip_code:
+                    # Enviar link VIP
+                    welcome_msg = (
+                        f"✅ <b>Bem-vindo ao VIP, {user.first_name}!</b>\n\n"
+                        f"🎉 Seu pagamento foi confirmado com sucesso!\n\n"
+                        f"📲 <b>Entre no grupo VIP agora:</b>\n"
+                        f"{saved_link}\n\n"
+                        f"💡 <b>Este link é exclusivo e expira em 2 horas.</b>"
+                    )
+                    await msg.reply_text(welcome_msg, parse_mode='HTML')
+
+                    # Limpar códigos usados
+                    cfg_set(f"vip_link_{vip_code}", None)
+                    cfg_set(f"vip_code_{user.id}", None)
+
+                    logging.info(f"[DEEP-LINK] Link VIP entregue via deep link para {user.id}")
+                    return
+                else:
+                    await msg.reply_text(
+                        "❌ Este link não pertence a você.\n\n"
+                        "Se você fez um pagamento, aguarde a confirmação ou "
+                        "entre em contato com o suporte."
+                    )
+                    return
+            else:
+                await msg.reply_text(
+                    "❌ Link expirado ou inválido.\n\n"
+                    "Se você fez um pagamento recente, entre em contato com o suporte."
+                )
+                return
 
     # Mensagem especial para o chat de administração de packs
     if chat and chat.id == PACK_ADMIN_CHAT_ID:
@@ -4911,30 +4958,78 @@ async def simular_tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             s.rollback()
             return await update.effective_message.reply_text("❌ Erro ao simular pagamento.")
 
-     # cria/renova VIP no plano trimestral
+    # cria/renova VIP no plano trimestral
     m = vip_upsert_start_or_extend(user.id, user.username, tx_hash, VipPlan.TRIMESTRAL)
 
     try:
         invite_link = await create_and_store_personal_invite(user.id)
-        await dm(
-    user.id,
-    f"✅ Pagamento confirmado na rede {CHAIN_NAME}!\n"
-    f"VIP válido até {m.expires_at:%d/%m/%Y} ({human_left(m.expires_at)}).\n"
-    f"Entre no VIP: {invite_link}",
-    parse_mode=None
-)
 
-        await update.effective_message.reply_text("✅ Pagamento simulado com sucesso. Veja seu privado.")
+        message_text = (
+            f"✅ Pagamento confirmado na rede {CHAIN_NAME}!\n"
+            f"VIP válido até {m.expires_at:%d/%m/%Y} ({human_left(m.expires_at)}).\n"
+            f"Entre no VIP: {invite_link}"
+        )
+
+        # Tentar enviar mensagem privada
+        try:
+            await application.bot.send_message(
+                chat_id=user.id,
+                text=message_text
+            )
+            await update.effective_message.reply_text("✅ Pagamento simulado com sucesso. Veja seu privado.")
+            logging.info(f"[SIMULAR_TX] Mensagem privada enviada com sucesso para {user.id}")
+
+        except Exception as dm_error:
+            # Se falhar (usuário não iniciou conversa), criar deep link
+            logging.warning(f"[SIMULAR_TX] Falha ao enviar privado para {user.id}: {dm_error}")
+
+            if invite_link:
+                # Salvar o link VIP temporariamente com código único
+                import hashlib
+                vip_code = hashlib.md5(f"{user.id}{tx_hash}".encode()).hexdigest()[:8]
+                cfg_set(f"vip_link_{vip_code}", invite_link)
+                cfg_set(f"vip_code_{user.id}", vip_code)
+
+                # Obter username do bot
+                bot_info = await application.bot.get_me()
+                bot_username = bot_info.username
+
+                # Criar deep link
+                deep_link = f"https://t.me/{bot_username}?start=vip_{vip_code}"
+
+                # Enviar mensagem no grupo de logs
+                await log_to_group(
+                    f"💳 <b>Pagamento Simulado (TESTE)</b>\n\n"
+                    f"👤 Usuário: @{user.username} (ID: {user.id})\n"
+                    f"📦 Plano: 90 dias (TRIMESTRAL)\n"
+                    f"🔗 Hash: <code>{tx_hash}</code>\n\n"
+                    f"⚠️ <b>Usuário não iniciou conversa com o bot!</b>\n\n"
+                    f"📲 Envie este link para o usuário:\n"
+                    f"<code>{deep_link}</code>\n\n"
+                    f"Ou peça para ele enviar /start para @{bot_username}"
+                )
+
+                # Informar admin
+                await update.effective_message.reply_text(
+                    f"✅ <b>Pagamento simulado!</b>\n\n"
+                    f"⚠️ <b>Não foi possível enviar mensagem privada.</b>\n"
+                    f"(Você precisa iniciar conversa com o bot primeiro)\n\n"
+                    f"📲 <b>Deep link criado:</b>\n"
+                    f"<code>{deep_link}</code>\n\n"
+                    f"📋 Envie /start para o bot e ele entregará seu link VIP.\n"
+                    f"📢 Uma notificação foi enviada ao grupo de logs.",
+                    parse_mode='HTML'
+                )
+
+                logging.info(f"[SIMULAR_TX] Deep link criado: {deep_link}")
+            else:
+                await update.effective_message.reply_text(
+                    "⚠️ Erro: Não foi possível gerar link VIP nem enviar mensagem privada."
+                )
+
     except Exception as e:
-        await update.effective_message.reply_text(f"Simulado OK, mas falhou enviar convite: {e}")
-        invite = await assign_and_send_invite(user.id, user.username, tx_hash)
-        await dm(
-    user.id,
-    f"✅ Pagamento confirmado na rede {CHAIN_NAME}!\n"
-    f"VIP válido até {m.expires_at:%d/%m/%Y} ({human_left(m.expires_at)}).\n"
-    f"Convite (válido 2h, uso único): {invite}",
-    parse_mode=None
-)
+        logging.error(f"[SIMULAR_TX] Erro ao processar pagamento simulado: {e}")
+        await update.effective_message.reply_text(f"❌ Erro ao simular pagamento: {e}")
 
 
 
@@ -6832,13 +6927,58 @@ async def crypto_webhook(request: Request):
                     message_text = (
                         f"✅ Pagamento confirmado para {username}!\n"
                         f"Seu VIP foi ativado por {PLAN_DAYS[plan]} dias.\n"
-                        f"\u26a0️ Entre em contato com o suporte para receber seu convite VIP."
+                        f"⚠️ Entre em contato com o suporte para receber seu convite VIP."
                     )
-                
-                await application.bot.send_message(
-                    chat_id=user_id_final,
-                    text=message_text
-                )
+
+                # Tentar enviar mensagem privada
+                try:
+                    await application.bot.send_message(
+                        chat_id=user_id_final,
+                        text=message_text
+                    )
+                    logging.info(f"[WEBHOOK] Mensagem privada enviada com sucesso para {user_id_final}")
+                except Exception as e:
+                    # Se falhar (usuário não iniciou conversa), criar deep link
+                    logging.warning(f"[WEBHOOK] Falha ao enviar privado para {user_id_final}: {e}")
+
+                    if invite_link:
+                        # Salvar o link VIP temporariamente com código único
+                        import hashlib
+                        vip_code = hashlib.md5(f"{user_id_final}{tx_hash}".encode()).hexdigest()[:8]
+                        cfg_set(f"vip_link_{vip_code}", invite_link)
+                        cfg_set(f"vip_code_{user_id_final}", vip_code)
+
+                        # Obter username do bot
+                        bot_info = await application.bot.get_me()
+                        bot_username = bot_info.username
+
+                        # Criar deep link
+                        deep_link = f"https://t.me/{bot_username}?start=vip_{vip_code}"
+
+                        # Enviar mensagem no grupo de logs
+                        await log_to_group(
+                            f"💳 <b>Novo Pagamento VIP Aprovado!</b>\n\n"
+                            f"👤 Usuário: @{username} (ID: {user_id_final})\n"
+                            f"📦 Plano: {PLAN_DAYS[plan]} dias\n"
+                            f"💰 Valor: {amount}\n"
+                            f"🔗 Hash: <code>{tx_hash[:16]}...</code>\n\n"
+                            f"⚠️ <b>Usuário não iniciou conversa com o bot!</b>\n\n"
+                            f"📲 Envie este link para o usuário:\n"
+                            f"<code>{deep_link}</code>\n\n"
+                            f"Ou peça para ele enviar /start para @{bot_username}"
+                        )
+
+                        logging.info(f"[WEBHOOK] Deep link criado: {deep_link}")
+                    else:
+                        # Sem link VIP, avisar no grupo de logs
+                        await log_to_group(
+                            f"💳 <b>Novo Pagamento VIP Aprovado!</b>\n\n"
+                            f"👤 Usuário: @{username} (ID: {user_id_final})\n"
+                            f"📦 Plano: {PLAN_DAYS[plan]} dias\n\n"
+                            f"⚠️ Erro ao gerar link VIP!\n"
+                            f"⚠️ Usuário não iniciou conversa com o bot!\n\n"
+                            f"💡 Gere um convite manualmente com /debug_convite {user_id_final}"
+                        )
             else:
                 # Para ID temporário, apenas logar
                 logging.info(f"[WEBHOOK] Pagamento processado com temp UID {uid}. Aguardando entrada no grupo para associação.")
