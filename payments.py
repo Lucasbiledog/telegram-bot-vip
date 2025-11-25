@@ -1111,14 +1111,57 @@ async def tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     s.commit()
                 
                 # Criar/estender VIP
-                from utils import vip_upsert_and_get_until
+                from utils import vip_upsert_and_get_until, create_one_time_invite
                 vip_until = await vip_upsert_and_get_until(user.id, user.username, plan_days, user.first_name)
-                
-                return await msg.reply_text(
-                    f"✅ Pagamento confirmado: ${usd_paid:.2f}\n"
-                    f"VIP válido até {vip_until.strftime('%d/%m/%Y')}\n"
-                    f"Aguarde o convite do grupo VIP!"
-                )
+
+                # Tentar criar convite automático
+                plan_names = {30: "Mensal", 90: "Trimestral", 180: "Semestral", 365: "Anual"}
+                plan_name = plan_names.get(plan_days, f"{plan_days} dias")
+
+                try:
+                    from main import application, GROUP_VIP_ID
+                    invite_link = await create_one_time_invite(
+                        application.bot, GROUP_VIP_ID, expire_seconds=7200, member_limit=1
+                    )
+
+                    if invite_link:
+                        # Mensagem com convite
+                        welcome_msg = (
+                            f"🎉 <b>PAGAMENTO CONFIRMADO!</b>\n\n"
+                            f"✅ Valor recebido: <b>${usd_paid:.2f} USD</b>\n"
+                            f"👑 Plano ativado: <b>{plan_name} ({plan_days} dias)</b>\n"
+                            f"📅 Válido até: <b>{vip_until.strftime('%d/%m/%Y')}</b>\n\n"
+                            f"🔗 <b>Clique no link abaixo para entrar no grupo VIP:</b>\n"
+                            f"{invite_link}\n\n"
+                            f"⚠️ <b>IMPORTANTE:</b> Este link expira em 2 horas e tem apenas 1 uso.\n\n"
+                            f"🎁 <b>Seja bem-vindo(a) ao VIP!</b>\n"
+                            f"💎 Aproveite todo o conteúdo exclusivo!\n"
+                            f"📬 Você receberá atualizações diárias de novos arquivos!\n\n"
+                            f"Obrigado pela confiança! 🙏"
+                        )
+                    else:
+                        # Mensagem sem convite
+                        welcome_msg = (
+                            f"🎉 <b>PAGAMENTO CONFIRMADO!</b>\n\n"
+                            f"✅ Valor recebido: <b>${usd_paid:.2f} USD</b>\n"
+                            f"👑 Plano ativado: <b>{plan_name} ({plan_days} dias)</b>\n"
+                            f"📅 Válido até: <b>{vip_until.strftime('%d/%m/%Y')}</b>\n\n"
+                            f"📬 Entre em contato para receber o convite do grupo VIP.\n\n"
+                            f"Obrigado pela preferência! 🙏"
+                        )
+                except Exception as e:
+                    LOG.warning(f"Falha ao gerar convite no comando /tx: {e}")
+                    # Mensagem de fallback
+                    welcome_msg = (
+                        f"🎉 <b>PAGAMENTO CONFIRMADO!</b>\n\n"
+                        f"✅ Valor recebido: <b>${usd_paid:.2f} USD</b>\n"
+                        f"👑 Plano ativado: <b>{plan_name} ({plan_days} dias)</b>\n"
+                        f"📅 Válido até: <b>{vip_until.strftime('%d/%m/%Y')}</b>\n\n"
+                        f"📬 Aguarde o convite do grupo VIP em breve!\n\n"
+                        f"Obrigado! 🙏"
+                    )
+
+                return await msg.reply_text(welcome_msg, parse_mode="HTML")
             else:
                 return await msg.reply_text(
                     f"❌ Valor pago (${usd_paid:.2f}) insuficiente para qualquer plano VIP."
@@ -1379,6 +1422,13 @@ async def approve_by_usd_and_invite(tg_id, username: Optional[str], tx_hash: str
 
     LOG.info(f"[INVITE-DEBUG] Finalizando: is_temp_uid={is_temp_uid}, link={link is not None if link else False}")
     
+    # Calcular data de expiração do VIP
+    vip_until_str = until.strftime('%d/%m/%Y') if until else "N/A"
+
+    # Criar mensagem de boas-vindas personalizada
+    plan_names = {30: "Mensal", 90: "Trimestral", 180: "Semestral", 365: "Anual"}
+    plan_name = plan_names.get(days, f"{days} dias")
+
     if is_temp_uid:
         # Para UIDs temporários, ainda gerar convite automático
         # O ID será capturado quando o usuário entrar no grupo
@@ -1387,27 +1437,72 @@ async def approve_by_usd_and_invite(tg_id, username: Optional[str], tx_hash: str
                 link = await create_one_time_invite(application.bot, GROUP_VIP_ID, expire_seconds=7200, member_limit=1)
                 LOG.info(f"[INVITE-DEBUG] Convite temporário gerado: {link is not None}")
                 if link:
-                    msg = f"✅ Pagamento confirmado (${usd:.2f})!\nPlano: {days} dias\nConvite VIP: {link}"
+                    msg = (
+                        f"🎉 <b>PAGAMENTO CONFIRMADO!</b>\n\n"
+                        f"✅ Valor recebido: <b>${usd:.2f} USD</b>\n"
+                        f"👑 Plano ativado: <b>{plan_name} ({days} dias)</b>\n"
+                        f"📅 Válido até: <b>{vip_until_str}</b>\n\n"
+                        f"🔗 <b>Clique no link abaixo para entrar no grupo VIP:</b>\n"
+                        f"{link}\n\n"
+                        f"⚠️ <b>IMPORTANTE:</b> Este link expira em 2 horas e tem apenas 1 uso.\n\n"
+                        f"🎁 Seja bem-vindo(a) ao VIP! Aproveite o conteúdo exclusivo!"
+                    )
                     return True, msg, {"invite": link, "usd": usd, "days": days, "temp_uid": True}
             except Exception as e:
                 LOG.warning(f"[INVITE-DEBUG] Falha ao gerar convite temporário: {e}")
 
         # Fallback se não conseguir gerar convite
-        msg = f"✅ Pagamento confirmado (${usd:.2f})!\nPlano: {days} dias\n\n⚠️ Para receber o convite do grupo VIP, forneça seu ID do Telegram válido."
+        msg = (
+            f"🎉 <b>PAGAMENTO CONFIRMADO!</b>\n\n"
+            f"✅ Valor recebido: <b>${usd:.2f} USD</b>\n"
+            f"👑 Plano ativado: <b>{plan_name} ({days} dias)</b>\n"
+            f"📅 Válido até: <b>{vip_until_str}</b>\n\n"
+            f"⚠️ Para receber o convite do grupo VIP, entre em contato conosco fornecendo seu ID do Telegram.\n\n"
+            f"Obrigado pela preferência! 🙏"
+        )
         return True, msg, {"usd": usd, "days": days, "temp_uid": True}
     else:
         if link:
-            msg = f"✅ Pagamento confirmado (${usd:.2f})!\nPlano: {days} dias\nConvite VIP: {link}"
+            msg = (
+                f"🎉 <b>PAGAMENTO CONFIRMADO!</b>\n\n"
+                f"✅ Valor recebido: <b>${usd:.2f} USD</b>\n"
+                f"👑 Plano ativado: <b>{plan_name} ({days} dias)</b>\n"
+                f"📅 Válido até: <b>{vip_until_str}</b>\n\n"
+                f"🔗 <b>Clique no link abaixo para entrar no grupo VIP:</b>\n"
+                f"{link}\n\n"
+                f"⚠️ <b>IMPORTANTE:</b> Este link expira em 2 horas e tem apenas 1 uso.\n\n"
+                f"🎁 <b>Seja bem-vindo(a) ao VIP!</b>\n"
+                f"💎 Aproveite todo o conteúdo exclusivo!\n"
+                f"📬 Você receberá atualizações diárias de novos arquivos!\n\n"
+                f"Obrigado pela confiança! 🙏"
+            )
             payload = {"invite": link, "until": until.isoformat(), "usd": usd, "days": days}
             LOG.info(f"[INVITE-DEBUG] Retornando com convite automático")
         else:
-            msg = f"✅ Pagamento confirmado (${usd:.2f})!\nPlano: {days} dias\n\n⚠️ VIP ativado! Entre em contato para receber o convite do grupo."
+            msg = (
+                f"🎉 <b>PAGAMENTO CONFIRMADO!</b>\n\n"
+                f"✅ Valor recebido: <b>${usd:.2f} USD</b>\n"
+                f"👑 Plano ativado: <b>{plan_name} ({days} dias)</b>\n"
+                f"📅 Válido até: <b>{vip_until_str}</b>\n\n"
+                f"⚠️ <b>VIP ATIVADO COM SUCESSO!</b>\n"
+                f"📬 Entre em contato para receber o convite do grupo VIP.\n\n"
+                f"🎁 <b>Benefícios do seu plano:</b>\n"
+                f"• Acesso a conteúdo exclusivo premium\n"
+                f"• Atualizações diárias de arquivos\n"
+                f"• Suporte prioritário\n\n"
+                f"Obrigado pela preferência! 🙏"
+            )
             payload = {"no_auto_invite": True, "until": until.isoformat(), "usd": usd, "days": days}
             LOG.info(f"[INVITE-DEBUG] Retornando sem convite automático")
-        
+
         if notify_user and actual_tg_id and bot_available and application and application.bot:
             try:
-                await application.bot.send_message(chat_id=actual_tg_id, text=msg)
+                await application.bot.send_message(
+                    chat_id=actual_tg_id,
+                    text=msg,
+                    parse_mode="HTML"
+                )
+                LOG.info(f"[NOTIFY] Mensagem de boas-vindas enviada para user {actual_tg_id}")
             except Exception as e:
                 LOG.warning(f"[INVITE-DEBUG] Falha ao notificar usuário: {e}")
 
