@@ -1173,6 +1173,7 @@ load_dotenv()
 BOT_TOKEN   = os.getenv("BOT_TOKEN") or os.getenv("TELEGRAM_BOT_TOKEN")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 SELF_URL    = os.getenv("SELF_URL")
+LOCAL_MODE  = os.getenv("LOCAL_MODE", "false").lower() == "true"
 
 # Payment Configuration
 WALLET_ADDRESS = os.getenv("WALLET_ADDRESS", "")
@@ -4778,23 +4779,44 @@ PLAN_PRICE_USD = {
 def plan_from_amount(amount_usd: float) -> Optional[VipPlan]:
     """
     Determina o plano VIP baseado no valor pago usando ranges ao invés de valores exatos.
-    
-    Ranges:
-    - $30.00 - $69.99: VIP 30 dias (MENSAL)
-    - $70.00 - $109.99: VIP 90 dias (TRIMESTRAL)
-    - $110.00 - $178.99: VIP 180 dias (SEMESTRAL)
-    - $179.00+: VIP 365 dias (ANUAL)
+
+    ====== MODO TESTE - VALORES REDUZIDOS ======
+    Ranges de TESTE:
+    - $1.00 - $1.99: VIP 30 dias (MENSAL)
+    - $2.00 - $2.99: VIP 90 dias (TRIMESTRAL)
+    - $3.00 - $3.99: VIP 180 dias (SEMESTRAL)
+    - $4.00+: VIP 365 dias (ANUAL)
     """
-    if amount_usd < 30.00:
+    # ====== MODO TESTE - VALORES REDUZIDOS ======
+    if amount_usd < 1.00:
         return None  # Valor muito baixo
-    elif amount_usd < 70.00:
+    elif amount_usd < 2.00:
         return VipPlan.MENSAL      # 30 dias
-    elif amount_usd < 110.00:
+    elif amount_usd < 3.00:
         return VipPlan.TRIMESTRAL  # 90 dias
-    elif amount_usd < 179.00:
+    elif amount_usd < 4.00:
         return VipPlan.SEMESTRAL   # 180 dias
     else:
         return VipPlan.ANUAL       # 365 dias
+
+    # ====== VALORES ORIGINAIS (PRODUÇÃO) ======
+    # Descomente abaixo e comente o bloco acima quando voltar para produção
+    # Ranges de PRODUÇÃO:
+    # - $30.00 - $69.99: VIP 30 dias (MENSAL)
+    # - $70.00 - $109.99: VIP 90 dias (TRIMESTRAL)
+    # - $110.00 - $178.99: VIP 180 dias (SEMESTRAL)
+    # - $179.00+: VIP 365 dias (ANUAL)
+    #
+    # if amount_usd < 30.00:
+    #     return None  # Valor muito baixo
+    # elif amount_usd < 70.00:
+    #     return VipPlan.MENSAL      # 30 dias
+    # elif amount_usd < 110.00:
+    #     return VipPlan.TRIMESTRAL  # 90 dias
+    # elif amount_usd < 179.00:
+    #     return VipPlan.SEMESTRAL   # 180 dias
+    # else:
+    #     return VipPlan.ANUAL       # 365 dias
 
 async def fetch_price_usd() -> Optional[float]:
     try:
@@ -4934,15 +4956,30 @@ async def verify_tx_any(tx_hash: str) -> Dict[str, Any]:
 # =========================
 
 async def simular_tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not (update.effective_user and is_admin(update.effective_user.id)):
+    logging.info(f"[SIMULAR_TX] ==================== INICIO ====================")
+    logging.info(f"[SIMULAR_TX] User ID: {update.effective_user.id if update.effective_user else 'None'}")
+
+    if not update.effective_user:
+        logging.error("[SIMULAR_TX] ERROR: update.effective_user é None")
+        return await update.effective_message.reply_text("❌ Erro: Usuário não identificado.")
+
+    user_id = update.effective_user.id
+    is_admin_user = is_admin(user_id)
+    logging.info(f"[SIMULAR_TX] Verificando admin para {user_id}: {is_admin_user}")
+
+    if not is_admin_user:
+        logging.warning(f"[SIMULAR_TX] ACESSO NEGADO para user_id={user_id}")
         return await update.effective_message.reply_text("Apenas admins podem simular TX.")
 
     user = update.effective_user
     tx_hash = "0x" + "deadbeef"*8  # hash fictício, 66 chars
+    logging.info(f"[SIMULAR_TX] Criando tx_hash simulado: {tx_hash[:16]}...")
 
     # grava como aprovado direto
+    logging.info(f"[SIMULAR_TX] Iniciando transação no banco de dados...")
     with SessionLocal() as s:
         try:
+            logging.info(f"[SIMULAR_TX] Criando objeto Payment...")
             p = Payment(
                 user_id=user.id,
                 username=user.username,
@@ -4950,19 +4987,31 @@ async def simular_tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 chain="TESTNET",
                 status="approved",
                 amount="1000000000000000000",  # 1 ETH fictício
-                decided_at=now_utc(),
+                created_at=now_utc(),
             )
+            logging.info(f"[SIMULAR_TX] Adicionando à sessão...")
             s.add(p)
+            logging.info(f"[SIMULAR_TX] Fazendo commit...")
             s.commit()
-        except Exception:
+            logging.info(f"[SIMULAR_TX] ✅ Payment criado: id={p.id}")
+        except Exception as e:
             s.rollback()
-            return await update.effective_message.reply_text("❌ Erro ao simular pagamento.")
+            logging.error(f"[SIMULAR_TX] ❌ ERRO ao gravar pagamento: {e}", exc_info=True)
+            return await update.effective_message.reply_text(f"❌ Erro ao simular pagamento: {e}")
 
     # cria/renova VIP no plano trimestral
-    m = vip_upsert_start_or_extend(user.id, user.username, tx_hash, VipPlan.TRIMESTRAL)
+    logging.info(f"[SIMULAR_TX] Criando/renovando VIP membership...")
+    try:
+        m = vip_upsert_start_or_extend(user.id, user.username, tx_hash, VipPlan.TRIMESTRAL)
+        logging.info(f"[SIMULAR_TX] ✅ VIP membership criado: expires_at={m.expires_at}")
+    except Exception as e:
+        logging.error(f"[SIMULAR_TX] ❌ ERRO ao criar VIP: {e}", exc_info=True)
+        return await update.effective_message.reply_text(f"❌ Erro ao criar VIP: {e}")
 
     try:
+        logging.info(f"[SIMULAR_TX] Gerando convite pessoal para user_id={user.id}...")
         invite_link = await create_and_store_personal_invite(user.id)
+        logging.info(f"[SIMULAR_TX] ✅ Convite gerado: {invite_link[:50]}...")
 
         message_text = (
             f"✅ Pagamento confirmado na rede {CHAIN_NAME}!\n"
@@ -4971,24 +5020,28 @@ async def simular_tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
         # Tentar enviar mensagem privada
+        logging.info(f"[SIMULAR_TX] Tentando enviar mensagem privada para {user.id}...")
         try:
             await application.bot.send_message(
                 chat_id=user.id,
                 text=message_text
             )
+            logging.info(f"[SIMULAR_TX] ✅ Mensagem privada enviada com sucesso!")
             await update.effective_message.reply_text("✅ Pagamento simulado com sucesso. Veja seu privado.")
-            logging.info(f"[SIMULAR_TX] Mensagem privada enviada com sucesso para {user.id}")
+            logging.info(f"[SIMULAR_TX] ==================== FIM (SUCESSO) ====================")
 
         except Exception as dm_error:
             # Se falhar (usuário não iniciou conversa), criar deep link
-            logging.warning(f"[SIMULAR_TX] Falha ao enviar privado para {user.id}: {dm_error}")
+            logging.warning(f"[SIMULAR_TX] ⚠️ Falha ao enviar privado: {dm_error}")
 
             if invite_link:
                 # Salvar o link VIP temporariamente com código único
+                logging.info(f"[SIMULAR_TX] Criando deep link...")
                 import hashlib
                 vip_code = hashlib.md5(f"{user.id}{tx_hash}".encode()).hexdigest()[:8]
                 cfg_set(f"vip_link_{vip_code}", invite_link)
                 cfg_set(f"vip_code_{user.id}", vip_code)
+                logging.info(f"[SIMULAR_TX] VIP code salvo: {vip_code}")
 
                 # Obter username do bot
                 bot_info = await application.bot.get_me()
@@ -4996,8 +5049,10 @@ async def simular_tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 # Criar deep link
                 deep_link = f"https://t.me/{bot_username}?start=vip_{vip_code}"
+                logging.info(f"[SIMULAR_TX] Deep link criado: {deep_link}")
 
                 # Enviar mensagem no grupo de logs
+                logging.info(f"[SIMULAR_TX] Enviando notificação para grupo de logs...")
                 await log_to_group(
                     f"💳 <b>Pagamento Simulado (TESTE)</b>\n\n"
                     f"👤 Usuário: @{user.username} (ID: {user.id})\n"
@@ -5010,6 +5065,7 @@ async def simular_tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
 
                 # Informar admin
+                logging.info(f"[SIMULAR_TX] Informando admin sobre deep link...")
                 await update.effective_message.reply_text(
                     f"✅ <b>Pagamento simulado!</b>\n\n"
                     f"⚠️ <b>Não foi possível enviar mensagem privada.</b>\n"
@@ -5021,14 +5077,15 @@ async def simular_tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     parse_mode='HTML'
                 )
 
-                logging.info(f"[SIMULAR_TX] Deep link criado: {deep_link}")
+                logging.info(f"[SIMULAR_TX] ==================== FIM (DEEP LINK) ====================")
             else:
+                logging.error(f"[SIMULAR_TX] ❌ Nenhum invite_link disponível")
                 await update.effective_message.reply_text(
                     "⚠️ Erro: Não foi possível gerar link VIP nem enviar mensagem privada."
                 )
 
     except Exception as e:
-        logging.error(f"[SIMULAR_TX] Erro ao processar pagamento simulado: {e}")
+        logging.error(f"[SIMULAR_TX] ❌ ERRO GERAL: {e}", exc_info=True)
         await update.effective_message.reply_text(f"❌ Erro ao simular pagamento: {e}")
 
 
@@ -6777,21 +6834,38 @@ async def gerar_url_pagamento_cmd(update: Update, context: ContextTypes.DEFAULT_
 # =========================
 # Error handler global
 # =========================
+# =========================
+# Middleware para debug de mensagens
+# =========================
+async def log_all_updates(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Log todas as mensagens recebidas para debug"""
+    if update.message:
+        msg = update.message
+        user = msg.from_user
+        chat = msg.chat
+        text = msg.text or "[sem texto]"
+
+        logging.info(f"📨 [MESSAGE] User: {user.id} (@{user.username}) | Chat: {chat.id} ({chat.type}) | Text: {text[:100]}")
+    elif update.callback_query:
+        logging.info(f"📱 [CALLBACK] User: {update.callback_query.from_user.id} | Data: {update.callback_query.data}")
+    else:
+        logging.info(f"📬 [UPDATE] Type: {update.update_id}")
+
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle errors gracefully, especially timeout errors in production"""
     error = context.error
-    
+
     # Handle timeout errors more gracefully
     if isinstance(error, (httpx.ConnectTimeout, httpx.ReadTimeout, httpx.WriteTimeout)):
         logging.warning(f"Timeout error (expected in production): {error}")
         return
-    
+
     # Handle Telegram timeout errors
     from telegram.error import TimedOut, NetworkError
     if isinstance(error, (TimedOut, NetworkError)):
         logging.warning(f"Telegram network error (expected in production): {error}")
         return
-    
+
     # For other errors, log with full traceback
     logging.exception("Erro não tratado", exc_info=error)
 
@@ -7095,13 +7169,23 @@ async def api_config(uid: str = None, ts: str = None, sig: str = None):
             if sig != expected_sig:
                 raise HTTPException(status_code=403, detail="Assinatura inválida")
         
-        # Obter configurações (sempre disponível) - preços mínimos para compatibilidade com webapp
+        # ====== MODO TESTE - VALORES REDUZIDOS ======
+        # Use estes valores para testar com quantias pequenas
         value_tiers = {
-            "30": 30.00,   # Preço para 1 mês
-            "90": 70.00,   # Preço para 3 meses
-            "180": 110.00, # Preço para 6 meses
-            "365": 179.00  # Preço para 1 ano
+            "30": 1.00,    # Preço para 1 mês - TESTE
+            "90": 2.00,    # Preço para 3 meses - TESTE
+            "180": 3.00,   # Preço para 6 meses - TESTE
+            "365": 4.00    # Preço para 1 ano - TESTE
         }
+
+        # ====== VALORES ORIGINAIS (PRODUÇÃO) ======
+        # Descomente abaixo e comente o bloco acima quando voltar para produção
+        # value_tiers = {
+        #     "30": 30.00,   # Preço para 1 mês
+        #     "90": 70.00,   # Preço para 3 meses
+        #     "180": 110.00, # Preço para 6 meses
+        #     "365": 179.00  # Preço para 1 ano
+        # }
         
         return {
             "wallet": WALLET_ADDRESS,
@@ -7684,12 +7768,16 @@ async def on_startup():
                     await asyncio.sleep(2)
         
         logging.info("Bot iniciado com sucesso (cripto + schedules + VIP/FREE).")
-        
+
+        # ==== Middleware de debug (PRIMEIRO DE TODOS)
+        application.add_handler(MessageHandler(filters.ALL, log_all_updates), group=-100)
+        logging.info("✅ Middleware de debug ativado - todas as mensagens serão logadas")
+
         # ==== Error handler (só se bot inicializou)
         application.add_error_handler(error_handler)
-        
+
         # ==== TODOS OS HANDLERS SÓ EXECUTAM SE O BOT FOI INICIALIZADO COM SUCESSO ====
-        
+
         application.add_handler(CommandHandler("simular_tx", simular_tx_cmd), group=1)
         application.add_handler(ChatJoinRequestHandler(vip_join_request_handler), group=1)
 
@@ -8005,29 +8093,68 @@ def signal_handler(signum, frame):
 # =========================
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
-    
-    # Configurar handlers de sinal para manter o bot ativo
-    signal.signal(signal.SIGINT, signal_handler)   # Ctrl+C
-    if hasattr(signal, 'SIGTERM'):
-        signal.signal(signal.SIGTERM, signal_handler)  # Terminação
-    
-    logging.info("🤖 Bot configurado para ficar sempre ativo - ignorando sinais de interrupção")
-    logging.info("📱 Para parar o bot, feche o terminal ou use Task Manager")
-    
-    try:
-        # Usar configuração que reinicia automaticamente em caso de falha
-        uvicorn.run(
-            "main:app", 
-            host="0.0.0.0", 
-            port=PORT,
-            access_log=True,
-            reload=False,  # Desabilitar reload automático
-            log_level="info"
-        )
-    except Exception as e:
-        logging.error(f"Erro crítico no servidor: {e}")
-        logging.info("Tentando reiniciar em 5 segundos...")
-        import time
-        time.sleep(5)
-        # Tentar reiniciar
-        os.system(f"python {sys.argv[0]}")  # Reiniciar o próprio script
+
+    if LOCAL_MODE:
+        # ============ MODO LOCAL (POLLING) ============
+        logging.info("🚀 Iniciando bot em MODO LOCAL (Polling)...")
+        logging.info("📡 Bot buscará mensagens ativamente do Telegram")
+
+        async def run_bot():
+            # Executar startup event (inicializar handlers)
+            logging.info("🔧 Executando inicialização do bot...")
+            await on_startup()
+
+            # Remover webhook se existir
+            await application.bot.delete_webhook()
+            logging.info("✅ Webhook removido")
+
+            # Iniciar polling
+            await application.updater.start_polling(allowed_updates=Update.ALL_TYPES)
+
+            logging.info("✅ Bot iniciado e escutando mensagens!")
+            logging.info("📱 Pressione Ctrl+C para parar o bot")
+
+            # Manter rodando
+            stop_event = asyncio.Event()
+            try:
+                await stop_event.wait()
+            except (KeyboardInterrupt, SystemExit):
+                logging.info("🛑 Bot interrompido pelo usuário")
+            finally:
+                await application.updater.stop()
+                await application.stop()
+                await application.shutdown()
+                logging.info("👋 Bot finalizado")
+
+        # Executar bot
+        asyncio.run(run_bot())
+    else:
+        # ============ MODO PRODUÇÃO (WEBHOOK) ============
+        logging.info("🚀 Iniciando bot em MODO PRODUÇÃO (Webhook)...")
+        logging.info("📡 Bot receberá mensagens via webhook HTTP")
+
+        # Configurar handlers de sinal para manter o bot ativo
+        signal.signal(signal.SIGINT, signal_handler)   # Ctrl+C
+        if hasattr(signal, 'SIGTERM'):
+            signal.signal(signal.SIGTERM, signal_handler)  # Terminação
+
+        logging.info("🤖 Bot configurado para ficar sempre ativo - ignorando sinais de interrupção")
+        logging.info("📱 Para parar o bot, feche o terminal ou use Task Manager")
+
+        try:
+            # Usar configuração que reinicia automaticamente em caso de falha
+            uvicorn.run(
+                "main:app",
+                host="0.0.0.0",
+                port=PORT,
+                access_log=True,
+                reload=False,  # Desabilitar reload automático
+                log_level="info"
+            )
+        except Exception as e:
+            logging.error(f"Erro crítico no servidor: {e}")
+            logging.info("Tentando reiniciar em 5 segundos...")
+            import time
+            time.sleep(5)
+            # Tentar reiniciar
+            os.system(f"python {sys.argv[0]}")  # Reiniciar o próprio script
