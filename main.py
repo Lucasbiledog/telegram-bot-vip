@@ -1180,7 +1180,7 @@ WALLET_ADDRESS = os.getenv("WALLET_ADDRESS", "")
 BOT_SECRET = os.getenv("BOT_SECRET", "")
 
 STORAGE_GROUP_ID       = int(os.getenv("STORAGE_GROUP_ID", "-4806334341"))
-GROUP_VIP_ID           = int(os.getenv("Group_VIP_ID", os.getenv("GROUP_VIP_ID", "-1002791988432")))
+GROUP_VIP_ID           = int(os.getenv("Group_VIP_ID", os.getenv("GROUP_VIP_ID", "-1003255098941")))
 STORAGE_GROUP_FREE_ID  = int(os.getenv("STORAGE_GROUP_FREE_ID", "-1002509364079"))
 GROUP_FREE_ID          = int(os.getenv("GROUP_FREE_ID", "-1002932075976"))
 PACK_ADMIN_CHAT_ID     = int(os.getenv("PACK_ADMIN_CHAT_ID", "-1003080645605"))

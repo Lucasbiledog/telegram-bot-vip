@@ -1324,7 +1324,7 @@ async def approve_by_usd_and_invite(tg_id, username: Optional[str], tx_hash: str
             sys.path.append(os.path.dirname(__file__))
             from models import Payment
             from db import SessionLocal
-            GROUP_VIP_ID = -1002791988432  # Valor padrão
+            GROUP_VIP_ID = int(os.getenv("GROUP_VIP_ID", "-1003255098941"))  # Valor padrão atualizado
             application = None
             bot_available = False
         except Exception as e2:
