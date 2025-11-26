@@ -88,7 +88,9 @@ from sqlalchemy import (
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship
 from sqlalchemy.engine import make_url
 
-from models import Pack, User, PendingNotification, MemberLog
+# Importar apenas User, PendingNotification e MemberLog do models.py
+# Pack e Payment já estão definidos no main.py com mais campos
+from models import User, PendingNotification, MemberLog, Base as ModelsBase
 
 # === Funções de Retry Automático ===
 async def send_with_retry(func, *args, max_retries=3, **kwargs):
@@ -408,7 +410,10 @@ else:
         }
     )
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
-Base = declarative_base()
+# Usar a Base do models.py para que todas as tabelas sejam criadas juntas
+Base = ModelsBase
+# Configurar metadata do models.py para usar este engine
+Base.metadata.bind = engine
 
 def ensure_bigint_columns():
     if not url.get_backend_name().startswith("postgresql"):
