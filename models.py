@@ -50,3 +50,29 @@ class ScheduledMessage(Base):
     time: Mapped[dtime] = mapped_column(Time, nullable=False)
     text: Mapped[str] = mapped_column(Text, nullable=False)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+
+class PendingNotification(Base):
+    """Mensagens que não puderam ser enviadas (usuário não iniciou conversa)"""
+    __tablename__ = "pending_notifications"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer, index=True, nullable=False)
+    username: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    message: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+    sent: Mapped[bool] = mapped_column(Boolean, default=False)
+    sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+class MemberLog(Base):
+    """Log de entrada/saída de membros no grupo VIP"""
+    __tablename__ = "member_logs"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer, index=True, nullable=False)
+    username: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    first_name: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
+    action: Mapped[str] = mapped_column(String(20), nullable=False)  # "joined", "left", "removed"
+    vip_until: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True
+    )

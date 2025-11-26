@@ -3093,6 +3093,13 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
     user = update.effective_user
 
+    # Enviar mensagens pendentes (se houver)
+    try:
+        from vip_manager import send_pending_notifications
+        await send_pending_notifications(update, context)
+    except Exception as e:
+        logging.warning(f"Erro ao enviar mensagens pendentes: {e}")
+
     # Verificar se há argumentos (deep link)
     if context.args:
         arg = context.args[0]
@@ -7972,24 +7979,32 @@ async def on_startup():
         logging.info(f"✅ Sistema de indexação automática configurado para grupo {SOURCE_CHAT_ID}")
 
         # ===== Member Join Handlers - para capturar ID quando usuário ENTRA no grupo
-        
+
         # Handler para novos membros (new_chat_members)
         application.add_handler(
             MessageHandler(
                 filters.StatusUpdate.NEW_CHAT_MEMBERS & filters.Chat(GROUP_VIP_ID),
                 vip_member_joined_handler
-            ), 
+            ),
             group=0  # Prioridade alta
         )
-        
-        # Handler para mudanças de status de membro (chat_member)
+
+        # Handler para mudanças de status de membro (chat_member) - LOG DE MEMBROS
+        from vip_manager import log_member_change
         application.add_handler(
             ChatMemberHandler(
-                vip_member_joined_handler,
+                log_member_change,
                 ChatMemberHandler.CHAT_MEMBER
             ),
             group=0
         )
+        logging.info("✅ Sistema de log de membros ativado")
+
+        # ===== Comandos de Gerenciamento VIP
+        from vip_manager import view_member_logs_cmd, check_vip_status_cmd
+        application.add_handler(CommandHandler("logs", view_member_logs_cmd), group=1)
+        application.add_handler(CommandHandler("meu_vip", check_vip_status_cmd), group=1)
+        logging.info("✅ Comandos /logs e /meu_vip registrados")
         
         # ===== Callback Query Handler - Checkout e Renovação
         application.add_handler(CallbackQueryHandler(checkout_callback_handler, pattern="checkout_callback"), group=1)
@@ -8003,6 +8018,16 @@ async def on_startup():
 
         application.job_queue.run_daily(vip_expiration_warn_job, time=dt.time(hour=9, minute=0, tzinfo=pytz.timezone("America/Sao_Paulo")), name="vip_warn")
         application.job_queue.run_repeating(keepalive_job, interval=dt.timedelta(minutes=4), first=dt.timedelta(seconds=20), name="keepalive")
+
+        # ===== Job de Verificação de Expirações VIP =====
+        from vip_manager import check_expirations
+        application.job_queue.run_repeating(
+            check_expirations,
+            interval=dt.timedelta(hours=6),  # Verifica a cada 6 horas
+            first=dt.timedelta(seconds=60),  # Primeira verificação após 1 minuto
+            name="vip_expiration_check"
+        )
+        logging.info("✅ Sistema de verificação de expirações VIP ativado (a cada 6 horas)")
 
         # ===== Jobs do Sistema de Envio Automático =====
 

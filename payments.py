@@ -1509,9 +1509,63 @@ async def approve_by_usd_and_invite(tg_id, username: Optional[str], tx_hash: str
                     text=msg,
                     parse_mode="HTML"
                 )
-                LOG.info(f"[NOTIFY] Mensagem de boas-vindas enviada para user {actual_tg_id}")
+                LOG.info(f"[NOTIFY] ✅ Mensagem de boas-vindas enviada para user {actual_tg_id}")
+
+                # Enviar log de sucesso para grupo de logs
+                try:
+                    from main import LOGS_GROUP_ID
+                    log_msg = (
+                        f"✅ <b>MENSAGEM DE BOAS-VINDAS ENVIADA</b>\n"
+                        f"👤 User: <code>{actual_tg_id}</code> (@{username or 'sem_username'})\n"
+                        f"💰 Valor: ${usd:.2f} USD\n"
+                        f"📅 Plano: {plan_name} ({days} dias)\n"
+                        f"⏰ VIP até: {until.strftime('%d/%m/%Y %H:%M') if until else 'N/A'}\n"
+                        f"🔗 Link gerado: {'Sim' if link else 'Não'}"
+                    )
+                    await application.bot.send_message(
+                        chat_id=LOGS_GROUP_ID,
+                        text=log_msg,
+                        parse_mode="HTML"
+                    )
+                except Exception as log_error:
+                    LOG.warning(f"[NOTIFY] Erro ao enviar log de sucesso: {log_error}")
             except Exception as e:
-                LOG.warning(f"[INVITE-DEBUG] Falha ao notificar usuário: {e}")
+                LOG.warning(f"[NOTIFY] ❌ Falha ao enviar mensagem (usuário não iniciou conversa): {e}")
+                # Salvar mensagem pendente para enviar quando o usuário der /start ou entrar no grupo
+                try:
+                    from models import PendingNotification
+                    from main import LOGS_GROUP_ID
+
+                    with SessionLocal() as s:
+                        pending = PendingNotification(
+                            user_id=actual_tg_id,
+                            username=username,
+                            message=msg
+                        )
+                        s.add(pending)
+                        s.commit()
+                    LOG.info(f"[NOTIFY] 📝 Mensagem salva como pendente para user {actual_tg_id}")
+
+                    # Enviar log para grupo de logs
+                    try:
+                        log_msg = (
+                            f"📝 <b>MENSAGEM PENDENTE SALVA</b>\n"
+                            f"👤 User: <code>{actual_tg_id}</code> (@{username or 'sem_username'})\n"
+                            f"💰 Valor: ${usd:.2f} USD\n"
+                            f"📅 Plano: {plan_name} ({days} dias)\n"
+                            f"⏰ VIP até: {until.strftime('%d/%m/%Y %H:%M') if until else 'N/A'}\n\n"
+                            f"ℹ️ Mensagem será enviada quando o usuário entrar no grupo VIP"
+                        )
+                        await application.bot.send_message(
+                            chat_id=LOGS_GROUP_ID,
+                            text=log_msg,
+                            parse_mode="HTML"
+                        )
+                    except Exception as log_error:
+                        LOG.warning(f"[NOTIFY] Erro ao enviar log: {log_error}")
+
+                except Exception as save_error:
+                    LOG.error(f"[NOTIFY] Erro ao salvar mensagem pendente: {save_error}")
 
         return True, msg, payload
 
