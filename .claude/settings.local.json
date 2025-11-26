@@ -8,7 +8,8 @@
       "Bash(pkill:*)",
       "Bash(netstat:*)",
       "Bash(findstr:*)",
-      "Bash(taskkill:*)"
+      "Bash(taskkill:*)",
+      "Bash(py \"F:\\telegram_bot\\bot-oficial\\teste_simples.py\")"
     ],
     "deny": [],
     "ask": []

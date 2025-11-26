@@ -7236,7 +7236,7 @@ async def api_validate(request: Request):
         try:
             # Usar a função completa de aprovação com UID validado
             logging.info(f"[API-VALIDATE] Processando pagamento para UID: {uid_int}")
-            ok, msg, payload = await approve_by_usd_and_invite(uid_int, username, hash, notify_user=False)
+            ok, msg, payload = await approve_by_usd_and_invite(uid_int, username, hash, notify_user=True)
             
             if ok:
                 return {

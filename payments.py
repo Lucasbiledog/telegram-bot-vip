@@ -1120,8 +1120,9 @@ async def tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 try:
                     from main import application, GROUP_VIP_ID
-                    invite_link = await create_one_time_invite(
-                        application.bot, GROUP_VIP_ID, expire_seconds=7200, member_limit=1
+                    from utils import create_invite_link_flexible
+                    invite_link = await create_invite_link_flexible(
+                        application.bot, GROUP_VIP_ID, retries=3
                     )
 
                     if invite_link:
@@ -1381,16 +1382,21 @@ async def approve_by_usd_and_invite(tg_id, username: Optional[str], tx_hash: str
             until = await vip_upsert_and_get_until(actual_tg_id, username, days, None)
             LOG.info(f"[INVITE-DEBUG] VIP estendido até: {until}")
             
-            # Gerar convite de 1 uso
+            # Gerar convite - tentar múltiplas estratégias
             if bot_available and application and application.bot:
                 try:
-                    link = await create_one_time_invite(application.bot, GROUP_VIP_ID, expire_seconds=7200, member_limit=1)
-                    LOG.info(f"[INVITE-DEBUG] Convite gerado: {link is not None}")
+                    from utils import create_invite_link_flexible
+                    LOG.info(f"[INVITE-DEBUG] Tentando gerar convite para canal {GROUP_VIP_ID}")
+                    link = await create_invite_link_flexible(application.bot, GROUP_VIP_ID, retries=3)
+                    if link:
+                        LOG.info(f"[INVITE-DEBUG] ✅ Convite gerado com sucesso: {link[:50]}...")
+                    else:
+                        LOG.warning(f"[INVITE-DEBUG] ❌ Não foi possível gerar convite")
                 except Exception as e:
-                    LOG.warning(f"[INVITE-DEBUG] Falha ao gerar convite automático: {e}")
+                    LOG.error(f"[INVITE-DEBUG] ❌ Erro ao gerar convite: {e}", exc_info=True)
                     link = None
             else:
-                LOG.info(f"[INVITE-DEBUG] Bot não disponível, pulando geração de convite")
+                LOG.warning(f"[INVITE-DEBUG] Bot não disponível, pulando geração de convite")
                 link = None
         except (ValueError, TypeError) as e:
             LOG.warning(f"[INVITE-DEBUG] Erro ao processar UID, tratando como temporário: {e}")
@@ -1434,7 +1440,8 @@ async def approve_by_usd_and_invite(tg_id, username: Optional[str], tx_hash: str
         # O ID será capturado quando o usuário entrar no grupo
         if bot_available and application and application.bot:
             try:
-                link = await create_one_time_invite(application.bot, GROUP_VIP_ID, expire_seconds=7200, member_limit=1)
+                from utils import create_invite_link_flexible
+                link = await create_invite_link_flexible(application.bot, GROUP_VIP_ID, retries=3)
                 LOG.info(f"[INVITE-DEBUG] Convite temporário gerado: {link is not None}")
                 if link:
                     msg = (

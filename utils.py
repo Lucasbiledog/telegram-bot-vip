@@ -148,6 +148,76 @@ async def create_one_time_invite(
             await asyncio.sleep(2 ** attempt)
     return None
 
+async def create_invite_link_flexible(
+    bot: Bot,
+    chat_id: int,
+    retries: int = 3
+) -> Optional[str]:
+    """
+    Cria link de convite com múltiplas estratégias:
+    1. Tenta link de 1 uso com expiração (ideal)
+    2. Se falhar, tenta link com expiração mas sem limite de usos
+    3. Se falhar, tenta link permanente
+
+    Retorna o link ou None se todas as tentativas falharem
+    """
+    strategies = [
+        # Estratégia 1: Link de 1 uso com expiração de 2 horas
+        {
+            "name": "1 uso + 2h expiração",
+            "kwargs": {
+                "creates_join_request": False,
+                "expire_date": datetime.now(timezone.utc) + timedelta(hours=2),
+                "member_limit": 1
+            }
+        },
+        # Estratégia 2: Link sem limite de usos mas com expiração de 2 horas
+        {
+            "name": "Sem limite + 2h expiração",
+            "kwargs": {
+                "creates_join_request": False,
+                "expire_date": datetime.now(timezone.utc) + timedelta(hours=2)
+            }
+        },
+        # Estratégia 3: Link com expiração de 24 horas
+        {
+            "name": "24h expiração",
+            "kwargs": {
+                "creates_join_request": False,
+                "expire_date": datetime.now(timezone.utc) + timedelta(hours=24)
+            }
+        },
+        # Estratégia 4: Link permanente (sem expiração nem limites)
+        {
+            "name": "Link permanente",
+            "kwargs": {
+                "creates_join_request": False
+            }
+        }
+    ]
+
+    for strategy in strategies:
+        for attempt in range(retries):
+            try:
+                logging.info(f"[INVITE-FLEX] Tentando estratégia: {strategy['name']}")
+                invite = await bot.create_chat_invite_link(
+                    chat_id=chat_id,
+                    **strategy["kwargs"]
+                )
+                logging.info(f"[INVITE-FLEX] ✅ Sucesso com estratégia: {strategy['name']}")
+                return invite.invite_link
+            except TelegramError as e:
+                logging.warning(f"[INVITE-FLEX] Estratégia '{strategy['name']}' falhou (tentativa {attempt+1}/{retries}): {e}")
+                if attempt < retries - 1:
+                    await asyncio.sleep(1)
+                    continue
+                else:
+                    # Passar para próxima estratégia
+                    break
+
+    logging.error(f"[INVITE-FLEX] ❌ Todas as estratégias falharam para criar convite")
+    return None
+
 async def send_with_retry(func, *args, retries: int = 3, base_delay: float = 1.0, **kwargs):
     for attempt in range(retries):
         try:
