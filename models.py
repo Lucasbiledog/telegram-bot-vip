@@ -22,25 +22,8 @@ class User(Base):
     is_vip: Mapped[bool] = mapped_column(Boolean, default=False)
     vip_until: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
-class Payment(Base):
-    __tablename__ = "payments"
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    tx_hash: Mapped[str] = mapped_column(String(120), unique=True, index=True)
-    tg_id: Mapped[int] = mapped_column(Integer, nullable=False)
-    validated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
-    )
-
-class Pack(Base):
-    __tablename__ = "packs"
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    title: Mapped[str] = mapped_column(String(120), nullable=False)
-    previews: Mapped[str] = mapped_column(Text, default="[]")
-    files: Mapped[str] = mapped_column(Text, default="[]")
-    is_vip: Mapped[bool] = mapped_column(Boolean, default=False)
-    sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
-    requeued_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
-    scheduled_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+# NOTA: Pack e Payment estão definidos no main.py com schemas mais completos
+# Não duplicar aqui para evitar conflitos
 
 
 class ScheduledMessage(Base):
