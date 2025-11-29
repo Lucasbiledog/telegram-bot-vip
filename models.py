@@ -22,17 +22,8 @@ class User(Base):
     is_vip: Mapped[bool] = mapped_column(Boolean, default=False)
     vip_until: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
-# NOTA: Pack e Payment estão definidos no main.py com schemas mais completos
+# NOTA: Pack, Payment e ScheduledMessage estão definidos no main.py com schemas mais completos
 # Não duplicar aqui para evitar conflitos
-
-
-class ScheduledMessage(Base):
-    __tablename__ = "scheduled_messages"
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    tier: Mapped[str] = mapped_column(String(10), nullable=False)
-    time: Mapped[dtime] = mapped_column(Time, nullable=False)
-    text: Mapped[str] = mapped_column(Text, nullable=False)
-    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
 
 class PendingNotification(Base):
     """Mensagens que não puderam ser enviadas (usuário não iniciou conversa)"""
