@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: telegram-bot
+    env: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host=0.0.0.0 --port=$PORT
+    pythonVersion: 3.10
+    autoDeploy: true
+    # Disco persistente para SQLite
+    disk:
+      name: telegram-bot-data
+      mountPath: /opt/render/project/.data
+      sizeGB: 1
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.10
+
