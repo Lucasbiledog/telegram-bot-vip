@@ -191,10 +191,10 @@ _update_fallback_prices()
 import threading
 
 def _periodic_price_update():
-    """Atualiza preços de fallback a cada 30 minutos"""
+    """Atualiza preços de fallback a cada 2 horas (reduzido para evitar rate limit)"""
     while True:
         try:
-            time.sleep(1800)  # 30 minutos
+            time.sleep(7200)  # 2 horas (reduzido de 30min para evitar 429)
             LOG.info("[PERIODIC] Iniciando atualização automática de preços...")
             _update_fallback_prices()
         except Exception as e:

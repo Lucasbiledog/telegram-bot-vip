@@ -122,7 +122,8 @@ class APIRateLimiter:
 
     def __init__(self):
         # Diferentes limitadores para diferentes APIs
-        self.coingecko_limiter = RateLimiter(50, 60, 5)  # 50 req/min, 5 simultâneas
+        # CoinGecko free tier: 10-30 req/min, sendo conservador com 10 req/min
+        self.coingecko_limiter = RateLimiter(10, 60, 2)  # 10 req/min, 2 simultâneas (REDUZIDO para evitar 429)
         self.blockchain_limiter = RateLimiter(100, 60, 10)  # 100 req/min, 10 simultâneas
         self.general_limiter = RateLimiter(60, 60, 8)    # Geral: 60 req/min, 8 simultâneas
 
