@@ -6392,11 +6392,13 @@ async def scan_full_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     with SessionLocal() as session:
         try:
             # Criar cliente Pyrogram (User API)
+            # Usa sessão existente para evitar EOF em produção
             app = Client(
-                "bot_scanner",
+                "my_account",  # Nome da sessão já criada
                 api_id=int(api_id),
                 api_hash=api_hash,
-                workdir="."
+                workdir=".",
+                no_updates=True  # Desabilita updates para economizar recursos
             )
 
             async with app:
