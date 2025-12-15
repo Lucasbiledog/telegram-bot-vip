@@ -85,17 +85,30 @@ async def index_group_history(
 
     try:
         async with client:
+            # Verificar autenticação
+            me = await client.get_me()
+            LOG.info(f"[INDEXER] 👤 Conectado como: {me.first_name} (@{me.username or 'sem_username'}) | ID: {me.id}")
+
             # Verificar acesso ao grupo
             try:
                 chat = await client.get_chat(source_chat_id)
-                LOG.info(f"[INDEXER] Grupo encontrado: {chat.title}")
+                LOG.info(f"[INDEXER] ✅ Grupo encontrado: {chat.title} (ID: {chat.id})")
             except Exception as e:
-                LOG.error(f"[INDEXER] Erro ao acessar grupo {source_chat_id}: {e}")
+                import traceback
+                LOG.error(f"[INDEXER] ❌ Erro ao acessar grupo {source_chat_id}: {e}")
+                LOG.error(f"[INDEXER] Traceback completo:\n{traceback.format_exc()}")
+                LOG.error(f"[INDEXER] Tipo do erro: {type(e).__name__}")
                 stats['errors'] += 1
                 return stats
 
             # Iterar histórico
+            LOG.info(f"[INDEXER] 🔍 Iniciando leitura do histórico... (limit={limit or 'todas'})")
+            message_count = 0
             async for message in client.get_chat_history(source_chat_id, limit=limit):
+                message_count += 1
+                if message_count == 1:
+                    LOG.info(f"[INDEXER] 📨 Primeira mensagem encontrada (ID: {message.id})")
+
                 stats['total_processed'] += 1
 
                 # Progress a cada 100 mensagens
@@ -155,11 +168,15 @@ async def index_group_history(
                     stats['errors'] += 1
                     LOG.error(f"[INDEXER] Erro ao indexar mensagem {message.id}: {e}")
 
+            LOG.info(f"[INDEXER] 🏁 Loop de histórico finalizado. Total de mensagens: {message_count}")
         LOG.info(f"[INDEXER] ✅ Indexação concluída: {stats}")
         return stats
 
     except Exception as e:
-        LOG.error(f"[INDEXER] Erro na indexação: {e}")
+        import traceback
+        LOG.error(f"[INDEXER] ❌ Erro geral na indexação: {e}")
+        LOG.error(f"[INDEXER] Tipo do erro: {type(e).__name__}")
+        LOG.error(f"[INDEXER] Traceback completo:\n{traceback.format_exc()}")
         stats['errors'] += 1
         return stats
 
