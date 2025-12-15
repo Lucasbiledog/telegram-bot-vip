@@ -3219,7 +3219,7 @@ async def index_files_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 pass
 
         # Executar indexação
-        with get_db_session() as session:
+        with SessionLocal() as session:
             stats = await index_full_history_command(
                 session=session,
                 source_chat_id=SOURCE_CHAT_ID,
