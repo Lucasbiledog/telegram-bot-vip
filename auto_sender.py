@@ -24,11 +24,11 @@ __updated__ = "2025-11-11 11:00:00"
 from telegram import Bot, Message, Update, InputMediaVideo, InputMediaPhoto, InputMediaDocument
 from telegram.error import TelegramError
 from sqlalchemy.orm import Session
+from config import SOURCE_CHAT_ID
 
 LOG = logging.getLogger(__name__)
 
-# IDs dos canais/grupos
-SOURCE_CHAT_ID = -1003080645605  # Grupo fonte com todos os arquivos
+# IDs dos canais/grupos (SOURCE_CHAT_ID importado de config.py)
 VIP_CHANNEL_ID = None  # Será configurado via variável de ambiente
 FREE_CHANNEL_ID = None  # Será configurado via variável de ambiente
 

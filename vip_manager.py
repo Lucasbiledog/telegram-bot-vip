@@ -348,7 +348,8 @@ async def remove_expired_vip(bot: Bot, user, group_id: int, session):
 async def view_member_logs_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Comando /logs para ver logs de entrada/saída (admin apenas)"""
     try:
-        from main import SessionLocal, OWNER_ID
+        from main import SessionLocal
+        from config import OWNER_ID
         from models import MemberLog
 
         # Verificar se é admin
