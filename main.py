@@ -3172,6 +3172,97 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = ("Fala! Eu gerencio packs VIP/FREE, pagamentos via MetaMask e mensagens agendadas.\nOs pagamentos são automáticos quando as imagens são enviadas.")
     if msg: await msg.reply_text(text)
 
+
+async def index_files_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Comando /index_files - Indexa arquivos do grupo fonte automaticamente.
+    USA SESSÃO PERSISTENTE - Pede código SMS apenas na primeira vez!
+    """
+    # Verificar se é admin
+    if not (update.effective_user and is_admin(update.effective_user.id)):
+        await update.effective_message.reply_text("⛔ Apenas admins podem indexar arquivos.")
+        return
+
+    msg = update.effective_message
+
+    # Importar auto_indexer
+    try:
+        from auto_indexer import index_full_history_command, get_pyrogram_client
+        from config import SOURCE_CHAT_ID
+    except ImportError as e:
+        logging.error(f"Erro ao importar auto_indexer: {e}")
+        await msg.reply_text(
+            "❌ Erro ao carregar módulo de indexação.\n\n"
+            f"Detalhes: {e}"
+        )
+        return
+
+    if not SOURCE_CHAT_ID:
+        await msg.reply_text("❌ SOURCE_CHAT_ID não configurado no .env!")
+        return
+
+    # Enviar mensagem inicial
+    status_msg = await msg.reply_text(
+        "🔍 <b>Iniciando Indexação Automática</b>\n\n"
+        "⏳ Conectando ao Telegram...\n\n"
+        "💡 <b>Primeira vez?</b> Você receberá um código SMS.\n"
+        "📱 Digite o código aqui no chat quando receber.",
+        parse_mode='HTML'
+    )
+
+    try:
+        # Função para atualizar mensagem com progresso
+        async def update_progress(text):
+            try:
+                await status_msg.edit_text(text, parse_mode='HTML')
+            except:
+                pass
+
+        # Executar indexação
+        with get_db_session() as session:
+            stats = await index_full_history_command(
+                session=session,
+                source_chat_id=SOURCE_CHAT_ID,
+                update_message_func=update_progress
+            )
+
+        # Relatório final
+        final_msg = (
+            "✅ <b>Indexação Concluída!</b>\n\n"
+            f"📨 Mensagens processadas: {stats['total_processed']}\n"
+            f"✅ Novas indexadas: {stats['newly_indexed']}\n"
+            f"⏭️ Já existentes: {stats['duplicated']}\n"
+            f"❌ Erros: {stats['errors']}\n\n"
+        )
+
+        if stats['file_types']:
+            final_msg += "📁 <b>Tipos encontrados:</b>\n"
+            for file_type, count in stats['file_types'].items():
+                final_msg += f"   • {file_type}: {count}\n"
+
+        final_msg += f"\n💾 <b>Total no banco:</b> {stats['total_processed'] - stats['duplicated']} arquivos"
+
+        await status_msg.edit_text(final_msg, parse_mode='HTML')
+
+        logging.info(f"[INDEX_CMD] Indexação concluída por {update.effective_user.id}: {stats}")
+
+    except Exception as e:
+        logging.error(f"[INDEX_CMD] Erro na indexação: {e}")
+        import traceback
+        logging.error(traceback.format_exc())
+
+        await status_msg.edit_text(
+            f"❌ <b>Erro na indexação:</b>\n\n"
+            f"<code>{type(e).__name__}: {str(e)}</code>\n\n"
+            f"💡 Verifique:\n"
+            f"• TELEGRAM_API_ID configurado\n"
+            f"• TELEGRAM_API_HASH configurado\n"
+            f"• DATABASE_URL conectado\n"
+            f"• Você está no grupo fonte",
+            parse_mode='HTML'
+        )
+
+
 async def comandos_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Somente admin pode usar /comandos
     if not (update.effective_user and is_admin(update.effective_user.id)):
@@ -3180,6 +3271,7 @@ async def comandos_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     base = [
         "📋 <b>Comandos</b>",
         "• /start — mensagem inicial",
+        "• /index_files — indexar arquivos do grupo fonte (NOVO!)",
         "• /comandos — esta lista",
         "• /listar_comandos — (alias)",
         "• /getid — mostra seus IDs",
@@ -7871,6 +7963,7 @@ async def on_startup():
 
         # ===== Comandos gerais (group=1)
         application.add_handler(CommandHandler("start", start_cmd), group=1)
+        application.add_handler(CommandHandler("index_files", index_files_cmd), group=1)  # Indexação automática
         application.add_handler(CommandHandler("comandos", comandos_cmd), group=5)
         application.add_handler(CommandHandler("listar_comandos", comandos_cmd), group=5)
 

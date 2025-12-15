@@ -21,7 +21,7 @@ from typing import Optional, List, Dict, Any
 __version__ = "2.0.2"
 __updated__ = "2025-11-11 11:00:00"
 
-from telegram import Bot, Message, Update
+from telegram import Bot, Message, Update, InputMediaVideo, InputMediaPhoto, InputMediaDocument
 from telegram.error import TelegramError
 from sqlalchemy.orm import Session
 
@@ -555,6 +555,91 @@ async def send_teaser_to_free(bot: Bot, all_parts: list):
         LOG.error(traceback.format_exc())
 
 
+async def send_as_media_group(
+    bot: Bot,
+    source_files: List,  # Lista de SourceFile
+    channel_id: int,
+    tier: str
+) -> bool:
+    """
+    Envia múltiplos arquivos como media group (álbum/sanfona).
+    Funciona apenas para videos e photos (até 10 arquivos).
+
+    Args:
+        bot: Bot instance
+        source_files: Lista de SourceFile (as parts)
+        channel_id: ID do canal destino
+        tier: 'vip' ou 'free'
+
+    Returns:
+        bool: True se enviou com sucesso
+    """
+    try:
+        # Preparar lista de InputMedia
+        media_list = []
+
+        for i, source_file in enumerate(source_files):
+            # Caption apenas no primeiro arquivo
+            if i == 0:
+                if tier == 'vip':
+                    caption = f"🔥 Conteúdo VIP Exclusivo\n📅 {datetime.now().strftime('%d/%m/%Y')}"
+                else:
+                    caption = f"🆓 Conteúdo Grátis da Semana\n📅 {datetime.now().strftime('%d/%m/%Y')}"
+
+                if source_file.caption:
+                    caption += f"\n\n{source_file.caption}"
+
+                caption += f"\n\n📦 Álbum com {len(source_files)} partes"
+            else:
+                caption = None
+
+            # Criar InputMedia apropriado
+            if source_file.file_type == 'video':
+                media_list.append(
+                    InputMediaVideo(
+                        media=source_file.file_id,
+                        caption=caption,
+                        parse_mode='HTML'
+                    )
+                )
+            elif source_file.file_type == 'photo':
+                media_list.append(
+                    InputMediaPhoto(
+                        media=source_file.file_id,
+                        caption=caption,
+                        parse_mode='HTML'
+                    )
+                )
+            else:
+                # Documents não suportam media group bem
+                # Será enviado sequencialmente
+                return False
+
+        # Enviar media group
+        LOG.info(f"[AUTO-SEND] 📤 Enviando media group com {len(media_list)} itens")
+
+        messages = await bot.send_media_group(
+            chat_id=channel_id,
+            media=media_list
+        )
+
+        if messages and len(messages) > 0:
+            LOG.info(f"[AUTO-SEND] ✅ Media group enviado com sucesso ({len(messages)} mensagens)")
+            return True
+        else:
+            LOG.error("[AUTO-SEND] ❌ Falha ao enviar media group (sem mensagens retornadas)")
+            return False
+
+    except TelegramError as e:
+        LOG.error(f"[AUTO-SEND] ❌ Erro do Telegram ao enviar media group: {e}")
+        return False
+    except Exception as e:
+        LOG.error(f"[AUTO-SEND] ❌ Erro ao enviar media group: {e}")
+        import traceback
+        LOG.error(traceback.format_exc())
+        return False
+
+
 async def send_daily_vip_file(bot: Bot, session: Session):
     """
     Envia arquivo diário para o canal VIP (executa às 15h).
@@ -580,32 +665,61 @@ async def send_daily_vip_file(bot: Bot, session: Session):
 
         LOG.info(f"[AUTO-SEND] Enviando {len(all_parts)} parte(s) para VIP")
 
-        # Enviar todas as partes em sequência
+        # Verificar se pode enviar como media group (máximo 10 arquivos, apenas videos/photos)
+        can_use_media_group = (
+            len(all_parts) > 1 and
+            len(all_parts) <= 10 and
+            all(p.file_type in ['video', 'photo'] for p in all_parts)
+        )
+
         success_count = 0
-        for i, part in enumerate(all_parts, 1):
-            # Preparar legenda (apenas na primeira parte)
-            if i == 1:
-                caption = f"🔥 Conteúdo VIP Exclusivo\n📅 {datetime.now().strftime('%d/%m/%Y')}"
-                if part.caption:
-                    caption += f"\n\n{part.caption}"
-                if len(all_parts) > 1:
-                    caption += f"\n\n📦 Arquivo com {len(all_parts)} partes"
-            else:
-                caption = f"📦 Parte {i} de {len(all_parts)}"
-                if part.caption:
-                    caption += f"\n{part.caption}"
 
-            # Enviar para canal VIP
-            msg = await send_file_to_channel(bot, part, VIP_CHANNEL_ID, caption)
+        if can_use_media_group:
+            # ENVIAR COMO ÁLBUM/SANFONA (media group)
+            LOG.info(f"[AUTO-SEND] 📦 Enviando {len(all_parts)} partes como álbum (media group)")
 
-            if msg:
-                # Marcar como enviado
-                await mark_file_as_sent(session, part, 'vip')
-                success_count += 1
-                LOG.info(f"[AUTO-SEND] ✅ Parte {i}/{len(all_parts)} enviada com sucesso")
+            success = await send_as_media_group(bot, all_parts, VIP_CHANNEL_ID, tier='vip')
+
+            if success:
+                # Marcar todas as partes como enviadas
+                for part in all_parts:
+                    await mark_file_as_sent(session, part, 'vip')
+                success_count = len(all_parts)
+                LOG.info(f"[AUTO-SEND] ✅ Álbum com {len(all_parts)} partes enviado!")
             else:
-                LOG.error(f"[AUTO-SEND] ❌ Falha ao enviar parte {i}/{len(all_parts)}")
-                # Continuar tentando enviar as outras partes
+                LOG.error("[AUTO-SEND] ❌ Falha ao enviar álbum")
+
+        else:
+            # ENVIAR SEQUENCIALMENTE (documents ou + de 10 parts)
+            LOG.info(f"[AUTO-SEND] 📤 Enviando {len(all_parts)} partes sequencialmente")
+
+            for i, part in enumerate(all_parts, 1):
+                # Preparar legenda (apenas na primeira parte)
+                if i == 1:
+                    caption = f"🔥 Conteúdo VIP Exclusivo\n📅 {datetime.now().strftime('%d/%m/%Y')}"
+                    if part.caption:
+                        caption += f"\n\n{part.caption}"
+                    if len(all_parts) > 1:
+                        caption += f"\n\n📦 Arquivo com {len(all_parts)} partes"
+                else:
+                    caption = f"📦 Parte {i} de {len(all_parts)}"
+                    if part.caption:
+                        caption += f"\n{part.caption}"
+
+                # Enviar para canal VIP
+                msg = await send_file_to_channel(bot, part, VIP_CHANNEL_ID, caption)
+
+                if msg:
+                    # Marcar como enviado
+                    await mark_file_as_sent(session, part, 'vip')
+                    success_count += 1
+                    LOG.info(f"[AUTO-SEND] ✅ Parte {i}/{len(all_parts)} enviada")
+                else:
+                    LOG.error(f"[AUTO-SEND] ❌ Falha ao enviar parte {i}/{len(all_parts)}")
+
+                # Pequeno delay entre parts (evitar flood)
+                if i < len(all_parts):
+                    await asyncio.sleep(0.5)
 
         if success_count == len(all_parts):
             LOG.info(f"[AUTO-SEND] ✅ Envio VIP diário concluído: {success_count} parte(s)")
@@ -656,32 +770,61 @@ async def send_weekly_free_file(bot: Bot, session: Session):
 
         LOG.info(f"[AUTO-SEND] Enviando {len(all_parts)} parte(s) para FREE")
 
-        # Enviar todas as partes em sequência
+        # Verificar se pode enviar como media group
+        can_use_media_group = (
+            len(all_parts) > 1 and
+            len(all_parts) <= 10 and
+            all(p.file_type in ['video', 'photo'] for p in all_parts)
+        )
+
         success_count = 0
-        for i, part in enumerate(all_parts, 1):
-            # Preparar legenda (apenas na primeira parte)
-            if i == 1:
-                caption = f"🆓 Conteúdo Grátis da Semana\n📅 {datetime.now().strftime('%d/%m/%Y')}"
-                if part.caption:
-                    caption += f"\n\n{part.caption}"
-                if len(all_parts) > 1:
-                    caption += f"\n\n📦 Arquivo com {len(all_parts)} partes"
-            else:
-                caption = f"📦 Parte {i} de {len(all_parts)}"
-                if part.caption:
-                    caption += f"\n{part.caption}"
 
-            # Enviar para canal FREE
-            msg = await send_file_to_channel(bot, part, FREE_CHANNEL_ID, caption)
+        if can_use_media_group:
+            # ENVIAR COMO ÁLBUM/SANFONA (media group)
+            LOG.info(f"[AUTO-SEND] 📦 Enviando {len(all_parts)} partes como álbum (media group)")
 
-            if msg:
-                # Marcar como enviado
-                await mark_file_as_sent(session, part, 'free')
-                success_count += 1
-                LOG.info(f"[AUTO-SEND] ✅ Parte {i}/{len(all_parts)} enviada com sucesso")
+            success = await send_as_media_group(bot, all_parts, FREE_CHANNEL_ID, tier='free')
+
+            if success:
+                # Marcar todas as partes como enviadas
+                for part in all_parts:
+                    await mark_file_as_sent(session, part, 'free')
+                success_count = len(all_parts)
+                LOG.info(f"[AUTO-SEND] ✅ Álbum com {len(all_parts)} partes enviado!")
             else:
-                LOG.error(f"[AUTO-SEND] ❌ Falha ao enviar parte {i}/{len(all_parts)}")
-                # Continuar tentando enviar as outras partes
+                LOG.error("[AUTO-SEND] ❌ Falha ao enviar álbum")
+
+        else:
+            # ENVIAR SEQUENCIALMENTE (documents ou + de 10 parts)
+            LOG.info(f"[AUTO-SEND] 📤 Enviando {len(all_parts)} partes sequencialmente")
+
+            for i, part in enumerate(all_parts, 1):
+                # Preparar legenda (apenas na primeira parte)
+                if i == 1:
+                    caption = f"🆓 Conteúdo Grátis da Semana\n📅 {datetime.now().strftime('%d/%m/%Y')}"
+                    if part.caption:
+                        caption += f"\n\n{part.caption}"
+                    if len(all_parts) > 1:
+                        caption += f"\n\n📦 Arquivo com {len(all_parts)} partes"
+                else:
+                    caption = f"📦 Parte {i} de {len(all_parts)}"
+                    if part.caption:
+                        caption += f"\n{part.caption}"
+
+                # Enviar para canal FREE
+                msg = await send_file_to_channel(bot, part, FREE_CHANNEL_ID, caption)
+
+                if msg:
+                    # Marcar como enviado
+                    await mark_file_as_sent(session, part, 'free')
+                    success_count += 1
+                    LOG.info(f"[AUTO-SEND] ✅ Parte {i}/{len(all_parts)} enviada")
+                else:
+                    LOG.error(f"[AUTO-SEND] ❌ Falha ao enviar parte {i}/{len(all_parts)}")
+
+                # Pequeno delay entre parts
+                if i < len(all_parts):
+                    await asyncio.sleep(0.5)
 
         if success_count == len(all_parts):
             LOG.info(f"[AUTO-SEND] ✅ Envio FREE semanal concluído: {success_count} parte(s)")

@@ -27,10 +27,26 @@ from sqlalchemy.orm import sessionmaker
 TELEGRAM_API_ID = "21891661"  # Número (ex: 12345678)
 TELEGRAM_API_HASH = "3011acf0afc4bff11cfa8fc5c42207f9"  # String (ex: "abc123...")
 
-# 2. Database do Render - Copie do painel do Render (Environment Variables)
-# IMPORTANTE: A URL deve ter o domínio completo .render.com
-# Exemplo: postgresql://user:pass@dpg-xxxxx.oregon-postgres.render.com:5432/dbname
-DATABASE_URL = "postgresql://telegram_user:OC5lMKFbG2a7JrDH4lYzDw8tHCmJZkOv@dpg-d44lvpripnbc73am3aog-a.oregon-postgres.render.com:5432/telegram_bot_nsgf"
+# 2. Database (SUPABASE RECOMENDADO - grátis permanente!)
+#
+# SUPABASE (RECOMENDADO):
+# - Grátis permanente (500 MB)
+# - Mais estável que Render
+#
+# Como obter:
+# 1. Crie conta em: https://supabase.com/
+# 2. Crie projeto (região: South America - São Paulo)
+# 3. Vá em: Project Settings → Database
+# 4. Copie a URL da aba "Connection pooling" (porta 6543, NÃO 5432!)
+# 5. Adicione: ?sslmode=require&connect_timeout=10
+#
+# Exemplo CORRETO (Supabase):
+# postgresql://postgres.xxx:SuaSenha@aws-0-sa-east-1.pooler.supabase.com:6543/postgres?sslmode=require&connect_timeout=10
+#
+# Exemplo Render (expira em 30 dias):
+# postgresql://user:pass@dpg-xxxxx.oregon-postgres.render.com:5432/dbname
+#
+DATABASE_URL = ""  # COLE SUA URL DO SUPABASE AQUI
 
 # 3. ID do grupo fonte
 # Você pode usar:
@@ -49,25 +65,33 @@ if TELEGRAM_API_ID == "SEU_API_ID_AQUI" or TELEGRAM_API_HASH == "SEU_API_HASH_AQ
     print("   Obtenha em: https://my.telegram.org/apps")
     exit(1)
 
-if "user:password@host" in DATABASE_URL:
+if not DATABASE_URL or "user:password@host" in DATABASE_URL:
     print("❌ ERRO: Configure DATABASE_URL!")
-    print("   Copie do painel do Render > Environment Variables")
+    print()
+    print("📋 SUPABASE (RECOMENDADO - grátis permanente):")
+    print("   1. Crie conta em: https://supabase.com/")
+    print("   2. Crie projeto (região: South America - São Paulo)")
+    print("   3. Vá em: Project Settings → Database")
+    print("   4. Aba 'Connection pooling' (NÃO 'Direct connection'!)")
+    print("   5. Copie a URL (porta 6543)")
+    print("   6. Adicione no final: ?sslmode=require&connect_timeout=10")
+    print()
+    print("   Exemplo:")
+    print("   postgresql://postgres.xxx:senha@aws-0-sa-east-1.pooler.supabase.com:6543/postgres?sslmode=require&connect_timeout=10")
+    print()
     exit(1)
 
 # Validar formato da URL
-if ".render.com" not in DATABASE_URL and "localhost" not in DATABASE_URL:
+if ".supabase.com" not in DATABASE_URL and ".render.com" not in DATABASE_URL and "localhost" not in DATABASE_URL:
     print("⚠️  AVISO: A URL do banco pode estar incompleta!")
-    print("   A URL do Render deve ter .render.com no final do host")
     print()
-    print("   Exemplo correto:")
-    print("   postgresql://user:pass@dpg-xxxxx.oregon-postgres.render.com:5432/dbname")
+    print("   ✅ URL CORRETA (Supabase):")
+    print("   postgresql://postgres.xxx:senha@aws-0-sa-east-1.pooler.supabase.com:6543/postgres?sslmode=require&connect_timeout=10")
     print()
-    print("   Como obter a URL correta:")
-    print("   1. Acesse o painel do Render")
-    print("   2. Clique no seu serviço do bot")
-    print("   3. Vá em 'Environment' no menu lateral")
-    print("   4. Procure por 'DATABASE_URL'")
-    print("   5. Clique em 'Copy' e cole no script")
+    print("   Características da URL correta:")
+    print("   • Contém .pooler.supabase.com")
+    print("   • Porta 6543 (NÃO 5432!)")
+    print("   • Parâmetros: ?sslmode=require&connect_timeout=10")
     print()
     resposta = input("   Deseja continuar mesmo assim? (s/n): ").strip().lower()
     if resposta != 's':
@@ -97,9 +121,17 @@ class SourceFile(Base):
     active = Column(Boolean, default=True)
 
 # Conectar ao banco
-print("🔌 Conectando ao banco do Render...")
-engine = create_engine(DATABASE_URL, pool_pre_ping=True)
-SessionLocal = sessionmaker(bind=engine)
+print("🔌 Conectando ao banco de dados...")
+try:
+    engine = create_engine(
+        DATABASE_URL,
+        pool_pre_ping=True,
+        connect_args={"connect_timeout": 10}
+    )
+    SessionLocal = sessionmaker(bind=engine)
+except Exception as e:
+    print(f"❌ Erro ao criar engine: {e}")
+    exit(1)
 
 # Verificar conexão
 try:
@@ -112,22 +144,36 @@ except Exception as e:
     print(f"   {type(e).__name__}: {e}")
     print()
     print("💡 Possíveis causas:")
-    print("   1. DATABASE_URL incompleta (falta .render.com)")
+    print("   1. Porta errada (use 6543 do pooler, NÃO 5432!)")
     print("   2. Credenciais incorretas")
-    print("   3. Banco não acessível externamente")
+    print("   3. Faltam parâmetros SSL")
+    print("   4. Senha não foi substituída ([YOUR-PASSWORD])")
     print()
     print("🔍 URL atual:")
     # Mascarar senha para exibir
     url_masked = DATABASE_URL.split('@')[0].split(':')[0] + ":***@" + DATABASE_URL.split('@')[1] if '@' in DATABASE_URL else "???"
     print(f"   {url_masked}")
     print()
-    print("📋 Como obter a URL correta do Render:")
-    print("   1. Acesse: https://dashboard.render.com")
-    print("   2. Clique no seu serviço (bot)")
-    print("   3. Menu lateral: Environment")
-    print("   4. Procure: DATABASE_URL")
-    print("   5. Clique em 'Copy' (ícone de copiar)")
-    print("   6. Cole no script (linha 33)")
+    print("✅ CHECKLIST:")
+    if ".pooler.supabase.com" in DATABASE_URL:
+        print("   [✓] Host contém .pooler.supabase.com")
+    else:
+        print("   [✗] Host NÃO contém .pooler.supabase.com (ERRO!)")
+
+    if ":6543/" in DATABASE_URL:
+        print("   [✓] Porta 6543 (pooler)")
+    elif ":5432/" in DATABASE_URL:
+        print("   [✗] Porta 5432 (ERRADO! Use 6543)")
+    else:
+        print("   [?] Porta não identificada")
+
+    if "sslmode=require" in DATABASE_URL:
+        print("   [✓] SSL configurado")
+    else:
+        print("   [✗] Falta parâmetro ?sslmode=require")
+
+    print()
+    print("📋 Veja o arquivo CORRIGIR_ERRO_BANCO.md para instruções detalhadas")
     print()
     exit(1)
 
