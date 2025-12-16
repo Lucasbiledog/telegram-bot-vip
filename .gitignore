@@ -41,7 +41,8 @@ Thumbs.db
 # Logs
 *.log
 
-# Environment variables (exceto .env de exemplo)
+# Environment variables (NUNCA fazer commit!)
+.env
 .env.local
 .env.production
 
@@ -50,10 +51,9 @@ Thumbs.db
 *.sqlite
 *.sqlite3
 
-# IMPORTANTE: NÃO ignorar arquivos de sessão do Pyrogram
-# Eles são necessários para autenticação no Render
-# !bot_indexer_session.session
-# Descomente a linha acima depois de criar a sessão
+# Pyrogram session files (contém credenciais)
+*.session
+*.session-journal
 
 # Temporary files
 *.tmp
