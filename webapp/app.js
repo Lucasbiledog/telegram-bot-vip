@@ -235,11 +235,16 @@ async function validatePayment() {
   try {
     updateProgress(60, "Enviando dados para validação...");
 
+    // Timeout de 60 segundos para a requisição
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 60000);
+
     const r = await fetch("/api/validate", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ uid: userID, username: null, hash }),
-    });
+      signal: controller.signal
+    }).finally(() => clearTimeout(timeoutId));
 
     updateProgress(70, "Processando resposta do servidor...");
 
@@ -282,9 +287,16 @@ async function validatePayment() {
     }
   } catch (err) {
     console.error(err);
-    updateProgress(0, `Erro de rede: ${err.message}`, "error");
-    hideProgress();
-    showAlert("Erro de rede. Tente novamente em alguns segundos.", false);
+
+    if (err.name === 'AbortError') {
+      updateProgress(0, "Timeout: Validação demorou mais de 60 segundos", "error");
+      hideProgress();
+      showAlert("A validação está demorando muito. A transação pode estar em uma blockchain menos comum. Tente novamente em alguns minutos ou entre em contato com o suporte.", false);
+    } else {
+      updateProgress(0, `Erro de rede: ${err.message}`, "error");
+      hideProgress();
+      showAlert("Erro de rede. Tente novamente em alguns segundos.", false);
+    }
   } finally {
     btn.disabled = false;
     pasteBtn.disabled = false;
