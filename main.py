@@ -2816,7 +2816,7 @@ async def enviar_pack_vip_job(context: ContextTypes.DEFAULT_TYPE):
             enviar_pack_job,
             context,
             tier="vip",
-            target_chat_id=GROUP_VIP_ID
+            target_chat_id=VIP_CHANNEL_ID
         )
 
         if result and ("Nenhum pack" in result or "já marcado" in result):
@@ -5212,7 +5212,7 @@ async def _scheduled_message_job(context: ContextTypes.DEFAULT_TYPE):
     m = scheduled_get(sid);
     if not m or not m.enabled: return
     try:
-        target_chat = GROUP_VIP_ID if m.tier == "vip" else GROUP_FREE_ID
+        target_chat = VIP_CHANNEL_ID if m.tier == "vip" else FREE_CHANNEL_ID
 
         # Enviar mensagem de texto
         await context.application.bot.send_message(chat_id=target_chat, text=m.text)
