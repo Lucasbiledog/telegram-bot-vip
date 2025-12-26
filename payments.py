@@ -332,29 +332,29 @@ async def _try_get_transaction_with_backup(chain_id: str, tx_hash: str) -> Optio
     meta = CHAINS[chain_id]
     rpcs_to_try = [meta['rpc']] + meta.get('backup_rpcs', [])
     chain_name = human_chain(chain_id)
-    
+
     for i, rpc in enumerate(rpcs_to_try):
         try:
             rpc_type = "principal" if i == 0 else f"backup-{i}"
             LOG.info(f"[{chain_name}] Tentando RPC {rpc_type}: {rpc[:50]}...")
-            
+
             w3 = _w3(rpc)
             tx = await asyncio.wait_for(
                 asyncio.to_thread(w3.eth.get_transaction, tx_hash),
-                timeout=8.0  # 8s por RPC para ser mais rápido
+                timeout=4.0  # Reduzido de 8s para 4s
             )
-            
+
             if tx and hasattr(tx, 'hash') and tx.hash:
                 LOG.info(f"[{chain_name}] ✅ Transação encontrada via RPC {rpc_type}!")
                 return tx, w3
-                
+
         except asyncio.TimeoutError:
-            LOG.warning(f"[{chain_name}] Timeout RPC {rpc_type} (>8s)")
+            LOG.warning(f"[{chain_name}] Timeout RPC {rpc_type} (>4s)")
         except Exception as e:
             error_str = str(e).lower()
             if "transaction not found" not in error_str and "not found" not in error_str:
                 LOG.warning(f"[{chain_name}] Erro RPC {rpc_type}: {str(e)[:80]}")
-    
+
     return None
 
 
@@ -862,54 +862,90 @@ async def resolve_payment_usd_autochain(
     tx_hash: str, force_refresh: bool = False
 ) -> Tuple[bool, str, Optional[float], Dict[str, Any]]:
     """
-    Percorre as chains configuradas. Ao achar a tx em alguma delas,
-    resolve nela e retorna (ok, mensagem, usd, detalhes).
+    Procura a transação em TODAS as chains em PARALELO (muito mais rápido).
+    Ao achar a tx em alguma delas, resolve e retorna.
     """
-    LOG.info(f"[AUTOCHAIN] Procurando transação {tx_hash} em {len(CHAINS)} chains...")
-    
+    LOG.info(f"[AUTOCHAIN] Procurando transação {tx_hash} em {len(CHAINS)} chains em PARALELO...")
+
     # Normalizar hash (remover 0x e garantir lowercase)
     clean_hash = tx_hash.lower().replace('0x', '')
     if len(clean_hash) != 64:
         LOG.error(f"[AUTOCHAIN] Hash inválido: {tx_hash} (tamanho: {len(clean_hash)})")
         return False, "Hash de transação inválido (deve ter 64 caracteres hex).", None, {}
-    
+
     normalized_hash = '0x' + clean_hash
-    
-    failed_chains = []
-    for chain_id in CHAINS.keys():
+
+    # Priorizar chains mais usadas (ETH, BSC, Polygon primeiro)
+    priority_chains = ["0x1", "0x38", "0x89", "0xa4b1", "0xa"]  # ETH, BSC, Polygon, Arbitrum, Optimism
+    other_chains = [cid for cid in CHAINS.keys() if cid not in priority_chains]
+    ordered_chains = priority_chains + other_chains
+
+    # Função auxiliar para buscar em uma chain
+    async def try_chain(chain_id: str):
         chain_name = human_chain(chain_id)
         try:
-            LOG.info(f"[AUTOCHAIN] Procurando em {chain_name}...")
-            
-            # Tentar RPC principal + backups
             result = await _try_get_transaction_with_backup(chain_id, normalized_hash)
-            
+            if result:
+                return chain_id, result, None
+            return chain_id, None, "not_found"
+        except Exception as e:
+            return chain_id, None, str(e)[:80]
+
+    # Buscar em PARALELO - primeiro nas prioritárias, depois nas outras
+    LOG.info(f"[AUTOCHAIN] Buscando primeiro em chains prioritárias: {[human_chain(c) for c in priority_chains[:5]]}")
+
+    # Fase 1: Testar chains prioritárias em paralelo
+    priority_tasks = [try_chain(cid) for cid in priority_chains if cid in CHAINS]
+    priority_results = await asyncio.gather(*priority_tasks, return_exceptions=True)
+
+    # Verificar se encontrou nas prioritárias
+    for chain_id, result, error in priority_results:
+        if isinstance((chain_id, result, error), Exception):
+            continue
+        if result:
+            tx, w3 = result
+            chain_name = human_chain(chain_id)
+            LOG.info(f"[AUTOCHAIN] ✅ Transação encontrada em {chain_name}!")
+            ok, msg, usd, details = await _resolve_on_chain(
+                w3, chain_id, normalized_hash, force_refresh=force_refresh
+            )
+            details['found_on_chain'] = chain_name
+            details['search_time'] = 'fast'
+            LOG.info(f"[RESULT {chain_name}] ok={ok} msg={msg} usd=${usd}")
+            return ok, msg, usd, details
+
+    # Fase 2: Se não encontrou, buscar nas outras chains em paralelo
+    if other_chains:
+        LOG.info(f"[AUTOCHAIN] Não encontrado nas prioritárias. Buscando em {len(other_chains)} chains restantes...")
+        other_tasks = [try_chain(cid) for cid in other_chains]
+        other_results = await asyncio.gather(*other_tasks, return_exceptions=True)
+
+        for chain_id, result, error in other_results:
+            if isinstance((chain_id, result, error), Exception):
+                continue
             if result:
                 tx, w3 = result
+                chain_name = human_chain(chain_id)
                 LOG.info(f"[AUTOCHAIN] ✅ Transação encontrada em {chain_name}!")
                 ok, msg, usd, details = await _resolve_on_chain(
                     w3, chain_id, normalized_hash, force_refresh=force_refresh
                 )
                 details['found_on_chain'] = chain_name
+                details['search_time'] = 'extended'
                 LOG.info(f"[RESULT {chain_name}] ok={ok} msg={msg} usd=${usd}")
                 return ok, msg, usd, details
-            else:
-                failed_chains.append(f"{chain_name}:not_found")
-                
-        except Exception as e:
-            error_msg = str(e)[:80]
-            LOG.warning(f"[AUTOCHAIN] Erro geral em {chain_name}: {error_msg}")
-            failed_chains.append(f"{chain_name}:error")
-    
-    # Melhor mensagem de erro com detalhes
-    chains_tried = ', '.join([human_chain(cid) for cid in CHAINS.keys()])
-    LOG.error(f"[AUTOCHAIN] Transação {tx_hash} não encontrada. Chains testadas: {chains_tried}")
-    
-    return False, f"Transação não encontrada nas {len(CHAINS)} chains suportadas: {chains_tried}.", None, {
+
+    # Não encontrado em nenhuma chain
+    chains_tried = ', '.join([human_chain(cid) for cid in ordered_chains[:10]])
+    if len(ordered_chains) > 10:
+        chains_tried += f" e mais {len(ordered_chains) - 10}..."
+
+    LOG.error(f"[AUTOCHAIN] Transação {tx_hash} não encontrada em {len(CHAINS)} chains")
+
+    return False, f"Transação não encontrada em {len(CHAINS)} blockchains suportadas ({chains_tried}).", None, {
         'searched_chains': list(CHAINS.keys()),
-        'failed_chains': failed_chains,
         'tx_hash': normalized_hash,
-        'total_rpcs_tried': sum(1 + len(meta.get('backup_rpcs', [])) for meta in CHAINS.values())
+        'total_chains': len(CHAINS)
     }
 
 
