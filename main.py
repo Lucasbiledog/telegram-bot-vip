@@ -3345,7 +3345,29 @@ async def comandos_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def getid_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user; chat = update.effective_chat; msg = update.effective_message
     if msg:
-        await msg.reply_text(f"Seu nome: {esc(user.full_name)}\nSeu ID: {user.id}\nID deste chat: {chat.id}", parse_mode="HTML")
+        response = f"👤 Seu nome: {esc(user.full_name)}\n🆔 Seu ID: {user.id}\n💬 ID deste chat: {chat.id}"
+
+        # Detectar se é uma mensagem encaminhada de canal
+        if msg.forward_from_chat:
+            forward_chat = msg.forward_from_chat
+            response += f"\n\n📢 <b>Mensagem encaminhada de:</b>\n"
+            response += f"📛 Nome: {esc(forward_chat.title or 'Sem nome')}\n"
+            response += f"🆔 ID: <code>{forward_chat.id}</code>\n"
+            response += f"📊 Tipo: {forward_chat.type}"
+
+            if forward_chat.username:
+                response += f"\n🔗 Username: @{forward_chat.username}"
+        elif msg.reply_to_message and msg.reply_to_message.forward_from_chat:
+            forward_chat = msg.reply_to_message.forward_from_chat
+            response += f"\n\n📢 <b>Resposta a mensagem encaminhada de:</b>\n"
+            response += f"📛 Nome: {esc(forward_chat.title or 'Sem nome')}\n"
+            response += f"🆔 ID: <code>{forward_chat.id}</code>\n"
+            response += f"📊 Tipo: {forward_chat.type}"
+
+            if forward_chat.username:
+                response += f"\n🔗 Username: @{forward_chat.username}"
+
+        await msg.reply_text(response, parse_mode="HTML")
 
 async def debug_grupos_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Comando para debug dos grupos configurados"""
