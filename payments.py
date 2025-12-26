@@ -50,8 +50,8 @@ FALLBACK_PRICES = {
     "xdai": 1.0,  # xDAI
     
     # Bitcoin e variantes
-    "bitcoin": 113865.0,  # Atualizado com preço atual
-    "0x38:0x7130d2a12b9bcbfae4f2634d864a1ee1ce3ead9c": 113865.0,  # BTCB na BSC
+    "bitcoin": 95000.0,  # Preço aproximado Bitcoin (Dezembro 2025)
+    "0x38:0x7130d2a12b9bcbfae4f2634d864a1ee1ce3ead9c": 95000.0,  # BTCB na BSC
     
     # Stablecoins principais (USD = 1.0)
     "0x1:0xa0b86991c31cc170c8b9e71b51e1a53af4e9b8c9e": 1.0,     # USDC na Ethereum
@@ -557,9 +557,7 @@ async def _usd_token(
             ts = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(meta.get("ts", 0)))
             src = meta.get("source", "manual")
             LOG.warning(
-                "[RATE-LIMIT-FALLBACK] Token fallback p/ alt_cgid %s: ${:.2f} | {} unidades = ${:.2f} (source={} ts={})".format(
-                    alt_cgid, px, amount, usd_value, src, ts
-                )
+                f"[RATE-LIMIT-FALLBACK] Token fallback p/ alt_cgid {alt_cgid}: ${px:.2f} | {amount} unidades = ${usd_value:.2f} (source={src} ts={ts})"
             )
             _price_cache_put(cache_key, px)
             return px, usd_value
@@ -602,9 +600,7 @@ async def _usd_token(
         ts = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(meta.get("ts", 0)))
         src = meta.get("source", "manual")
         LOG.warning(
-            "[RATE-LIMIT-FALLBACK] Token fallback p/ %s: ${:.2f} | {} unidades = ${:.2f} (source={} ts={})".format(
-                token_key, px, amount, usd_value, src, ts
-            )
+            f"[RATE-LIMIT-FALLBACK] Token fallback p/ {token_key}: ${px:.2f} | {amount} unidades = ${usd_value:.2f} (source={src} ts={ts})"
         )
         _price_cache_put(cache_key, px)
         return px, usd_value
@@ -775,13 +771,20 @@ async def _resolve_on_chain(
     # 5) Fallback: input data (transfer(to,value))
     # Se a transação chamou o contrato do token diretamente.
     try:
-        inp: str = tx.get("input") or ""
-        if inp and inp.startswith("0xa9059cbb") and WALLET_ADDRESS:
+        inp = tx.get("input") or ""
+        # Converter para string se for bytes/HexBytes
+        if isinstance(inp, bytes):
+            inp = "0x" + inp.hex()
+        elif hasattr(inp, 'hex'):
+            inp = "0x" + inp.hex()
+        inp_str = str(inp) if inp else ""
+
+        if inp_str and inp_str.startswith("0xa9059cbb") and WALLET_ADDRESS:
             # 4 bytes sig + 32 bytes to + 32 bytes value
-            if len(inp) >= 10 + 64 + 64:
-                to_hex = inp[10 + (64 - 40):10 + 64]  # últimos 20 bytes do 1º arg
+            if len(inp_str) >= 10 + 64 + 64:
+                to_hex = inp_str[10 + (64 - 40):10 + 64]  # últimos 20 bytes do 1º arg
                 toA = Web3.to_checksum_address("0x" + to_hex[-40:])
-                value_hex = inp[10 + 64:10 + 64 + 64]
+                value_hex = inp_str[10 + 64:10 + 64 + 64]
                 value_raw = int(value_hex, 16)
 
                 if toA.lower() == WALLET_ADDRESS.lower() and value_raw > 0:
