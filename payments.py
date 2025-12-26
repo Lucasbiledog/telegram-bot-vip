@@ -25,13 +25,18 @@ DEBUG_PAYMENTS = os.getenv("DEBUG_PAYMENTS", "0") == "1"
 ALLOW_ANY_TO = os.getenv("ALLOW_ANY_TO", "0") == "1"  # aceita destino diferente (somente testes)
 
 COINGECKO_API_KEY = os.getenv("COINGECKO_API_KEY", "").strip()
-PRICE_TTL_SECONDS = int(os.getenv("PRICE_TTL_SECONDS", "1800"))  # 30min (1800s) para reduzir rate limiting
+PRICE_TTL_SECONDS = int(os.getenv("PRICE_TTL_SECONDS", "14400"))  # 4 horas (14400s) para escalar sem custos - otimizado para 100+ tx/min
 PRICE_EXTENDED_TTL_SECONDS = int(os.getenv("PRICE_EXTENDED_TTL_SECONDS", "3600"))  # 1h para casos de rate limit severo
 PRICE_MAX_RETRIES = int(os.getenv("PRICE_MAX_RETRIES", "2"))    # Reduzido de 3 para 2
 PRICE_RETRY_BASE_DELAY = float(os.getenv("PRICE_RETRY_BASE_DELAY", "5.0"))  # 5s base delay para rate limiting
 
 # Cache simples em memória: key -> (price, ts)
 _PRICE_CACHE: Dict[str, Tuple[float, float]] = {}
+
+# Cache de transações validadas: hash -> (timestamp, result_tuple)
+# Evita re-validar a mesma transação múltiplas vezes
+_TX_VALIDATION_CACHE: Dict[str, Tuple[float, Tuple[bool, str, Optional[float], Dict[str, Any]]]] = {}
+TX_VALIDATION_TTL = int(os.getenv("TX_VALIDATION_TTL", "3600"))  # 1 hora de cache para transações validadas
 
 # Preços de fallback: atualizados dinamicamente no startup para tokens principais
 FALLBACK_PRICES = {
@@ -239,25 +244,70 @@ def _price_cache_put(key: str, price: float, from_backup: bool = False) -> None:
 # Chains suportadas com RPCs de backup
 # =========================
 CHAINS: Dict[str, Dict[str, Any]] = {
-    # Principais EVMs com RPCs de backup
+    # Principais EVMs com RPCs de backup (otimizado para 100+ tx/min)
     "0x1": {
-        "rpc": "https://rpc.ankr.com/eth", 
-        "backup_rpcs": ["https://eth.llamarpc.com", "https://ethereum.publicnode.com"],
+        "rpc": "https://rpc.ankr.com/eth",
+        "backup_rpcs": [
+            "https://eth.llamarpc.com",
+            "https://ethereum.publicnode.com",
+            "https://eth.drpc.org",
+            "https://cloudflare-eth.com",
+            "https://rpc.flashbots.net"
+        ],
         "sym": "ETH", "cg_native": "ethereum", "cg_platform": "ethereum"
     },
     "0x38": {
-        "rpc": "https://bsc-dataseed.binance.org", 
-        "backup_rpcs": ["https://bsc.publicnode.com", "https://rpc.ankr.com/bsc"],
+        "rpc": "https://bsc-dataseed.binance.org",
+        "backup_rpcs": [
+            "https://bsc.publicnode.com",
+            "https://rpc.ankr.com/bsc",
+            "https://bsc.drpc.org",
+            "https://bsc-rpc.gateway.pokt.network",
+            "https://bscrpc.com"
+        ],
         "sym": "BNB", "cg_native": "binancecoin", "cg_platform": "binance-smart-chain"
     },
     "0x89": {
-        "rpc": "https://polygon-rpc.com", 
-        "backup_rpcs": ["https://polygon.llamarpc.com", "https://rpc.ankr.com/polygon"],
+        "rpc": "https://polygon-rpc.com",
+        "backup_rpcs": [
+            "https://polygon.llamarpc.com",
+            "https://rpc.ankr.com/polygon",
+            "https://polygon.drpc.org",
+            "https://polygon-bor-rpc.publicnode.com",
+            "https://polygon.gateway.tenderly.co"
+        ],
         "sym": "MATIC", "cg_native": "polygon-pos", "cg_platform": "polygon-pos"
     },
-    "0xa4b1": {"rpc": "https://arb1.arbitrum.io/rpc", "sym": "ETH", "cg_native": "ethereum", "cg_platform": "arbitrum-one"},
-    "0xa": {"rpc": "https://mainnet.optimism.io", "sym": "ETH", "cg_native": "ethereum", "cg_platform": "optimistic-ethereum"},
-    "0x2105": {"rpc": "https://mainnet.base.org", "sym": "ETH", "cg_native": "ethereum", "cg_platform": "base"},
+    "0xa4b1": {
+        "rpc": "https://arb1.arbitrum.io/rpc",
+        "backup_rpcs": [
+            "https://arbitrum.llamarpc.com",
+            "https://arbitrum.drpc.org",
+            "https://rpc.ankr.com/arbitrum",
+            "https://arbitrum-one.publicnode.com"
+        ],
+        "sym": "ETH", "cg_native": "ethereum", "cg_platform": "arbitrum-one"
+    },
+    "0xa": {
+        "rpc": "https://mainnet.optimism.io",
+        "backup_rpcs": [
+            "https://optimism.llamarpc.com",
+            "https://optimism.drpc.org",
+            "https://rpc.ankr.com/optimism",
+            "https://optimism-rpc.publicnode.com"
+        ],
+        "sym": "ETH", "cg_native": "ethereum", "cg_platform": "optimistic-ethereum"
+    },
+    "0x2105": {
+        "rpc": "https://mainnet.base.org",
+        "backup_rpcs": [
+            "https://base.llamarpc.com",
+            "https://base.drpc.org",
+            "https://rpc.ankr.com/base",
+            "https://base-rpc.publicnode.com"
+        ],
+        "sym": "ETH", "cg_native": "ethereum", "cg_platform": "base"
+    },
     "0xa86a": {"rpc": "https://api.avax.network/ext/bc/C/rpc", "sym": "AVAX", "cg_native": "avalanche-2", "cg_platform": "avalanche"},
     "0x144": {"rpc": "https://mainnet.era.zksync.io", "sym": "ETH", "cg_native": "ethereum", "cg_platform": "zksync"},
     "0xe708": {"rpc": "https://rpc.linea.build", "sym": "ETH", "cg_native": "ethereum", "cg_platform": "linea"},
@@ -376,39 +426,113 @@ async def _get_confirmations(w3: Web3, block_number: Optional[int]) -> int:
 # CoinGecko + APIs de backup (com retry/backoff + cache)
 # =========================
 
-# APIs de backup para preços de crypto
-BACKUP_APIS = {
-    "binanceapi": {
-        "url": "https://api.binance.com/api/v3/ticker/price?symbol=BNBUSDT",
-        "parser": lambda x: float(x["price"]) if x and "price" in x else None,
-        "asset": "binancecoin"
+# APIs de backup GRÁTIS para preços de crypto (otimizado para 100+ tx/min)
+# CoinGecko → CryptoCompare → CoinCap → Binance → Coinbase
+BACKUP_PRICE_APIS = {
+    # CryptoCompare - API grátis com 100k requests/mês
+    "cryptocompare": {
+        "url_template": "https://min-api.cryptocompare.com/data/price?fsym={symbol}&tsyms=USD",
+        "symbol_map": {
+            "ethereum": "ETH",
+            "bitcoin": "BTC",
+            "binancecoin": "BNB",
+            "polygon-pos": "MATIC",
+            "avalanche-2": "AVAX",
+            "fantom": "FTM",
+            "crypto-com-chain": "CRO",
+            "celo": "CELO",
+            "moonbeam": "GLMR",
+            "moonriver": "MOVR",
+            "mantle": "MNT",
+            "apecoin": "APE"
+        },
+        "parser": lambda x: float(x.get("USD", 0)) if x and "USD" in x else None
     },
-    "coinbase": {
-        "url": "https://api.coinbase.com/v2/exchange-rates?currency=BNB",
-        "parser": lambda x: float(x["data"]["rates"]["USD"]) if x and "data" in x and "rates" in x["data"] and "USD" in x["data"]["rates"] else None,
-        "asset": "binancecoin"
+    # CoinCap - API grátis sem limite de requests
+    "coincap": {
+        "url_template": "https://api.coincap.io/v2/assets/{coincap_id}",
+        "id_map": {
+            "ethereum": "ethereum",
+            "bitcoin": "bitcoin",
+            "binancecoin": "binance-coin",
+            "polygon-pos": "polygon",
+            "avalanche-2": "avalanche",
+            "fantom": "fantom",
+            "crypto-com-chain": "crypto-com-coin",
+            "celo": "celo",
+            "apecoin": "apecoin"
+        },
+        "parser": lambda x: float(x["data"]["priceUsd"]) if x and "data" in x and "priceUsd" in x["data"] else None
+    },
+    # Binance - API pública grátis (limitado a pares específicos)
+    "binance": {
+        "pairs": {
+            "ethereum": "ETHUSDT",
+            "bitcoin": "BTCUSDT",
+            "binancecoin": "BNBUSDT",
+            "polygon-pos": "MATICUSDT",
+            "avalanche-2": "AVAXUSDT"
+        },
+        "url_template": "https://api.binance.com/api/v3/ticker/price?symbol={pair}",
+        "parser": lambda x: float(x.get("price", 0)) if x and "price" in x else None
     }
 }
 
 async def _try_backup_apis(asset: str) -> Optional[float]:
-    """Tenta obter preço de APIs de backup"""
-    for api_name, config in BACKUP_APIS.items():
-        if config["asset"] != asset:
-            continue
-        
+    """Tenta obter preço de APIs de backup GRATUITAS (otimizado para escala)"""
+
+    # Tentar CryptoCompare
+    if asset in BACKUP_PRICE_APIS["cryptocompare"]["symbol_map"]:
+        symbol = BACKUP_PRICE_APIS["cryptocompare"]["symbol_map"][asset]
+        url = BACKUP_PRICE_APIS["cryptocompare"]["url_template"].format(symbol=symbol)
         try:
-            LOG.info(f"[BACKUP-API] Tentando {api_name} para {asset}...")
-            async with httpx.AsyncClient(timeout=10) as cli:
-                r = await cli.get(config["url"])
+            LOG.info(f"[BACKUP-API] Tentando CryptoCompare para {asset} ({symbol})...")
+            async with httpx.AsyncClient(timeout=8) as cli:
+                r = await cli.get(url)
                 if r.status_code == 200:
                     data = r.json()
-                    price = config["parser"](data)
+                    price = BACKUP_PRICE_APIS["cryptocompare"]["parser"](data)
                     if price and price > 0:
-                        LOG.info(f"[BACKUP-API] ✅ {api_name}: ${price:.2f}")
+                        LOG.info(f"[BACKUP-API] ✅ CryptoCompare: {asset} = ${price:.2f}")
                         return price
         except Exception as e:
-            LOG.warning(f"[BACKUP-API] Erro em {api_name}: {e}")
-    
+            LOG.warning(f"[BACKUP-API] Erro CryptoCompare: {str(e)[:80]}")
+
+    # Tentar CoinCap
+    if asset in BACKUP_PRICE_APIS["coincap"]["id_map"]:
+        coincap_id = BACKUP_PRICE_APIS["coincap"]["id_map"][asset]
+        url = BACKUP_PRICE_APIS["coincap"]["url_template"].format(coincap_id=coincap_id)
+        try:
+            LOG.info(f"[BACKUP-API] Tentando CoinCap para {asset} ({coincap_id})...")
+            async with httpx.AsyncClient(timeout=8) as cli:
+                r = await cli.get(url)
+                if r.status_code == 200:
+                    data = r.json()
+                    price = BACKUP_PRICE_APIS["coincap"]["parser"](data)
+                    if price and price > 0:
+                        LOG.info(f"[BACKUP-API] ✅ CoinCap: {asset} = ${price:.2f}")
+                        return price
+        except Exception as e:
+            LOG.warning(f"[BACKUP-API] Erro CoinCap: {str(e)[:80]}")
+
+    # Tentar Binance
+    if asset in BACKUP_PRICE_APIS["binance"]["pairs"]:
+        pair = BACKUP_PRICE_APIS["binance"]["pairs"][asset]
+        url = BACKUP_PRICE_APIS["binance"]["url_template"].format(pair=pair)
+        try:
+            LOG.info(f"[BACKUP-API] Tentando Binance para {asset} ({pair})...")
+            async with httpx.AsyncClient(timeout=8) as cli:
+                r = await cli.get(url)
+                if r.status_code == 200:
+                    data = r.json()
+                    price = BACKUP_PRICE_APIS["binance"]["parser"](data)
+                    if price and price > 0:
+                        LOG.info(f"[BACKUP-API] ✅ Binance: {asset} = ${price:.2f}")
+                        return price
+        except Exception as e:
+            LOG.warning(f"[BACKUP-API] Erro Binance: {str(e)[:80]}")
+
+    LOG.warning(f"[BACKUP-API] Todas as APIs de backup falharam para {asset}")
     return None
 
 async def _cg_get(url: str) -> Optional[dict]:
@@ -868,6 +992,22 @@ async def resolve_payment_usd_autochain(
     Procura a transação em TODAS as chains em PARALELO (muito mais rápido).
     Ao achar a tx em alguma delas, resolve e retorna.
     """
+    # Verificar cache de transações validadas (otimização para escala)
+    if not force_refresh:
+        normalized_hash = tx_hash.lower().replace('0x', '')
+        if len(normalized_hash) == 64:
+            normalized_hash = '0x' + normalized_hash
+            if normalized_hash in _TX_VALIDATION_CACHE:
+                cached_ts, cached_result = _TX_VALIDATION_CACHE[normalized_hash]
+                age = time.time() - cached_ts
+                if age < TX_VALIDATION_TTL:
+                    LOG.info(f"[TX-CACHE] ✅ Usando resultado cacheado para {tx_hash} (idade: {age:.0f}s)")
+                    return cached_result
+                else:
+                    # Cache expirado, remover
+                    del _TX_VALIDATION_CACHE[normalized_hash]
+                    LOG.info(f"[TX-CACHE] Cache expirado para {tx_hash} (idade: {age:.0f}s)")
+
     LOG.info(f"[AUTOCHAIN] Procurando transação {tx_hash} em {len(CHAINS)} chains em PARALELO...")
 
     # Normalizar hash (remover 0x e garantir lowercase)
@@ -915,6 +1055,12 @@ async def resolve_payment_usd_autochain(
             details['found_on_chain'] = chain_name
             details['search_time'] = 'fast'
             LOG.info(f"[RESULT {chain_name}] ok={ok} msg={msg} usd=${usd}")
+
+            # Salvar no cache de transações
+            result = (ok, msg, usd, details)
+            _TX_VALIDATION_CACHE[normalized_hash] = (time.time(), result)
+            LOG.info(f"[TX-CACHE] Resultado salvo no cache: {normalized_hash}")
+
             return ok, msg, usd, details
 
     # Fase 2: Se não encontrou, buscar nas outras chains em paralelo
@@ -936,6 +1082,12 @@ async def resolve_payment_usd_autochain(
                 details['found_on_chain'] = chain_name
                 details['search_time'] = 'extended'
                 LOG.info(f"[RESULT {chain_name}] ok={ok} msg={msg} usd=${usd}")
+
+                # Salvar no cache de transações
+                result = (ok, msg, usd, details)
+                _TX_VALIDATION_CACHE[normalized_hash] = (time.time(), result)
+                LOG.info(f"[TX-CACHE] Resultado salvo no cache: {normalized_hash}")
+
                 return ok, msg, usd, details
 
     # Não encontrado em nenhuma chain
@@ -945,11 +1097,16 @@ async def resolve_payment_usd_autochain(
 
     LOG.error(f"[AUTOCHAIN] Transação {tx_hash} não encontrada em {len(CHAINS)} chains")
 
-    return False, f"Transação não encontrada em {len(CHAINS)} blockchains suportadas ({chains_tried}).", None, {
+    # Salvar resultado negativo no cache (evita re-buscar transações inválidas)
+    result = (False, f"Transação não encontrada em {len(CHAINS)} blockchains suportadas ({chains_tried}).", None, {
         'searched_chains': list(CHAINS.keys()),
         'tx_hash': normalized_hash,
         'total_chains': len(CHAINS)
-    }
+    })
+    _TX_VALIDATION_CACHE[normalized_hash] = (time.time(), result)
+    LOG.info(f"[TX-CACHE] Resultado negativo salvo no cache: {normalized_hash}")
+
+    return result
 
 
 # =========================
