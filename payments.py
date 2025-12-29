@@ -1558,62 +1558,27 @@ async def approve_by_usd_and_invite(tg_id, username: Optional[str], tx_hash: str
     if not days:
         return False, f"Valor insuficiente (${float(usd):.2f})", {"details": details, "usd": usd}
 
-    # Verificar se é UID temporário (formato antigo "temp_*" ou novo timestamp)
-    is_temp_uid = False
-    if isinstance(tg_id, str) and tg_id.startswith("temp_"):
-        is_temp_uid = True
-    elif isinstance(tg_id, (int, str)):
-        # Verificar se é um timestamp (UID temporário numérico)
-        # UIDs do Telegram são tipicamente menores que 2^31 (2147483647)
-        # Timestamps são maiores que 1600000000 (2020) e menores que 2000000000 (2033)
-        uid_num = int(tg_id) if isinstance(tg_id, str) else tg_id
-        if 1600000000 <= uid_num <= 2000000000:
-            is_temp_uid = True
-            LOG.info(f"[INVITE-DEBUG] UID detectado como timestamp temporário: {uid_num}")
+    # IMPORTANTE: IDs vindos da página de pagamento NÃO SÃO CONFIÁVEIS
+    # SEMPRE tratar como temporários e esperar o usuário entrar no grupo
+    # para capturar o ID real do Telegram
 
+    # Forçar todos os pagamentos da página web como temporários
+    is_temp_uid = True
     actual_tg_id = None
     until = None
     link = None
-    
-    LOG.info(f"[INVITE-DEBUG] UID recebido: '{tg_id}' (tipo: {type(tg_id)}) | is_temp_uid: {is_temp_uid}")
-    
-    if not is_temp_uid:
-        try:
-            actual_tg_id = int(tg_id)
-            LOG.info(f"[INVITE-DEBUG] UID convertido para int: {actual_tg_id}")
-            
-            # Estender VIP apenas se for ID real
-            until = await vip_upsert_and_get_until(actual_tg_id, username, days, None)
-            LOG.info(f"[INVITE-DEBUG] VIP estendido até: {until}")
-            
-            # Gerar convite - tentar múltiplas estratégias
-            if bot_available and application and application.bot:
-                try:
-                    from utils import create_invite_link_flexible
-                    LOG.info(f"[INVITE-DEBUG] Tentando gerar convite para canal {GROUP_VIP_ID}")
-                    link = await create_invite_link_flexible(application.bot, GROUP_VIP_ID, retries=3)
-                    if link:
-                        LOG.info(f"[INVITE-DEBUG] ✅ Convite gerado com sucesso: {link[:50]}...")
-                    else:
-                        LOG.warning(f"[INVITE-DEBUG] ❌ Não foi possível gerar convite")
-                except Exception as e:
-                    LOG.error(f"[INVITE-DEBUG] ❌ Erro ao gerar convite: {e}", exc_info=True)
-                    link = None
-            else:
-                LOG.warning(f"[INVITE-DEBUG] Bot não disponível, pulando geração de convite")
-                link = None
-        except (ValueError, TypeError) as e:
-            LOG.warning(f"[INVITE-DEBUG] Erro ao processar UID, tratando como temporário: {e}")
-            is_temp_uid = True
 
-    # Salvar pagamento
+    LOG.info(f"[INVITE-DEBUG] UID recebido da página web: '{tg_id}' - SEMPRE TRATADO COMO TEMPORÁRIO")
+    LOG.info(f"[INVITE-DEBUG] ID real será capturado quando usuário entrar no grupo VIP")
+
+    # Salvar pagamento SEMPRE com user_id = 0 (será atualizado quando entrar no grupo)
     with SessionLocal() as s:
         # Extrair informações do payment para salvar
         token_symbol = details.get("token_symbol", "Unknown")
         token_amount = details.get("amount_human", details.get("amount", "N/A"))
-        
-        user_id_to_save = actual_tg_id if actual_tg_id else 0
-        LOG.info(f"[PAYMENT-SAVE] Salvando pagamento - actual_tg_id: {actual_tg_id}, user_id_to_save: {user_id_to_save}, is_temp_uid: {is_temp_uid}")
+
+        user_id_to_save = 0  # SEMPRE 0 para capturar ID real depois
+        LOG.info(f"[PAYMENT-SAVE] Salvando pagamento com user_id=0 (ID será capturado ao entrar no grupo)")
 
         p = Payment(
             tx_hash=tx_hash,
@@ -1630,10 +1595,29 @@ async def approve_by_usd_and_invite(tg_id, username: Optional[str], tx_hash: str
         s.add(p)
         s.commit()
 
+        # Salvar também o VIP com user_id = 0 (será atualizado quando entrar)
+        from main import VipMembership, now_utc
+        vip_until = now_utc() + dt.timedelta(days=days)
+
+        vip = VipMembership(
+            user_id=0,  # ID temporário, será atualizado quando entrar no grupo
+            username=username,
+            active=True,
+            expires_at=vip_until,
+            created_at=now_utc(),
+            plan=f"{days}d"
+        )
+        s.add(vip)
+        s.commit()
+
+        LOG.info(f"[VIP-TEMP] VIP temporário criado: {days} dias até {vip_until.strftime('%d/%m/%Y %H:%M')}")
+
     LOG.info(f"[INVITE-DEBUG] Finalizando: is_temp_uid={is_temp_uid}, link={link is not None if link else False}")
-    
-    # Calcular data de expiração do VIP
-    vip_until_str = until.strftime('%d/%m/%Y') if until else "N/A"
+
+    # Calcular data de expiração do VIP (sempre calcular, mesmo se temporário)
+    import datetime as dt
+    vip_until = dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=days)
+    vip_until_str = vip_until.strftime('%d/%m/%Y')
 
     # Criar mensagem de boas-vindas personalizada
     plan_names = {30: "Mensal", 90: "Trimestral", 180: "Semestral", 365: "Anual"}
