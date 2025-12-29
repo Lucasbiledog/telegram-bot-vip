@@ -2100,15 +2100,19 @@ async def process_vip_member_entry(user, entry_type: str):
                 
             else:
                 # Lógica normal para novos VIPs
-                # Atualizar VIP membership com o ID correto
-                vip = s.query(VipMembership).filter(
-                    VipMembership.user_id == 0
-                ).order_by(VipMembership.created_at.desc()).first()
-                
-                if vip:
-                    vip.user_id = user_id
-                    vip.username = username
-                    logging.info(f"[VIP-ENTRY] VIP associado ao usuário {user_id}")
+                # Criar VipMembership com ID real baseado nos dados do pagamento
+                vip_expires = now_utc() + dt.timedelta(days=payment.vip_days)
+
+                vip = VipMembership(
+                    user_id=user_id,
+                    username=username,
+                    active=True,
+                    expires_at=vip_expires,
+                    created_at=now_utc(),
+                    plan=f"{payment.vip_days}d"
+                )
+                s.add(vip)
+                logging.info(f"[VIP-ENTRY] VIP criado para {user_id} - expira em {vip_expires.strftime('%d/%m/%Y %H:%M')}")
             
             # Associar pagamento ao usuário que entrou
             payment.user_id = user_id

@@ -1595,22 +1595,9 @@ async def approve_by_usd_and_invite(tg_id, username: Optional[str], tx_hash: str
         s.add(p)
         s.commit()
 
-        # Salvar também o VIP com user_id = 0 (será atualizado quando entrar)
-        from main import VipMembership, now_utc
-        vip_until = now_utc() + dt.timedelta(days=days)
-
-        vip = VipMembership(
-            user_id=0,  # ID temporário, será atualizado quando entrar no grupo
-            username=username,
-            active=True,
-            expires_at=vip_until,
-            created_at=now_utc(),
-            plan=f"{days}d"
-        )
-        s.add(vip)
-        s.commit()
-
-        LOG.info(f"[VIP-TEMP] VIP temporário criado: {days} dias até {vip_until.strftime('%d/%m/%Y %H:%M')}")
+        # NÃO criar VipMembership aqui - será criado quando usuário entrar no grupo
+        # Isso evita violação de constraint UNIQUE em user_id quando há múltiplos pagamentos pendentes
+        LOG.info(f"[PAYMENT-SAVE] Pagamento salvo - VIP será criado quando usuário entrar no grupo")
 
     LOG.info(f"[INVITE-DEBUG] Finalizando: is_temp_uid={is_temp_uid}, link={link is not None if link else False}")
 
