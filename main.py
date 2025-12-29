@@ -2176,13 +2176,69 @@ async def process_vip_member_entry(user, entry_type: str):
                 logging.error(f"[VIP-ENTRY] Erro ao enviar comprovante: {e}")
         else:
             logging.info(f"[VIP-ENTRY] Nenhum pagamento pendente encontrado para associar ao usuário {user_id}")
-            
+
             # Verificar se usuário já tem VIP ativo (pagamento antigo)
             existing_vip = s.query(VipMembership).filter(
                 VipMembership.user_id == user_id,
                 VipMembership.active == True
             ).first()
-            
+
+            # PROTEÇÃO: Se não tem pagamento pendente NEM VIP ativo, remover do grupo
+            if not existing_vip:
+                try:
+                    logging.warning(f"[LINK-PROTECTION] ⚠️ Usuário {user_id} tentou entrar sem pagamento válido - REMOVENDO")
+                    await application.bot.ban_chat_member(
+                        chat_id=GROUP_VIP_ID,
+                        user_id=user_id
+                    )
+                    # Desbanir imediatamente para permitir entrada futura com pagamento
+                    await application.bot.unban_chat_member(
+                        chat_id=GROUP_VIP_ID,
+                        user_id=user_id
+                    )
+
+                    # Notificar no privado
+                    try:
+                        await application.bot.send_message(
+                            chat_id=user_id,
+                            text=(
+                                "⚠️ <b>Acesso Negado ao Grupo VIP</b>\n\n"
+                                "Você foi removido do grupo VIP porque não encontramos "
+                                "um pagamento válido associado ao seu ID.\n\n"
+                                "💳 <b>Para acessar o grupo VIP:</b>\n"
+                                "1. Faça o pagamento através do link oficial\n"
+                                "2. Aguarde a confirmação\n"
+                                "3. Use o link de convite enviado no seu privado\n\n"
+                                "🔐 Cada link é único e só funciona para quem fez o pagamento.\n\n"
+                                "Dúvidas? Entre em contato com o suporte."
+                            ),
+                            parse_mode="HTML"
+                        )
+                    except Exception as notify_error:
+                        logging.error(f"[LINK-PROTECTION] Erro ao notificar usuário removido: {notify_error}")
+
+                    # Log no grupo de administração
+                    from main import LOGS_GROUP_ID
+                    try:
+                        await application.bot.send_message(
+                            chat_id=LOGS_GROUP_ID,
+                            text=(
+                                f"🚫 <b>ACESSO NEGADO - PROTEÇÃO DE LINK</b>\n\n"
+                                f"👤 User: <code>{user_id}</code> (@{username})\n"
+                                f"⚠️ Tentou entrar sem pagamento válido\n"
+                                f"✅ Removido automaticamente do grupo\n\n"
+                                f"💡 O link de convite é protegido e só funciona para quem fez o pagamento."
+                            ),
+                            parse_mode="HTML"
+                        )
+                    except Exception as log_error:
+                        logging.error(f"[LINK-PROTECTION] Erro ao enviar log: {log_error}")
+
+                    return  # Não continuar processamento
+
+                except Exception as e:
+                    logging.error(f"[LINK-PROTECTION] Erro ao remover usuário não autorizado: {e}")
+
             if existing_vip:
                 # Debug: verificar por que a data está tão longe no futuro
                 logging.info(f"[VIP-ENTRY] VIP existente para {user_id}:")

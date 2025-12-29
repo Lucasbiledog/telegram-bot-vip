@@ -1677,6 +1677,15 @@ async def approve_by_usd_and_invite(tg_id, username: Optional[str], tx_hash: str
                 link = await create_invite_link_flexible(application.bot, GROUP_VIP_ID, retries=3)
                 LOG.info(f"[INVITE-REAL-ID] Convite gerado para ID real {actual_tg_id}: {link is not None}")
 
+                # Salvar mapeamento link -> user_id para validação posterior
+                if link:
+                    import hashlib
+                    link_hash = hashlib.md5(link.encode()).hexdigest()[:12]
+                    from main import cfg_set
+                    # Salvar por 3 horas (mais que o tempo de expiração do link)
+                    cfg_set(f"invite_link_{link_hash}", actual_tg_id, ttl=10800)
+                    LOG.info(f"[LINK-PROTECTION] Link protegido para user {actual_tg_id}: {link_hash}")
+
                 # Criar comprovante completo
                 from main import now_utc
                 comprovante = (
