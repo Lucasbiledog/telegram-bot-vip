@@ -458,7 +458,7 @@ async def _get_confirmations(w3: Web3, block_number: Optional[int]) -> int:
 # =========================
 
 # APIs de backup para preços de crypto
-# CoinMarketCap (API profissional) → CoinGecko → Fallback Prices
+# CoinMarketCap (API profissional) → Binance → CoinGecko → Fallback Prices
 BACKUP_PRICE_APIS = {
     # CoinMarketCap - API profissional com rate limit alto
     "coinmarketcap": {
@@ -480,13 +480,25 @@ BACKUP_PRICE_APIS = {
             "usd-coin": "USDC"
         },
         "parser": lambda x: float(x["data"][list(x["data"].keys())[0]]["quote"]["USD"]["price"]) if x and "data" in x and x["data"] else None
+    },
+    # Binance - API pública grátis (limitado a pares principais)
+    "binance": {
+        "pairs": {
+            "ethereum": "ETHUSDT",
+            "bitcoin": "BTCUSDT",
+            "binancecoin": "BNBUSDT",
+            "polygon-pos": "MATICUSDT",
+            "avalanche-2": "AVAXUSDT"
+        },
+        "url_template": "https://api.binance.com/api/v3/ticker/price?symbol={pair}",
+        "parser": lambda x: float(x.get("price", 0)) if x and "price" in x else None
     }
 }
 
 async def _try_backup_apis(asset: str) -> Optional[float]:
-    """Tenta obter preço via CoinMarketCap (API profissional)"""
+    """Tenta obter preço via CoinMarketCap e Binance"""
 
-    # Tentar CoinMarketCap (API paga, mais confiável)
+    # 1) Tentar CoinMarketCap primeiro (API paga, mais confiável)
     if COINMARKETCAP_API_KEY and asset in BACKUP_PRICE_APIS["coinmarketcap"]["symbol_map"]:
         symbol = BACKUP_PRICE_APIS["coinmarketcap"]["symbol_map"][asset]
         url = BACKUP_PRICE_APIS["coinmarketcap"]["url_template"].format(symbol=symbol)
@@ -508,12 +520,29 @@ async def _try_backup_apis(asset: str) -> Optional[float]:
                     LOG.warning(f"[CMC-API] CoinMarketCap HTTP {r.status_code}: {r.text[:100]}")
         except Exception as e:
             LOG.warning(f"[CMC-API] Erro CoinMarketCap: {str(e)[:80]}")
-    else:
-        if not COINMARKETCAP_API_KEY:
-            LOG.warning(f"[CMC-API] API key não configurada para {asset}")
-        else:
-            LOG.warning(f"[CMC-API] Asset {asset} não mapeado no CoinMarketCap")
 
+    # 2) Tentar Binance como fallback (API grátis)
+    if asset in BACKUP_PRICE_APIS["binance"]["pairs"]:
+        pair = BACKUP_PRICE_APIS["binance"]["pairs"][asset]
+        url = BACKUP_PRICE_APIS["binance"]["url_template"].format(pair=pair)
+        try:
+            LOG.info(f"[BINANCE-API] Consultando Binance para {asset} ({pair})...")
+            async with httpx.AsyncClient(timeout=8) as cli:
+                r = await cli.get(url)
+                if r.status_code == 200:
+                    data = r.json()
+                    price = BACKUP_PRICE_APIS["binance"]["parser"](data)
+                    if price and price > 0:
+                        # GARANTIR que é float
+                        price = float(price)
+                        LOG.info(f"[BINANCE-API] ✅ Binance: {asset} = ${price:.2f}")
+                        return price
+                else:
+                    LOG.warning(f"[BINANCE-API] Binance HTTP {r.status_code}")
+        except Exception as e:
+            LOG.warning(f"[BINANCE-API] Erro Binance: {str(e)[:80]}")
+
+    LOG.warning(f"[BACKUP-API] Nenhuma API de backup funcionou para {asset}")
     return None
 
 async def _cg_get(url: str) -> Optional[dict]:
