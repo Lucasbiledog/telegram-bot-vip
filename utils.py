@@ -16,27 +16,39 @@ def choose_plan_from_usd(amount_usd: float, prices: Dict[int, float] = None) -> 
     Determina plano VIP baseado no valor real em USD da transação.
     Usa faixas de valor em vez de preços fixos.
     """
+    import logging
+    LOG = logging.getLogger("payments")
+
+    LOG.info(f"[PLAN-SELECT] Input: amount_usd={amount_usd} (type={type(amount_usd)}), prices={prices}")
+
     # Converter para float se for string
     if isinstance(amount_usd, str):
         try:
             amount_usd = float(amount_usd)
+            LOG.info(f"[PLAN-SELECT] Converted string to float: {amount_usd}")
         except (ValueError, TypeError):
+            LOG.warning(f"[PLAN-SELECT] Failed to convert to float: {amount_usd}")
             return None
-    
+
     # Faixas de valor dinâmicas baseadas no valor real pago
     # CORRIGIDO: Agora consistente com plan_from_amount em main.py
 
     # ====== MODO TESTE - VALORES REDUZIDOS ======
     # Use estes valores para testar com quantias pequenas
     if amount_usd < 1.0:  # Menos de $1 - não elegível
+        LOG.info(f"[PLAN-SELECT] ${amount_usd:.2f} < $1.00 → None (valor insuficiente)")
         return None
     elif amount_usd < 2.0:  # $1.00 - $1.99
+        LOG.info(f"[PLAN-SELECT] ${amount_usd:.2f} → 30 dias (MENSAL)")
         return 30   # 1 mês (MENSAL)
     elif amount_usd < 3.0:  # $2.00 - $2.99
+        LOG.info(f"[PLAN-SELECT] ${amount_usd:.2f} → 90 dias (TRIMESTRAL)")
         return 90   # 3 meses (TRIMESTRAL)
     elif amount_usd < 4.0:  # $3.00 - $3.99
+        LOG.info(f"[PLAN-SELECT] ${amount_usd:.2f} → 180 dias (SEMESTRAL)")
         return 180  # 6 meses (SEMESTRAL)
     else:  # $4.00+
+        LOG.info(f"[PLAN-SELECT] ${amount_usd:.2f} → 365 dias (ANUAL)")
         return 365  # 1 ano (ANUAL)
 
     # ====== VALORES ORIGINAIS (PRODUÇÃO) ======
