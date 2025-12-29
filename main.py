@@ -3119,7 +3119,8 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if arg in ['vip', 'payment', 'acesso']:
             # Capturar ID real do usuário
             user_id = user.id
-            username = user.username or user.first_name
+            # Garantir que sempre temos um username válido
+            username = user.username if user.username else (user.first_name if user.first_name else f"user_{user_id}")
 
             logging.info(f"[DEEP-LINK] Usuário {user_id} (@{username}) solicitou acesso VIP via deep link")
 

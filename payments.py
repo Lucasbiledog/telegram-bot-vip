@@ -1753,18 +1753,30 @@ async def approve_by_usd_and_invite(tg_id, username: Optional[str], tx_hash: str
             except Exception as e:
                 LOG.error(f"[NOTIFY] Erro ao enviar comprovante: {e}")
 
-        # Mensagem de retorno para a página web (simples, sem convite)
-        msg = (
-            f"🎉 <b>PAGAMENTO CONFIRMADO!</b>\n\n"
-            f"✅ Valor recebido: <b>${float(usd):.2f} USD</b>\n"
-            f"👑 Plano ativado: <b>{plan_name} ({days} dias)</b>\n"
-            f"📅 Válido até: <b>{vip_until_str}</b>\n\n"
-            f"📬 <b>Verifique suas mensagens no Telegram!</b>\n"
-            f"Enviamos o comprovante e o link do grupo VIP no seu privado.\n\n"
-            f"🎁 Aproveite o conteúdo exclusivo!"
-        )
-
-        return True, msg, {"usd": usd, "days": days, "private_sent": True}
+        # Mensagem de retorno para a página web (com redirecionamento se houver link)
+        if link:
+            msg = (
+                f"🎉 <b>PAGAMENTO CONFIRMADO!</b>\n\n"
+                f"✅ Valor recebido: <b>${float(usd):.2f} USD</b>\n"
+                f"👑 Plano ativado: <b>{plan_name} ({days} dias)</b>\n"
+                f"📅 Válido até: <b>{vip_until_str}</b>\n\n"
+                f"📬 <b>Redirecionando para o grupo VIP...</b>\n"
+                f"Verifique também suas mensagens no Telegram!\n\n"
+                f"🎁 Aproveite o conteúdo exclusivo!"
+            )
+            # Incluir link no payload para redirecionar automaticamente
+            return True, msg, {"invite": link, "usd": usd, "days": days, "private_sent": True}
+        else:
+            msg = (
+                f"🎉 <b>PAGAMENTO CONFIRMADO!</b>\n\n"
+                f"✅ Valor recebido: <b>${float(usd):.2f} USD</b>\n"
+                f"👑 Plano ativado: <b>{plan_name} ({days} dias)</b>\n"
+                f"📅 Válido até: <b>{vip_until_str}</b>\n\n"
+                f"📬 <b>Verifique suas mensagens no Telegram!</b>\n"
+                f"Enviamos o comprovante no seu privado.\n\n"
+                f"🎁 Entre em contato para receber o convite do grupo!"
+            )
+            return True, msg, {"usd": usd, "days": days, "private_sent": True}
 
 # =========================
 # Função para verificar se hash já foi usada

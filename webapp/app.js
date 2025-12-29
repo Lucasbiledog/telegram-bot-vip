@@ -376,14 +376,22 @@ async function loadBasicInfo() {
     // };
     console.log("[loadBasicInfo] Renderizando planos padrão:", defaultPlans);
     renderPlans(defaultPlans);
-    
-    // Página totalmente funcional
-    showAlert(`
-      <h3>✅ Página de pagamento independente</h3>
-      <p>Esta página funciona completamente sem o bot do Telegram.</p>
-      <p>Para receber o convite do grupo VIP, insira seu ID do Telegram no campo acima.</p>
-    `, true);
-    
+
+    // Mostrar mensagem apenas se não tiver UID válido
+    if (!uid || uid === "null" || uid === "undefined") {
+      showAlert(`
+        <h3>✅ Página de pagamento independente</h3>
+        <p>Esta página funciona completamente sem o bot do Telegram.</p>
+        <p>Para receber o convite do grupo VIP, insira seu ID do Telegram no campo acima.</p>
+      `, true);
+    } else {
+      // Tem UID válido - mostrar mensagem diferente
+      showAlert(`
+        <h3>✅ Seu ID foi capturado!</h3>
+        <p>Após validar o pagamento, você receberá o comprovante e o link do grupo VIP diretamente no Telegram.</p>
+      `, true);
+    }
+
   } catch (err) {
     console.warn("Erro ao carregar info básica:", err);
   }
