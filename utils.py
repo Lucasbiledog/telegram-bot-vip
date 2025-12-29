@@ -78,17 +78,21 @@ def choose_plan_from_usd(amount_usd: float, prices: Dict[int, float] = None) -> 
     return None
 
 async def vip_upsert_and_get_until(tg_id: int, username: Optional[str], days: int, first_name: Optional[str] = None) -> datetime:
-    """Create or extend VIP membership and return the new expiry."""
+    """Create or replace VIP membership and return the new expiry (SEMPRE COMEÇA DO ZERO)."""
+    import logging
     from main import SessionLocal, VipMembership, now_utc
-    
+
+    LOG = logging.getLogger("payments")
     now = now_utc()
-    
+
     with SessionLocal() as s:
-        # Buscar ou criar VipMembership
+        # Buscar VIP existente
         m = s.query(VipMembership).filter(VipMembership.user_id == tg_id).first()
+
         if not m:
             # Criar novo membro VIP
             new_until = now + timedelta(days=days)
+            LOG.info(f"[VIP-CREATE] Criando novo VIP para user {tg_id}: {days} dias até {new_until.strftime('%d/%m/%Y')}")
             m = VipMembership(
                 user_id=tg_id,
                 username=username,
@@ -99,28 +103,25 @@ async def vip_upsert_and_get_until(tg_id: int, username: Optional[str], days: in
             )
             s.add(m)
         else:
-            # Estender VIP existente - corrigir timezone antes de comparar
-            expires_at = m.expires_at
-            if expires_at and expires_at.tzinfo is None:
-                # Se expires_at não tem timezone, adicionar UTC
-                expires_at = expires_at.replace(tzinfo=timezone.utc)
-                m.expires_at = expires_at  # Atualizar no banco
-            
-            # Determinar base para extensão
-            if expires_at and expires_at > now:
-                base = expires_at  # VIP ainda ativo, estender do fim atual
-            else:
-                base = now  # VIP expirado, começar de agora
-            
-            new_until = base + timedelta(days=days)
+            # SUBSTITUIR VIP existente - SEMPRE COMEÇA DO ZERO
+            old_expires = m.expires_at.strftime('%d/%m/%Y %H:%M') if m.expires_at else 'N/A'
+            new_until = now + timedelta(days=days)
+
+            LOG.info(f"[VIP-REPLACE] Substituindo VIP de user {tg_id}:")
+            LOG.info(f"[VIP-REPLACE]   Anterior: expirava em {old_expires}")
+            LOG.info(f"[VIP-REPLACE]   Novo: {days} dias até {new_until.strftime('%d/%m/%Y %H:%M')}")
+
+            # Atualizar com novo período (SEMPRE DO ZERO)
             m.expires_at = new_until
             m.active = True
+            m.created_at = now  # Atualizar data de criação para refletir novo período
             if username:
                 m.username = username
             if first_name:
                 m.first_name = first_name
-        
+
         s.commit()
+        LOG.info(f"[VIP-FINAL] VIP ativo até: {m.expires_at.strftime('%d/%m/%Y %H:%M')}")
         return m.expires_at
 
 async def create_one_time_invite(
