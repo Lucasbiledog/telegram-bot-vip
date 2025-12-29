@@ -457,8 +457,8 @@ async def _get_confirmations(w3: Web3, block_number: Optional[int]) -> int:
 # CoinGecko + APIs de backup (com retry/backoff + cache)
 # =========================
 
-# APIs de backup para preços de crypto (otimizado para 100+ tx/min)
-# CoinMarketCap (PRIORITY) → CoinGecko → CryptoCompare → CoinCap → Binance
+# APIs de backup para preços de crypto
+# CoinMarketCap (API profissional) → CoinGecko → Fallback Prices
 BACKUP_PRICE_APIS = {
     # CoinMarketCap - API profissional com rate limit alto
     "coinmarketcap": {
@@ -480,146 +480,40 @@ BACKUP_PRICE_APIS = {
             "usd-coin": "USDC"
         },
         "parser": lambda x: float(x["data"][list(x["data"].keys())[0]]["quote"]["USD"]["price"]) if x and "data" in x and x["data"] else None
-    },
-    # CryptoCompare - API grátis com 100k requests/mês
-    "cryptocompare": {
-        "url_template": "https://min-api.cryptocompare.com/data/price?fsym={symbol}&tsyms=USD",
-        "symbol_map": {
-            "ethereum": "ETH",
-            "bitcoin": "BTC",
-            "binancecoin": "BNB",
-            "polygon-pos": "MATIC",
-            "avalanche-2": "AVAX",
-            "fantom": "FTM",
-            "crypto-com-chain": "CRO",
-            "celo": "CELO",
-            "moonbeam": "GLMR",
-            "moonriver": "MOVR",
-            "mantle": "MNT",
-            "apecoin": "APE"
-        },
-        "parser": lambda x: float(x.get("USD", 0)) if x and "USD" in x else None
-    },
-    # CoinCap - API grátis sem limite de requests
-    "coincap": {
-        "url_template": "https://api.coincap.io/v2/assets/{coincap_id}",
-        "id_map": {
-            "ethereum": "ethereum",
-            "bitcoin": "bitcoin",
-            "binancecoin": "binance-coin",
-            "polygon-pos": "polygon",
-            "avalanche-2": "avalanche",
-            "fantom": "fantom",
-            "crypto-com-chain": "crypto-com-coin",
-            "celo": "celo",
-            "apecoin": "apecoin"
-        },
-        "parser": lambda x: float(x["data"]["priceUsd"]) if x and "data" in x and "priceUsd" in x["data"] else None
-    },
-    # Binance - API pública grátis (limitado a pares específicos)
-    "binance": {
-        "pairs": {
-            "ethereum": "ETHUSDT",
-            "bitcoin": "BTCUSDT",
-            "binancecoin": "BNBUSDT",
-            "polygon-pos": "MATICUSDT",
-            "avalanche-2": "AVAXUSDT"
-        },
-        "url_template": "https://api.binance.com/api/v3/ticker/price?symbol={pair}",
-        "parser": lambda x: float(x.get("price", 0)) if x and "price" in x else None
     }
 }
 
 async def _try_backup_apis(asset: str) -> Optional[float]:
-    """Tenta obter preço de APIs de backup (CoinMarketCap primeiro, depois gratuitas)"""
+    """Tenta obter preço via CoinMarketCap (API profissional)"""
 
-    # Tentar CoinMarketCap PRIMEIRO (API paga, mais confiável)
+    # Tentar CoinMarketCap (API paga, mais confiável)
     if COINMARKETCAP_API_KEY and asset in BACKUP_PRICE_APIS["coinmarketcap"]["symbol_map"]:
         symbol = BACKUP_PRICE_APIS["coinmarketcap"]["symbol_map"][asset]
         url = BACKUP_PRICE_APIS["coinmarketcap"]["url_template"].format(symbol=symbol)
         try:
-            LOG.info(f"[BACKUP-API] Tentando CoinMarketCap para {asset} ({symbol})...")
+            LOG.info(f"[CMC-API] Consultando CoinMarketCap para {asset} ({symbol})...")
             async with httpx.AsyncClient(timeout=8) as cli:
                 r = await cli.get(url, headers={"X-CMC_PRO_API_KEY": COINMARKETCAP_API_KEY})
                 if r.status_code == 200:
                     data = r.json()
-                    LOG.info(f"[BACKUP-API-DEBUG] CoinMarketCap data: {data}")
                     price = BACKUP_PRICE_APIS["coinmarketcap"]["parser"](data)
-                    LOG.info(f"[BACKUP-API-DEBUG] Parsed price: {price} (type: {type(price)})")
                     if price and price > 0:
                         # GARANTIR que é float
                         price = float(price)
-                        LOG.info(f"[BACKUP-API] ✅ CoinMarketCap: {asset} = ${price:.2f}")
+                        LOG.info(f"[CMC-API] ✅ CoinMarketCap: {asset} = ${price:.2f}")
                         return price
                     else:
-                        LOG.warning(f"[BACKUP-API] CoinMarketCap retornou preço inválido: {price}")
+                        LOG.warning(f"[CMC-API] CoinMarketCap retornou preço inválido: {price}")
                 else:
-                    LOG.warning(f"[BACKUP-API] CoinMarketCap HTTP {r.status_code}: {r.text[:100]}")
+                    LOG.warning(f"[CMC-API] CoinMarketCap HTTP {r.status_code}: {r.text[:100]}")
         except Exception as e:
-            LOG.warning(f"[BACKUP-API] Erro CoinMarketCap: {str(e)[:80]}")
+            LOG.warning(f"[CMC-API] Erro CoinMarketCap: {str(e)[:80]}")
+    else:
+        if not COINMARKETCAP_API_KEY:
+            LOG.warning(f"[CMC-API] API key não configurada para {asset}")
+        else:
+            LOG.warning(f"[CMC-API] Asset {asset} não mapeado no CoinMarketCap")
 
-    # Tentar CryptoCompare
-    if asset in BACKUP_PRICE_APIS["cryptocompare"]["symbol_map"]:
-        symbol = BACKUP_PRICE_APIS["cryptocompare"]["symbol_map"][asset]
-        url = BACKUP_PRICE_APIS["cryptocompare"]["url_template"].format(symbol=symbol)
-        try:
-            LOG.info(f"[BACKUP-API] Tentando CryptoCompare para {asset} ({symbol})...")
-            async with httpx.AsyncClient(timeout=8) as cli:
-                r = await cli.get(url)
-                if r.status_code == 200:
-                    data = r.json()
-                    LOG.info(f"[BACKUP-API-DEBUG] CryptoCompare data: {data}")
-                    price = BACKUP_PRICE_APIS["cryptocompare"]["parser"](data)
-                    LOG.info(f"[BACKUP-API-DEBUG] Parsed price: {price} (type: {type(price)})")
-                    if price and price > 0:
-                        # GARANTIR que é float
-                        price = float(price)
-                        LOG.info(f"[BACKUP-API] ✅ CryptoCompare: {asset} = ${price:.2f}")
-                        return price
-                    else:
-                        LOG.warning(f"[BACKUP-API] CryptoCompare retornou preço inválido: {price}")
-        except Exception as e:
-            LOG.warning(f"[BACKUP-API] Erro CryptoCompare: {str(e)[:80]}")
-
-    # Tentar CoinCap
-    if asset in BACKUP_PRICE_APIS["coincap"]["id_map"]:
-        coincap_id = BACKUP_PRICE_APIS["coincap"]["id_map"][asset]
-        url = BACKUP_PRICE_APIS["coincap"]["url_template"].format(coincap_id=coincap_id)
-        try:
-            LOG.info(f"[BACKUP-API] Tentando CoinCap para {asset} ({coincap_id})...")
-            async with httpx.AsyncClient(timeout=8) as cli:
-                r = await cli.get(url)
-                if r.status_code == 200:
-                    data = r.json()
-                    price = BACKUP_PRICE_APIS["coincap"]["parser"](data)
-                    if price and price > 0:
-                        # GARANTIR que é float
-                        price = float(price)
-                        LOG.info(f"[BACKUP-API] ✅ CoinCap: {asset} = ${price:.2f}")
-                        return price
-        except Exception as e:
-            LOG.warning(f"[BACKUP-API] Erro CoinCap: {str(e)[:80]}")
-
-    # Tentar Binance
-    if asset in BACKUP_PRICE_APIS["binance"]["pairs"]:
-        pair = BACKUP_PRICE_APIS["binance"]["pairs"][asset]
-        url = BACKUP_PRICE_APIS["binance"]["url_template"].format(pair=pair)
-        try:
-            LOG.info(f"[BACKUP-API] Tentando Binance para {asset} ({pair})...")
-            async with httpx.AsyncClient(timeout=8) as cli:
-                r = await cli.get(url)
-                if r.status_code == 200:
-                    data = r.json()
-                    price = BACKUP_PRICE_APIS["binance"]["parser"](data)
-                    if price and price > 0:
-                        # GARANTIR que é float
-                        price = float(price)
-                        LOG.info(f"[BACKUP-API] ✅ Binance: {asset} = ${price:.2f}")
-                        return price
-        except Exception as e:
-            LOG.warning(f"[BACKUP-API] Erro Binance: {str(e)[:80]}")
-
-    LOG.warning(f"[BACKUP-API] Todas as APIs de backup falharam para {asset}")
     return None
 
 async def _cg_get(url: str) -> Optional[dict]:
