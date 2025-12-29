@@ -1558,31 +1558,37 @@ async def approve_by_usd_and_invite(tg_id, username: Optional[str], tx_hash: str
     if not days:
         return False, f"Valor insuficiente (${float(usd):.2f})", {"details": details, "usd": usd}
 
-    # IMPORTANTE: IDs vindos da página de pagamento NÃO SÃO CONFIÁVEIS
-    # SEMPRE tratar como temporários e esperar o usuário entrar no grupo
-    # para capturar o ID real do Telegram
+    # Verificar se o UID é válido (veio via deep link com assinatura)
+    # UIDs válidos: numéricos, < 15 dígitos, >= 100000000
+    is_valid_uid = False
+    if tg_id and str(tg_id).isdigit() and len(str(tg_id)) < 15 and int(tg_id) >= 100000000:
+        is_valid_uid = True
+        LOG.info(f"[INVITE-DEBUG] UID válido detectado: {tg_id} - ID real capturado via deep link")
+    else:
+        LOG.info(f"[INVITE-DEBUG] UID inválido ou ausente: '{tg_id}' - será tratado como temporário")
 
-    # Forçar todos os pagamentos da página web como temporários
-    is_temp_uid = True
-    actual_tg_id = None
+    is_temp_uid = not is_valid_uid
+    actual_tg_id = int(tg_id) if is_valid_uid else None
     until = None
     link = None
 
-    LOG.info(f"[INVITE-DEBUG] UID recebido da página web: '{tg_id}' - SEMPRE TRATADO COMO TEMPORÁRIO")
-    LOG.info(f"[INVITE-DEBUG] ID real será capturado quando usuário entrar no grupo VIP")
-
-    # Salvar pagamento SEMPRE com user_id = 0 (será atualizado quando entrar no grupo)
+    # Salvar pagamento com ID real (se disponível) ou temporário (user_id=0)
     with SessionLocal() as s:
         # Extrair informações do payment para salvar
         token_symbol = details.get("token_symbol", "Unknown")
         token_amount = details.get("amount_human", details.get("amount", "N/A"))
 
-        user_id_to_save = 0  # SEMPRE 0 para capturar ID real depois
-        LOG.info(f"[PAYMENT-SAVE] Salvando pagamento com user_id=0 (ID será capturado ao entrar no grupo)")
+        # Usar ID real se disponível, senão usar 0 (temporário)
+        user_id_to_save = actual_tg_id if actual_tg_id else 0
+
+        if actual_tg_id:
+            LOG.info(f"[PAYMENT-SAVE] Salvando pagamento com user_id={actual_tg_id} (ID real capturado via deep link)")
+        else:
+            LOG.info(f"[PAYMENT-SAVE] Salvando pagamento com user_id=0 (ID será capturado ao entrar no grupo)")
 
         p = Payment(
             tx_hash=tx_hash,
-            user_id=user_id_to_save,  # 0 para pagamentos sem ID válido
+            user_id=user_id_to_save,
             username=username,
             chain=details.get("chain_id", "unknown"),
             amount=str(token_amount),
@@ -1595,9 +1601,29 @@ async def approve_by_usd_and_invite(tg_id, username: Optional[str], tx_hash: str
         s.add(p)
         s.commit()
 
-        # NÃO criar VipMembership aqui - será criado quando usuário entrar no grupo
-        # Isso evita violação de constraint UNIQUE em user_id quando há múltiplos pagamentos pendentes
-        LOG.info(f"[PAYMENT-SAVE] Pagamento salvo - VIP será criado quando usuário entrar no grupo")
+        # Se temos ID real, criar VipMembership imediatamente
+        if actual_tg_id:
+            from main import VipMembership, now_utc
+
+            vip_until = now_utc() + dt.timedelta(days=days)
+            until = vip_until  # Guardar para usar depois
+
+            vip = VipMembership(
+                user_id=actual_tg_id,
+                username=username,
+                active=True,
+                expires_at=vip_until,
+                created_at=now_utc(),
+                plan=f"{days}d"
+            )
+            s.add(vip)
+            s.commit()
+
+            LOG.info(f"[VIP-CREATE] VIP criado com ID real {actual_tg_id}: {days} dias até {vip_until.strftime('%d/%m/%Y %H:%M')}")
+        else:
+            # NÃO criar VipMembership aqui - será criado quando usuário entrar no grupo
+            # Isso evita violação de constraint UNIQUE em user_id quando há múltiplos pagamentos pendentes
+            LOG.info(f"[PAYMENT-SAVE] VIP será criado quando usuário entrar no grupo")
 
     LOG.info(f"[INVITE-DEBUG] Finalizando: is_temp_uid={is_temp_uid}, link={link is not None if link else False}")
 
@@ -1644,61 +1670,101 @@ async def approve_by_usd_and_invite(tg_id, username: Optional[str], tx_hash: str
         )
         return True, msg, {"usd": usd, "days": days, "temp_uid": True}
     else:
-        if link:
-            msg = (
-                f"🎉 <b>PAGAMENTO CONFIRMADO!</b>\n\n"
-                f"✅ Valor recebido: <b>${float(usd):.2f} USD</b>\n"
-                f"👑 Plano ativado: <b>{plan_name} ({days} dias)</b>\n"
-                f"📅 Válido até: <b>{vip_until_str}</b>\n\n"
-                f"🔗 <b>Clique no link abaixo para entrar no grupo VIP:</b>\n"
-                f"{link}\n\n"
-                f"⚠️ <b>IMPORTANTE:</b> Este link expira em 2 horas e tem apenas 1 uso.\n\n"
-                f"🎁 <b>Seja bem-vindo(a) ao VIP!</b>\n"
-                f"💎 Aproveite todo o conteúdo exclusivo!\n"
-                f"📬 Você receberá atualizações diárias de novos arquivos!\n\n"
-                f"Obrigado pela confiança! 🙏"
-            )
-            payload = {"invite": link, "until": until.isoformat(), "usd": usd, "days": days}
-            LOG.info(f"[INVITE-DEBUG] Retornando com convite automático")
-        else:
-            msg = (
-                f"🎉 <b>PAGAMENTO CONFIRMADO!</b>\n\n"
-                f"✅ Valor recebido: <b>${float(usd):.2f} USD</b>\n"
-                f"👑 Plano ativado: <b>{plan_name} ({days} dias)</b>\n"
-                f"📅 Válido até: <b>{vip_until_str}</b>\n\n"
-                f"⚠️ <b>VIP ATIVADO COM SUCESSO!</b>\n"
-                f"📬 Entre em contato para receber o convite do grupo VIP.\n\n"
-                f"🎁 <b>Benefícios do seu plano:</b>\n"
-                f"• Acesso a conteúdo exclusivo premium\n"
-                f"• Atualizações diárias de arquivos\n"
-                f"• Suporte prioritário\n\n"
-                f"Obrigado pela preferência! 🙏"
-            )
-            payload = {"no_auto_invite": True, "until": until.isoformat(), "usd": usd, "days": days}
-            LOG.info(f"[INVITE-DEBUG] Retornando sem convite automático")
-
-        # Enviar apenas log para grupo de logs (não envia mensagem privada para o usuário)
+        # ID real capturado via deep link - enviar tudo no privado
         if bot_available and application and application.bot:
             try:
-                from main import LOGS_GROUP_ID
-                log_msg = (
-                    f"✅ <b>PAGAMENTO CONFIRMADO</b>\n"
-                    f"👤 User: <code>{actual_tg_id}</code> (@{username or 'sem_username'})\n"
-                    f"💰 Valor: ${float(usd):.2f} USD\n"
-                    f"📅 Plano: {plan_name} ({days} dias)\n"
-                    f"⏰ VIP até: {until.strftime('%d/%m/%Y %H:%M') if until else 'N/A'}\n"
-                    f"🔗 Link gerado: {'Sim' if link else 'Não'}"
+                from utils import create_invite_link_flexible
+                link = await create_invite_link_flexible(application.bot, GROUP_VIP_ID, retries=3)
+                LOG.info(f"[INVITE-REAL-ID] Convite gerado para ID real {actual_tg_id}: {link is not None}")
+
+                # Criar comprovante completo
+                from main import now_utc
+                comprovante = (
+                    f"📜 <b>COMPROVANTE DE PAGAMENTO VIP</b> 📜\n"
+                    f"{'='*35}\n\n"
+
+                    f"📅 <b>Data:</b> {now_utc().strftime('%d/%m/%Y às %H:%M')}\n"
+                    f"👤 <b>Usuário:</b> {username or 'N/A'}\n"
+                    f"🆔 <b>ID Telegram:</b> <code>{actual_tg_id}</code>\n\n"
+
+                    f"💰 <b>DETALHES DO PAGAMENTO</b>\n"
+                    f"• <b>Valor Pago:</b> ${float(usd):.2f} USD\n"
+                    f"• <b>Criptomoeda:</b> {token_symbol}\n"
+                    f"• <b>Quantidade:</b> {token_amount}\n"
+                    f"• <b>Hash:</b> <code>{tx_hash[:16]}...{tx_hash[-8:]}</code>\n\n"
+
+                    f"👑 <b>VIP ATIVADO</b>\n"
+                    f"• <b>Plano:</b> {plan_name}\n"
+                    f"• <b>Duração:</b> {days} dias\n"
+                    f"• <b>Válido até:</b> {until.strftime('%d/%m/%Y às %H:%M')}\n"
+                    f"• <b>Status:</b> ✅ Ativo\n\n"
                 )
+
+                if link:
+                    comprovante += (
+                        f"🔗 <b>CONVITE DO GRUPO VIP</b>\n"
+                        f"{link}\n\n"
+                        f"⚠️ <b>IMPORTANTE:</b> Este link expira em 2 horas e tem apenas 1 uso.\n\n"
+                        f"📁 <b>REGRAS DO GRUPO VIP</b>\n"
+                        f"• Respeite todos os membros\n"
+                        f"• Proibido spam ou conteúdo inapropriado\n"
+                        f"• Não compartilhe links de convite\n"
+                        f"• Mantenha conversa relevante ao tema\n"
+                        f"• Proibido revenda de conteúdo\n\n"
+                        f"🎉 <b>Bem-vindo ao grupo VIP!</b>\n"
+                        f"Aproveite o conteúdo exclusivo!"
+                    )
+                else:
+                    comprovante += (
+                        f"⚠️ Não foi possível gerar o link de convite automaticamente.\n"
+                        f"Entre em contato com o suporte para receber o convite.\n\n"
+                        f"🎁 Seu VIP está ativo e válido!"
+                    )
+
+                # Enviar comprovante no privado
                 await application.bot.send_message(
-                    chat_id=LOGS_GROUP_ID,
-                    text=log_msg,
+                    chat_id=actual_tg_id,
+                    text=comprovante,
                     parse_mode="HTML"
                 )
-                LOG.info(f"[NOTIFY] ✅ Log enviado para grupo de logs")
-            except Exception as log_error:
-                LOG.warning(f"[NOTIFY] Erro ao enviar log: {log_error}")
+                LOG.info(f"[NOTIFY] ✅ Comprovante enviado no privado para {actual_tg_id}")
 
-        return True, msg, payload
+                # Enviar log para grupo de logs
+                try:
+                    from main import LOGS_GROUP_ID
+                    log_msg = (
+                        f"✅ <b>PAGAMENTO CONFIRMADO VIA DEEP LINK</b>\n"
+                        f"👤 User: <code>{actual_tg_id}</code> (@{username or 'sem_username'})\n"
+                        f"💰 Valor: ${float(usd):.2f} USD\n"
+                        f"📅 Plano: {plan_name} ({days} dias)\n"
+                        f"⏰ VIP até: {until.strftime('%d/%m/%Y %H:%M')}\n"
+                        f"🔗 Link enviado: {'Sim' if link else 'Não'}\n"
+                        f"📨 Comprovante enviado no privado"
+                    )
+                    await application.bot.send_message(
+                        chat_id=LOGS_GROUP_ID,
+                        text=log_msg,
+                        parse_mode="HTML"
+                    )
+                    LOG.info(f"[NOTIFY] ✅ Log enviado para grupo de logs")
+                except Exception as log_error:
+                    LOG.warning(f"[NOTIFY] Erro ao enviar log: {log_error}")
+
+            except Exception as e:
+                LOG.error(f"[NOTIFY] Erro ao enviar comprovante: {e}")
+
+        # Mensagem de retorno para a página web (simples, sem convite)
+        msg = (
+            f"🎉 <b>PAGAMENTO CONFIRMADO!</b>\n\n"
+            f"✅ Valor recebido: <b>${float(usd):.2f} USD</b>\n"
+            f"👑 Plano ativado: <b>{plan_name} ({days} dias)</b>\n"
+            f"📅 Válido até: <b>{vip_until_str}</b>\n\n"
+            f"📬 <b>Verifique suas mensagens no Telegram!</b>\n"
+            f"Enviamos o comprovante e o link do grupo VIP no seu privado.\n\n"
+            f"🎁 Aproveite o conteúdo exclusivo!"
+        )
+
+        return True, msg, {"usd": usd, "days": days, "private_sent": True}
 
 # =========================
 # Função para verificar se hash já foi usada

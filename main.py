@@ -3113,6 +3113,53 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if context.args:
         arg = context.args[0]
 
+        # Deep link para página de pagamento: /start vip ou /start payment
+        if arg in ['vip', 'payment', 'acesso']:
+            # Capturar ID real do usuário
+            user_id = user.id
+            username = user.username or user.first_name
+
+            logging.info(f"[DEEP-LINK] Usuário {user_id} (@{username}) solicitou acesso VIP via deep link")
+
+            # Gerar link de pagamento personalizado com assinatura
+            from utils import make_link_sig
+            import time
+
+            ts = int(time.time())
+            sig = make_link_sig(WEBAPP_LINK_SECRET, user_id, ts)
+
+            # URL da página de pagamento com parâmetros de autenticação
+            payment_url = f"{WEBAPP_URL}?uid={user_id}&ts={ts}&sig={sig}&username={username}"
+
+            # Mensagem com link de pagamento
+            payment_msg = (
+                f"👋 <b>Olá, {user.first_name}!</b>\n\n"
+                f"🎯 <b>Quer ter acesso ao conteúdo completo?</b>\n\n"
+                f"💎 <b>Benefícios VIP:</b>\n"
+                f"• Acesso a conteúdo exclusivo premium\n"
+                f"• Atualizações diárias de novos arquivos\n"
+                f"• Suporte prioritário\n"
+                f"• Sem anúncios ou spam\n\n"
+                f"💰 <b>Planos disponíveis:</b>\n"
+                f"• Mensal (30 dias): $1.00\n"
+                f"• Trimestral (90 dias): $2.00\n"
+                f"• Semestral (180 dias): $3.00\n"
+                f"• Anual (365 dias): $4.00\n\n"
+                f"🔐 <b>Pagamento seguro via blockchain</b>\n"
+                f"Aceitamos diversas criptomoedas em múltiplas redes.\n\n"
+                f"👇 <b>Clique no botão abaixo para pagar:</b>"
+            )
+
+            # Criar botão com link de pagamento
+            keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton("💳 Fazer Pagamento", url=payment_url)]
+            ])
+
+            await msg.reply_text(payment_msg, parse_mode='HTML', reply_markup=keyboard)
+
+            logging.info(f"[DEEP-LINK] Link de pagamento enviado para {user_id}: {payment_url}")
+            return
+
         # Deep link para acesso VIP: /start vip_CODIGO
         if arg.startswith('vip_'):
             vip_code = arg[4:]  # Remove 'vip_' prefix
