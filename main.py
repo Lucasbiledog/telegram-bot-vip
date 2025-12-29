@@ -1183,6 +1183,8 @@ LOCAL_MODE  = os.getenv("LOCAL_MODE", "false").lower() == "true"
 # Payment Configuration
 WALLET_ADDRESS = os.getenv("WALLET_ADDRESS", "")
 BOT_SECRET = os.getenv("BOT_SECRET", "")
+WEBAPP_URL = os.getenv("WEBAPP_URL", "")
+WEBAPP_LINK_SECRET = os.getenv("WEBAPP_LINK_SECRET", "")
 
 STORAGE_GROUP_ID       = int(os.getenv("STORAGE_GROUP_ID", "-4806334341"))
 GROUP_VIP_ID           = int(os.getenv("Group_VIP_ID", os.getenv("GROUP_VIP_ID", "-1003255098941")))
