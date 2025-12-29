@@ -1318,7 +1318,7 @@ async def tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             tx_hash, force_refresh=True
         )
         
-        LOG.info(f"[PRICE-CHECK] Verificação com preços atuais - Hash: {tx_hash[:12]}... USD: ${usd_paid:.4f}" if usd_paid else f"[PRICE-CHECK] Falha na verificação - Hash: {tx_hash[:12]}...")
+        LOG.info(f"[PRICE-CHECK] Verificação com preços atuais - Hash: {tx_hash[:12]}... USD: ${float(usd_paid):.4f}" if usd_paid else f"[PRICE-CHECK] Falha na verificação - Hash: {tx_hash[:12]}...")
         
         if ok and usd_paid:
             # Import necessário para funções do main
@@ -1368,7 +1368,7 @@ async def tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         # Mensagem com convite
                         welcome_msg = (
                             f"🎉 <b>PAGAMENTO CONFIRMADO!</b>\n\n"
-                            f"✅ Valor recebido: <b>${usd_paid:.2f} USD</b>\n"
+                            f"✅ Valor recebido: <b>${float(usd_paid):.2f} USD</b>\n"
                             f"👑 Plano ativado: <b>{plan_name} ({plan_days} dias)</b>\n"
                             f"📅 Válido até: <b>{vip_until.strftime('%d/%m/%Y')}</b>\n\n"
                             f"🔗 <b>Clique no link abaixo para entrar no grupo VIP:</b>\n"
@@ -1383,7 +1383,7 @@ async def tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         # Mensagem sem convite
                         welcome_msg = (
                             f"🎉 <b>PAGAMENTO CONFIRMADO!</b>\n\n"
-                            f"✅ Valor recebido: <b>${usd_paid:.2f} USD</b>\n"
+                            f"✅ Valor recebido: <b>${float(usd_paid):.2f} USD</b>\n"
                             f"👑 Plano ativado: <b>{plan_name} ({plan_days} dias)</b>\n"
                             f"📅 Válido até: <b>{vip_until.strftime('%d/%m/%Y')}</b>\n\n"
                             f"📬 Entre em contato para receber o convite do grupo VIP.\n\n"
@@ -1394,7 +1394,7 @@ async def tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     # Mensagem de fallback
                     welcome_msg = (
                         f"🎉 <b>PAGAMENTO CONFIRMADO!</b>\n\n"
-                        f"✅ Valor recebido: <b>${usd_paid:.2f} USD</b>\n"
+                        f"✅ Valor recebido: <b>${float(usd_paid):.2f} USD</b>\n"
                         f"👑 Plano ativado: <b>{plan_name} ({plan_days} dias)</b>\n"
                         f"📅 Válido até: <b>{vip_until.strftime('%d/%m/%Y')}</b>\n\n"
                         f"📬 Aguarde o convite do grupo VIP em breve!\n\n"
@@ -1404,7 +1404,7 @@ async def tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return await msg.reply_text(welcome_msg, parse_mode="HTML")
             else:
                 return await msg.reply_text(
-                    f"❌ Valor pago (${usd_paid:.2f}) insuficiente para qualquer plano VIP."
+                    f"❌ Valor pago (${float(usd_paid):.2f}) insuficiente para qualquer plano VIP."
                 )
         else:
             return await msg.reply_text(f"❌ {msg_result}")
