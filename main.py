@@ -6905,6 +6905,11 @@ async def send_promo_message_to_free(bot: Bot):
     """
     Envia mensagem promocional para o canal FREE incentivando assinatura VIP.
     """
+    # Obter username do bot para criar deep link
+    bot_info = await bot.get_me()
+    bot_username = bot_info.username
+
+    # ====== MODO TESTE - VALORES REDUZIDOS ======
     promo_msg = (
         "💎 <b>QUER TER ACESSO AO CONTEÚDO COMPLETO?</b>\n\n"
         "🔥 Assine o canal VIP e receba:\n"
@@ -6913,25 +6918,46 @@ async def send_promo_message_to_free(bot: Bot):
         "  ✅ Sem anúncios\n"
         "  ✅ Suporte prioritário\n\n"
         "💰 <b>Planos Disponíveis:</b>\n"
-        "  • 30 dias: $30.00 USD (Mensal)\n"
-        "  • 90 dias: $70.00 USD (Trimestral) 💰\n"
-        "  • 180 dias: $110.00 USD (Semestral)\n"
-        "  • 365 dias: $179.00 USD (Anual) 🔥\n\n"
+        "  • 30 dias: $1.00 USD (Mensal)\n"
+        "  • 90 dias: $2.00 USD (Trimestral) 💰\n"
+        "  • 180 dias: $3.00 USD (Semestral)\n"
+        "  • 365 dias: $4.00 USD (Anual) 🔥\n\n"
         "🔒 <b>Pagamento 100% Seguro</b>\n"
         "  • Aceita qualquer criptomoeda\n"
         "  • Ativação automática e instantânea\n"
-        "  • Acesso vitalício ao grupo VIP\n\n"
+        "  • Comprovante e convite enviados no privado\n\n"
         "👇 Clique no botão abaixo para assinar!"
     )
 
-    # Criar botão inline com link de pagamento
+    # ====== VALORES ORIGINAIS (PRODUÇÃO) ======
+    # Descomente abaixo e comente o bloco acima quando voltar para produção
+    # promo_msg = (
+    #     "💎 <b>QUER TER ACESSO AO CONTEÚDO COMPLETO?</b>\n\n"
+    #     "🔥 Assine o canal VIP e receba:\n"
+    #     "  ✅ Conteúdos diários exclusivos\n"
+    #     "  ✅ Arquivos completos (sem limites)\n"
+    #     "  ✅ Sem anúncios\n"
+    #     "  ✅ Suporte prioritário\n\n"
+    #     "💰 <b>Planos Disponíveis:</b>\n"
+    #     "  • 30 dias: $30.00 USD (Mensal)\n"
+    #     "  • 90 dias: $70.00 USD (Trimestral) 💰\n"
+    #     "  • 180 dias: $110.00 USD (Semestral)\n"
+    #     "  • 365 dias: $179.00 USD (Anual) 🔥\n\n"
+    #     "🔒 <b>Pagamento 100% Seguro</b>\n"
+    #     "  • Aceita qualquer criptomoeda\n"
+    #     "  • Ativação automática e instantânea\n"
+    #     "  • Comprovante e convite enviados no privado\n\n"
+    #     "👇 Clique no botão abaixo para assinar!"
+    # )
+
+    # Criar botão inline com deep link para conversa privada
     from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
-    # Gerar link de pagamento
-    payment_url = f"{WEBAPP_URL}?ref=weekly_promo_free"
+    # Gerar deep link para conversa privada (captura ID automaticamente)
+    deep_link = f"https://t.me/{bot_username}?start=vip"
 
     keyboard = [[
-        InlineKeyboardButton("💳 ASSINAR VIP AGORA", url=payment_url)
+        InlineKeyboardButton("💳 ASSINAR VIP AGORA", url=deep_link)
     ]]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
