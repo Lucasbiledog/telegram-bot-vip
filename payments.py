@@ -521,10 +521,16 @@ async def _try_backup_apis(asset: str) -> Optional[float]:
                 r = await cli.get(url)
                 if r.status_code == 200:
                     data = r.json()
+                    LOG.info(f"[BACKUP-API-DEBUG] CryptoCompare data: {data}")
                     price = BACKUP_PRICE_APIS["cryptocompare"]["parser"](data)
+                    LOG.info(f"[BACKUP-API-DEBUG] Parsed price: {price} (type: {type(price)})")
                     if price and price > 0:
+                        # GARANTIR que é float
+                        price = float(price)
                         LOG.info(f"[BACKUP-API] ✅ CryptoCompare: {asset} = ${price:.2f}")
                         return price
+                    else:
+                        LOG.warning(f"[BACKUP-API] CryptoCompare retornou preço inválido: {price}")
         except Exception as e:
             LOG.warning(f"[BACKUP-API] Erro CryptoCompare: {str(e)[:80]}")
 
@@ -540,6 +546,8 @@ async def _try_backup_apis(asset: str) -> Optional[float]:
                     data = r.json()
                     price = BACKUP_PRICE_APIS["coincap"]["parser"](data)
                     if price and price > 0:
+                        # GARANTIR que é float
+                        price = float(price)
                         LOG.info(f"[BACKUP-API] ✅ CoinCap: {asset} = ${price:.2f}")
                         return price
         except Exception as e:
@@ -557,6 +565,8 @@ async def _try_backup_apis(asset: str) -> Optional[float]:
                     data = r.json()
                     price = BACKUP_PRICE_APIS["binance"]["parser"](data)
                     if price and price > 0:
+                        # GARANTIR que é float
+                        price = float(price)
                         LOG.info(f"[BACKUP-API] ✅ Binance: {asset} = ${price:.2f}")
                         return price
         except Exception as e:
