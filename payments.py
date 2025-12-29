@@ -25,7 +25,6 @@ DEBUG_PAYMENTS = os.getenv("DEBUG_PAYMENTS", "0") == "1"
 ALLOW_ANY_TO = os.getenv("ALLOW_ANY_TO", "0") == "1"  # aceita destino diferente (somente testes)
 
 COINGECKO_API_KEY = os.getenv("COINGECKO_API_KEY", "").strip()
-COINMARKETCAP_API_KEY = os.getenv("COINMARKETCAP_API_KEY", "").strip()
 PRICE_TTL_SECONDS = int(os.getenv("PRICE_TTL_SECONDS", "14400"))  # 4 horas (14400s) para escalar sem custos - otimizado para 100+ tx/min
 PRICE_EXTENDED_TTL_SECONDS = int(os.getenv("PRICE_EXTENDED_TTL_SECONDS", "3600"))  # 1h para casos de rate limit severo
 PRICE_MAX_RETRIES = int(os.getenv("PRICE_MAX_RETRIES", "2"))    # Reduzido de 3 para 2
@@ -457,92 +456,79 @@ async def _get_confirmations(w3: Web3, block_number: Optional[int]) -> int:
 # CoinGecko + APIs de backup (com retry/backoff + cache)
 # =========================
 
-# APIs de backup para preços de crypto
-# CoinMarketCap (API profissional) → Binance → CoinGecko → Fallback Prices
+# APIs de backup GRATUITAS para preços de crypto (principais moedas)
+# Binance → Kraken → CoinGecko → Fallback Prices
 BACKUP_PRICE_APIS = {
-    # CoinMarketCap - API profissional com rate limit alto
-    "coinmarketcap": {
-        "url_template": "https://pro-api.coinmarketcap.com/v1/cryptocurrency/quotes/latest?symbol={symbol}&convert=USD",
-        "symbol_map": {
-            "ethereum": "ETH",
-            "bitcoin": "BTC",
-            "binancecoin": "BNB",
-            "polygon-pos": "MATIC",
-            "avalanche-2": "AVAX",
-            "fantom": "FTM",
-            "crypto-com-chain": "CRO",
-            "celo": "CELO",
-            "moonbeam": "GLMR",
-            "moonriver": "MOVR",
-            "mantle": "MNT",
-            "apecoin": "APE",
-            "tether": "USDT",
-            "usd-coin": "USDC"
-        },
-        "parser": lambda x: float(x["data"][list(x["data"].keys())[0]]["quote"]["USD"]["price"]) if x and "data" in x and x["data"] else None
-    },
-    # Binance - API pública grátis (limitado a pares principais)
+    # Binance - API pública grátis (pares principais: BTC, ETH, BNB, USDT)
     "binance": {
         "pairs": {
             "ethereum": "ETHUSDT",
             "bitcoin": "BTCUSDT",
             "binancecoin": "BNBUSDT",
-            "polygon-pos": "MATICUSDT",
-            "avalanche-2": "AVAXUSDT"
+            "tether": "USDTUSD",      # Preço do USDT (sempre ~1.00)
+            "usd-coin": "USDCUSDT"    # Preço do USDC (sempre ~1.00)
         },
         "url_template": "https://api.binance.com/api/v3/ticker/price?symbol={pair}",
         "parser": lambda x: float(x.get("price", 0)) if x and "price" in x else None
+    },
+    # Kraken - API pública grátis, muito confiável
+    "kraken": {
+        "pairs": {
+            "ethereum": "ETHUSD",
+            "bitcoin": "XBTUSD",      # BTC = XBT no Kraken
+            "binancecoin": "BNBUSD",
+            "tether": "USDTUSD",
+            "usd-coin": "USDCUSD"
+        },
+        "url_template": "https://api.kraken.com/0/public/Ticker?pair={pair}",
+        "parser": lambda x: float(list(x["result"].values())[0]["c"][0]) if x and "result" in x and x["result"] else None
     }
 }
 
 async def _try_backup_apis(asset: str) -> Optional[float]:
-    """Tenta obter preço via CoinMarketCap e Binance"""
+    """Tenta obter preço via APIs GRATUITAS (Binance, Kraken)"""
 
-    # 1) Tentar CoinMarketCap primeiro (API paga, mais confiável)
-    if COINMARKETCAP_API_KEY and asset in BACKUP_PRICE_APIS["coinmarketcap"]["symbol_map"]:
-        symbol = BACKUP_PRICE_APIS["coinmarketcap"]["symbol_map"][asset]
-        url = BACKUP_PRICE_APIS["coinmarketcap"]["url_template"].format(symbol=symbol)
-        try:
-            LOG.info(f"[CMC-API] Consultando CoinMarketCap para {asset} ({symbol})...")
-            async with httpx.AsyncClient(timeout=8) as cli:
-                r = await cli.get(url, headers={"X-CMC_PRO_API_KEY": COINMARKETCAP_API_KEY})
-                if r.status_code == 200:
-                    data = r.json()
-                    price = BACKUP_PRICE_APIS["coinmarketcap"]["parser"](data)
-                    if price and price > 0:
-                        # GARANTIR que é float
-                        price = float(price)
-                        LOG.info(f"[CMC-API] ✅ CoinMarketCap: {asset} = ${price:.2f}")
-                        return price
-                    else:
-                        LOG.warning(f"[CMC-API] CoinMarketCap retornou preço inválido: {price}")
-                else:
-                    LOG.warning(f"[CMC-API] CoinMarketCap HTTP {r.status_code}: {r.text[:100]}")
-        except Exception as e:
-            LOG.warning(f"[CMC-API] Erro CoinMarketCap: {str(e)[:80]}")
-
-    # 2) Tentar Binance como fallback (API grátis)
+    # 1) Tentar Binance primeiro (rápida e confiável)
     if asset in BACKUP_PRICE_APIS["binance"]["pairs"]:
         pair = BACKUP_PRICE_APIS["binance"]["pairs"][asset]
         url = BACKUP_PRICE_APIS["binance"]["url_template"].format(pair=pair)
         try:
-            LOG.info(f"[BINANCE-API] Consultando Binance para {asset} ({pair})...")
-            async with httpx.AsyncClient(timeout=8) as cli:
+            LOG.info(f"[BINANCE] Consultando Binance para {asset} ({pair})...")
+            async with httpx.AsyncClient(timeout=5) as cli:
                 r = await cli.get(url)
                 if r.status_code == 200:
                     data = r.json()
                     price = BACKUP_PRICE_APIS["binance"]["parser"](data)
                     if price and price > 0:
-                        # GARANTIR que é float
                         price = float(price)
-                        LOG.info(f"[BINANCE-API] ✅ Binance: {asset} = ${price:.2f}")
+                        LOG.info(f"[BINANCE] ✅ {asset} = ${price:.2f}")
                         return price
                 else:
-                    LOG.warning(f"[BINANCE-API] Binance HTTP {r.status_code}")
+                    LOG.warning(f"[BINANCE] HTTP {r.status_code}")
         except Exception as e:
-            LOG.warning(f"[BINANCE-API] Erro Binance: {str(e)[:80]}")
+            LOG.warning(f"[BINANCE] Erro: {str(e)[:60]}")
 
-    LOG.warning(f"[BACKUP-API] Nenhuma API de backup funcionou para {asset}")
+    # 2) Tentar Kraken como backup
+    if asset in BACKUP_PRICE_APIS["kraken"]["pairs"]:
+        pair = BACKUP_PRICE_APIS["kraken"]["pairs"][asset]
+        url = BACKUP_PRICE_APIS["kraken"]["url_template"].format(pair=pair)
+        try:
+            LOG.info(f"[KRAKEN] Consultando Kraken para {asset} ({pair})...")
+            async with httpx.AsyncClient(timeout=5) as cli:
+                r = await cli.get(url)
+                if r.status_code == 200:
+                    data = r.json()
+                    price = BACKUP_PRICE_APIS["kraken"]["parser"](data)
+                    if price and price > 0:
+                        price = float(price)
+                        LOG.info(f"[KRAKEN] ✅ {asset} = ${price:.2f}")
+                        return price
+                else:
+                    LOG.warning(f"[KRAKEN] HTTP {r.status_code}")
+        except Exception as e:
+            LOG.warning(f"[KRAKEN] Erro: {str(e)[:60]}")
+
+    LOG.warning(f"[BACKUP] Todas as APIs gratuitas falharam para {asset}")
     return None
 
 async def _cg_get(url: str) -> Optional[dict]:
