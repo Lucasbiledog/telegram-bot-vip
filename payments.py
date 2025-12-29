@@ -25,6 +25,7 @@ DEBUG_PAYMENTS = os.getenv("DEBUG_PAYMENTS", "0") == "1"
 ALLOW_ANY_TO = os.getenv("ALLOW_ANY_TO", "0") == "1"  # aceita destino diferente (somente testes)
 
 COINGECKO_API_KEY = os.getenv("COINGECKO_API_KEY", "").strip()
+COINMARKETCAP_API_KEY = os.getenv("COINMARKETCAP_API_KEY", "").strip()
 PRICE_TTL_SECONDS = int(os.getenv("PRICE_TTL_SECONDS", "14400"))  # 4 horas (14400s) para escalar sem custos - otimizado para 100+ tx/min
 PRICE_EXTENDED_TTL_SECONDS = int(os.getenv("PRICE_EXTENDED_TTL_SECONDS", "3600"))  # 1h para casos de rate limit severo
 PRICE_MAX_RETRIES = int(os.getenv("PRICE_MAX_RETRIES", "2"))    # Reduzido de 3 para 2
@@ -456,9 +457,30 @@ async def _get_confirmations(w3: Web3, block_number: Optional[int]) -> int:
 # CoinGecko + APIs de backup (com retry/backoff + cache)
 # =========================
 
-# APIs de backup GRÁTIS para preços de crypto (otimizado para 100+ tx/min)
-# CoinGecko → CryptoCompare → CoinCap → Binance → Coinbase
+# APIs de backup para preços de crypto (otimizado para 100+ tx/min)
+# CoinMarketCap (PRIORITY) → CoinGecko → CryptoCompare → CoinCap → Binance
 BACKUP_PRICE_APIS = {
+    # CoinMarketCap - API profissional com rate limit alto
+    "coinmarketcap": {
+        "url_template": "https://pro-api.coinmarketcap.com/v1/cryptocurrency/quotes/latest?symbol={symbol}&convert=USD",
+        "symbol_map": {
+            "ethereum": "ETH",
+            "bitcoin": "BTC",
+            "binancecoin": "BNB",
+            "polygon-pos": "MATIC",
+            "avalanche-2": "AVAX",
+            "fantom": "FTM",
+            "crypto-com-chain": "CRO",
+            "celo": "CELO",
+            "moonbeam": "GLMR",
+            "moonriver": "MOVR",
+            "mantle": "MNT",
+            "apecoin": "APE",
+            "tether": "USDT",
+            "usd-coin": "USDC"
+        },
+        "parser": lambda x: float(x["data"][list(x["data"].keys())[0]]["quote"]["USD"]["price"]) if x and "data" in x and x["data"] else None
+    },
     # CryptoCompare - API grátis com 100k requests/mês
     "cryptocompare": {
         "url_template": "https://min-api.cryptocompare.com/data/price?fsym={symbol}&tsyms=USD",
@@ -509,7 +531,32 @@ BACKUP_PRICE_APIS = {
 }
 
 async def _try_backup_apis(asset: str) -> Optional[float]:
-    """Tenta obter preço de APIs de backup GRATUITAS (otimizado para escala)"""
+    """Tenta obter preço de APIs de backup (CoinMarketCap primeiro, depois gratuitas)"""
+
+    # Tentar CoinMarketCap PRIMEIRO (API paga, mais confiável)
+    if COINMARKETCAP_API_KEY and asset in BACKUP_PRICE_APIS["coinmarketcap"]["symbol_map"]:
+        symbol = BACKUP_PRICE_APIS["coinmarketcap"]["symbol_map"][asset]
+        url = BACKUP_PRICE_APIS["coinmarketcap"]["url_template"].format(symbol=symbol)
+        try:
+            LOG.info(f"[BACKUP-API] Tentando CoinMarketCap para {asset} ({symbol})...")
+            async with httpx.AsyncClient(timeout=8) as cli:
+                r = await cli.get(url, headers={"X-CMC_PRO_API_KEY": COINMARKETCAP_API_KEY})
+                if r.status_code == 200:
+                    data = r.json()
+                    LOG.info(f"[BACKUP-API-DEBUG] CoinMarketCap data: {data}")
+                    price = BACKUP_PRICE_APIS["coinmarketcap"]["parser"](data)
+                    LOG.info(f"[BACKUP-API-DEBUG] Parsed price: {price} (type: {type(price)})")
+                    if price and price > 0:
+                        # GARANTIR que é float
+                        price = float(price)
+                        LOG.info(f"[BACKUP-API] ✅ CoinMarketCap: {asset} = ${price:.2f}")
+                        return price
+                    else:
+                        LOG.warning(f"[BACKUP-API] CoinMarketCap retornou preço inválido: {price}")
+                else:
+                    LOG.warning(f"[BACKUP-API] CoinMarketCap HTTP {r.status_code}: {r.text[:100]}")
+        except Exception as e:
+            LOG.warning(f"[BACKUP-API] Erro CoinMarketCap: {str(e)[:80]}")
 
     # Tentar CryptoCompare
     if asset in BACKUP_PRICE_APIS["cryptocompare"]["symbol_map"]:
@@ -671,9 +718,8 @@ async def _usd_native(chain_id: str, amount_native: float, force_refresh: bool =
             ts = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(meta.get("ts", 0)))
             src = meta.get("source", "manual")
             LOG.warning(
-                "[STATIC-FALLBACK] CoinGecko + backup APIs indisponíveis, usando preço estático p/ %s: ${:.2f} | {} unidades = ${:.2f} (source={} ts={})".format(
-                    cg_id, px, amount_native, usd_value, src, ts
-                )
+                "[STATIC-FALLBACK] CoinGecko + backup APIs indisponíveis, usando preço estático p/ %s: $%.2f | %s unidades = $%.2f (source=%s ts=%s)",
+                cg_id, px, amount_native, usd_value, src, ts
             )
             _price_cache_put(cache_key, px, from_backup=True)  # Cache por mais tempo
             return px, usd_value
