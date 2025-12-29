@@ -59,16 +59,20 @@ FALLBACK_PRICES = {
     "0x38:0x7130d2a12b9bcbfae4f2634d864a1ee1ce3ead9c": 95000.0,  # BTCB na BSC
     
     # Stablecoins principais (USD = 1.0)
-    "0x1:0xa0b86991c31cc170c8b9e71b51e1a53af4e9b8c9e": 1.0,     # USDC na Ethereum
+    "tether": 1.0,  # USDT
+    "usd-coin": 1.0,  # USDC
+
+    # USDC em múltiplas redes
+    "0x1:0xa0b86991c6e31cc170c8b9e71b51e1a53af4e9b8c9e": 1.0,     # USDC na Ethereum
     "0x38:0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d": 1.0,     # USDC na BSC
     "0x89:0x2791bca1f2de4661ed88a30c99a7a9449aa84174": 1.0,     # USDC na Polygon
     "0xa4b1:0xaf88d065e77c8cc2239327c5edb3a432268e5831": 1.0,   # USDC na Arbitrum
     "0xa:0x0b2c639c533813f4aa9d7837caf62653d097ff85": 1.0,      # USDC na Optimism
     "0x2105:0x833589fcd6edb6e08f4c7c32d4f71b54bda02913": 1.0,   # USDC na Base
-    
-    # USDT variants
-    "0x1:0xdac17f958d2ee523a2206206994597c13d831ec7": 1.0,      # USDT na Ethereum
-    "0x38:0x55d398326f99059ff775485246999027b3197955": 1.0,     # USDT na BSC
+
+    # USDT em múltiplas redes
+    "0x1:0xdac17f958d2ee523a2206206994597c13d831ec7": 1.0,      # USDT na Ethereum (ERC-20)
+    "0x38:0x55d398326f99059ff775485246999027b3197955": 1.0,     # USDT na BSC (BEP-20)
     "0x89:0xc2132d05d31c914a87c6611c10748aeb04b58e8f": 1.0,     # USDT na Polygon
 }
 
@@ -346,17 +350,43 @@ CHAINS: Dict[str, Dict[str, Any]] = {
 ERC20_TRANSFER_SIG = Web3.keccak(text="Transfer(address,address,uint256)").hex().lower()
 
 # Alguns tokens "wrapped/mirrors" mapeados para ids nativos no CoinGecko
-# BTCB (BSC) -> bitcoin
+# BTCB (BSC) -> bitcoin, Stablecoins -> tether/usd-coin
 KNOWN_TOKEN_TO_CGID = {
     # chainId:tokenAddress -> cg_id
-    f"0x38:{'0x7130d2a12b9bcbfae4f2634d864a1ee1ce3ead9c'}": "bitcoin",
+    # Bitcoin wrapped
+    f"0x38:{'0x7130d2a12b9bcbfae4f2634d864a1ee1ce3ead9c'}": "bitcoin",  # BTCB na BSC
+
+    # Stablecoins - USDT
+    f"0x1:{'0xdac17f958d2ee523a2206206994597c13d831ec7'}": "tether",    # USDT na Ethereum (ERC-20)
+    f"0x38:{'0x55d398326f99059ff775485246999027b3197955'}": "tether",   # USDT na BSC (BEP-20)
+    f"0x89:{'0xc2132d05d31c914a87c6611c10748aeb04b58e8f'}": "tether",   # USDT na Polygon
+
+    # Stablecoins - USDC
+    f"0x1:{'0xa0b86991c6e31cc170c8b9e71b51e1a53af4e9b8c9e'}": "usd-coin",  # USDC na Ethereum (ERC-20)
+    f"0x38:{'0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d'}": "usd-coin",   # USDC na BSC (BEP-20)
+    f"0x89:{'0x2791bca1f2de4661ed88a30c99a7a9449aa84174'}": "usd-coin",   # USDC na Polygon
+    f"0xa4b1:{'0xaf88d065e77c8cc2239327c5edb3a432268e5831'}": "usd-coin", # USDC na Arbitrum
+    f"0xa:{'0x0b2c639c533813f4aa9d7837caf62653d097ff85'}": "usd-coin",    # USDC na Optimism
+    f"0x2105:{'0x833589fcd6edb6e08f4c7c32d4f71b54bda02913'}": "usd-coin", # USDC na Base
 }
 
 # Mapeamento de endereços para símbolos conhecidos (fallback)
 KNOWN_TOKEN_SYMBOLS = {
+    # Bitcoin wrapped
     "0x7130d2a12b9bcbfae4f2634d864a1ee1ce3ead9c": "BTCB",  # BTCB na BSC
-    "0xa0b86991c31cc170c8b9e71b51e1a53af4e9b8c9e": "USDC",  # USDC na Ethereum
-    "0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d": "USDC",   # USDC na BSC
+
+    # USDC em várias redes
+    "0xa0b86991c6e31cc170c8b9e71b51e1a53af4e9b8c9e": "USDC",  # USDC na Ethereum
+    "0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d": "USDC",     # USDC na BSC
+    "0x2791bca1f2de4661ed88a30c99a7a9449aa84174": "USDC",     # USDC na Polygon
+    "0xaf88d065e77c8cc2239327c5edb3a432268e5831": "USDC",     # USDC na Arbitrum
+    "0x0b2c639c533813f4aa9d7837caf62653d097ff85": "USDC",     # USDC na Optimism
+    "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913": "USDC",     # USDC na Base
+
+    # USDT em várias redes
+    "0xdac17f958d2ee523a2206206994597c13d831ec7": "USDT",     # USDT na Ethereum
+    "0x55d398326f99059ff775485246999027b3197955": "USDT",     # USDT na BSC
+    "0xc2132d05d31c914a87c6611c10748aeb04b58e8f": "USDT",     # USDT na Polygon
 }
 
 
@@ -1072,24 +1102,47 @@ async def resolve_payment_usd_autochain(
 
                 return ok, msg, usd, details
 
-        # Fase 2: Se não encontrou nas prioritárias, NÃO buscar em outras chains (otimização)
-        # Retornar erro rápido se não encontrou nas 3 principais
-        LOG.warning(f"[AUTOCHAIN] Transação não encontrada nas chains prioritárias. Pulando busca em outras chains.")
+        # Fase 2: Se não encontrou nas prioritárias, buscar nas outras chains
+        LOG.info(f"[AUTOCHAIN] Não encontrado nas prioritárias. Buscando em {len(other_chains)} chains restantes...")
+        if other_chains:
+            other_tasks = [try_chain(cid) for cid in other_chains]
+            other_results = await asyncio.gather(*other_tasks, return_exceptions=True)
+
+            for chain_id, result, error in other_results:
+                if isinstance((chain_id, result, error), Exception):
+                    continue
+                if result:
+                    tx, w3 = result
+                    chain_name = human_chain(chain_id)
+                    LOG.info(f"[AUTOCHAIN] ✅ Transação encontrada em {chain_name}!")
+                    ok, msg, usd, details = await _resolve_on_chain(
+                        w3, chain_id, normalized_hash, force_refresh=force_refresh
+                    )
+                    details['found_on_chain'] = chain_name
+                    details['search_time'] = 'extended'
+                    LOG.info(f"[RESULT {chain_name}] ok={ok} msg={msg} usd=${usd}")
+
+                    # Salvar no cache de transações
+                    result = (ok, msg, usd, details)
+                    _TX_VALIDATION_CACHE[normalized_hash] = (time.time(), result)
+                    LOG.info(f"[TX-CACHE] Resultado salvo no cache: {normalized_hash}")
+
+                    return ok, msg, usd, details
 
     except asyncio.TimeoutError:
         LOG.error(f"[AUTOCHAIN] Timeout de 15s atingido ao buscar transação {tx_hash}")
         return False, "Validação expirou (timeout de 15s). Tente novamente.", None, {}
 
-    # OTIMIZAÇÃO: Não buscar em outras chains, apenas nas 3 principais
-    # Isso reduz drasticamente o tempo de validação (de 30s+ para ~5-10s)
+    # Não encontrado em nenhuma chain
+    chains_tried = ', '.join([human_chain(cid) for cid in ordered_chains[:10]])
+    if len(ordered_chains) > 10:
+        chains_tried += f" e mais {len(ordered_chains) - 10}..."
 
-    # Não encontrado nas chains prioritárias
-    chains_tried = ', '.join([human_chain(cid) for cid in priority_chains])
-    LOG.error(f"[AUTOCHAIN] Transação {tx_hash} não encontrada nas chains prioritárias ({chains_tried})")
+    LOG.error(f"[AUTOCHAIN] Transação {tx_hash} não encontrada em {len(CHAINS)} chains")
 
     # Salvar resultado negativo no cache (evita re-buscar transações inválidas)
-    result = (False, f"Transação não encontrada nas blockchains principais ({chains_tried}). Use Ethereum, BSC ou Polygon.", None, {
-        'searched_chains': priority_chains,
+    result = (False, f"Transação não encontrada em {len(CHAINS)} blockchains suportadas ({chains_tried}).", None, {
+        'searched_chains': list(CHAINS.keys()),
         'tx_hash': normalized_hash,
         'total_chains': len(CHAINS)
     })
