@@ -1680,8 +1680,8 @@ async def approve_by_usd_and_invite(tg_id, username: Optional[str], tx_hash: str
                     import hashlib
                     link_hash = hashlib.md5(link.encode()).hexdigest()[:12]
                     from main import cfg_set
-                    # Salvar por 3 horas (mais que o tempo de expiração do link)
-                    cfg_set(f"invite_link_{link_hash}", actual_tg_id, ttl=10800)
+                    # Salvar (será limpo manualmente depois ou permanecerá como histórico)
+                    cfg_set(f"invite_link_{link_hash}", str(actual_tg_id))
                     LOG.info(f"[LINK-PROTECTION] Link protegido para user {actual_tg_id}: {link_hash}")
 
                 # Criar comprovante completo
