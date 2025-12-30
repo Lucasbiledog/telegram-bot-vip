@@ -1601,35 +1601,33 @@ async def approve_by_usd_and_invite(tg_id, username: Optional[str], tx_hash: str
         s.add(p)
         s.commit()
 
-        # Se temos ID real, criar VipMembership imediatamente
+        # Se temos ID real, criar ou atualizar VipMembership usando vip_upsert_and_get_until
+        # que já tem lógica de substituição correta
         if actual_tg_id:
-            from main import VipMembership, now_utc
+            from utils import vip_upsert_and_get_until
 
-            vip_until = now_utc() + dt.timedelta(days=days)
-            until = vip_until  # Guardar para usar depois
-
-            vip = VipMembership(
-                user_id=actual_tg_id,
-                username=username,
-                active=True,
-                expires_at=vip_until,
-                created_at=now_utc(),
-                plan=f"{days}d"
-            )
-            s.add(vip)
-            s.commit()
-
-            LOG.info(f"[VIP-CREATE] VIP criado com ID real {actual_tg_id}: {days} dias até {vip_until.strftime('%d/%m/%Y %H:%M')}")
+            # vip_upsert_and_get_until é async, precisa ser chamado fora da sessão
+            pass  # Será executado depois da sessão fechar
         else:
             # NÃO criar VipMembership aqui - será criado quando usuário entrar no grupo
             # Isso evita violação de constraint UNIQUE em user_id quando há múltiplos pagamentos pendentes
             LOG.info(f"[PAYMENT-SAVE] VIP será criado quando usuário entrar no grupo")
 
+    # Criar/atualizar VIP membership se temos ID real (fora da sessão de Payment)
+    if actual_tg_id:
+        from utils import vip_upsert_and_get_until
+        until = await vip_upsert_and_get_until(actual_tg_id, username, days)
+        LOG.info(f"[VIP-UPSERT] VIP criado/atualizado para {actual_tg_id}: válido até {until.strftime('%d/%m/%Y %H:%M')}")
+    else:
+        # Para IDs temporários, calcular data estimada
+        import datetime as dt
+        until = dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=days)
+
     LOG.info(f"[INVITE-DEBUG] Finalizando: is_temp_uid={is_temp_uid}, link={link is not None if link else False}")
 
-    # Calcular data de expiração do VIP (sempre calcular, mesmo se temporário)
+    # Calcular data de expiração do VIP para mensagens (sempre usar 'until' se disponível)
     import datetime as dt
-    vip_until = dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=days)
+    vip_until = until if until else (dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=days))
     vip_until_str = vip_until.strftime('%d/%m/%Y')
 
     # Criar mensagem de boas-vindas personalizada
