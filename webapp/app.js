@@ -359,21 +359,21 @@ async function loadBasicInfo() {
 
     // ====== MODO TESTE - VALORES REDUZIDOS ======
     // Use estes valores para testar com quantias pequenas
-    const defaultPlans = {
-      "30": 1.00,    // Mensal - TESTE
-      "90": 2.00,    // Trimestral - TESTE
-      "180": 3.00,   // Semestral - TESTE
-      "365": 4.00    // Anual - TESTE
-    };
-
-    // ====== VALORES ORIGINAIS (PRODUÇÃO) ======
-    // Descomente abaixo e comente o bloco acima quando voltar para produção
     // const defaultPlans = {
-    //   "30": 30.00,   // Mensal
-    //   "90": 70.00,   // Trimestral
-    //   "180": 110.00, // Semestral
-    //   "365": 179.00  // Anual
+    //   "30": 1.00,    // Mensal - TESTE
+    //   "90": 2.00,    // Trimestral - TESTE
+    //   "180": 3.00,   // Semestral - TESTE
+    //   "365": 4.00    // Anual - TESTE
     // };
+
+    // ====== VALORES DE PRODUÇÃO ======
+    // Valores atualizados: Mensal $30 | Trimestral $70 | Semestral $110 | Anual $179
+    const defaultPlans = {
+      "30": 30.00,   // Mensal
+      "90": 70.00,   // Trimestral
+      "180": 110.00, // Semestral
+      "365": 179.00  // Anual
+    };
     console.log("[loadBasicInfo] Renderizando planos padrão:", defaultPlans);
     renderPlans(defaultPlans);
 

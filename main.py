@@ -3200,10 +3200,10 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"• Suporte prioritário\n"
                 f"• Sem anúncios ou spam\n\n"
                 f"💰 <b>Planos disponíveis:</b>\n"
-                f"• Mensal (30 dias): $1.00\n"
-                f"• Trimestral (90 dias): $2.00\n"
-                f"• Semestral (180 dias): $3.00\n"
-                f"• Anual (365 dias): $4.00\n\n"
+                f"• Mensal (30 dias): $30.00\n"
+                f"• Trimestral (90 dias): $70.00\n"
+                f"• Semestral (180 dias): $110.00\n"
+                f"• Anual (365 dias): $179.00\n\n"
                 f"🔐 <b>Pagamento seguro via blockchain</b>\n"
                 f"Aceitamos diversas criptomoedas em múltiplas redes.\n\n"
                 f"👇 <b>Clique no botão abaixo para pagar:</b>"
@@ -3304,10 +3304,10 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"• Suporte prioritário\n"
         f"• Sem anúncios ou spam\n\n"
         f"💰 <b>Planos disponíveis:</b>\n"
-        f"• Mensal (30 dias): $1.00\n"
-        f"• Trimestral (90 dias): $2.00\n"
-        f"• Semestral (180 dias): $3.00\n"
-        f"• Anual (365 dias): $4.00\n\n"
+        f"• Mensal (30 dias): $30.00\n"
+        f"• Trimestral (90 dias): $70.00\n"
+        f"• Semestral (180 dias): $110.00\n"
+        f"• Anual (365 dias): $179.00\n\n"
         f"🔐 <b>Pagamento seguro via blockchain</b>\n"
         f"Aceitamos diversas criptomoedas em múltiplas redes.\n\n"
         f"👇 <b>Clique no botão abaixo para pagar:</b>"
@@ -5056,32 +5056,38 @@ def plan_from_amount(amount_usd: float) -> Optional[VipPlan]:
     """
     Determina o plano VIP baseado no valor pago usando ranges ao invés de valores exatos.
 
-    ====== MODO TESTE - VALORES REDUZIDOS ======
-    Ranges de TESTE:
-    - $1.00 - $1.99: VIP 30 dias (MENSAL)
-    - $2.00 - $2.99: VIP 90 dias (TRIMESTRAL)
-    - $3.00 - $3.99: VIP 180 dias (SEMESTRAL)
-    - $4.00+: VIP 365 dias (ANUAL)
+    ====== VALORES DE PRODUÇÃO ======
+    Ranges de PRODUÇÃO:
+    - $30.00 - $69.99: VIP 30 dias (MENSAL)
+    - $70.00 - $109.99: VIP 90 dias (TRIMESTRAL)
+    - $110.00 - $178.99: VIP 180 dias (SEMESTRAL)
+    - $179.00+: VIP 365 dias (ANUAL)
     """
     # ====== MODO TESTE - VALORES REDUZIDOS ======
-    if amount_usd < 1.00:
-        return None  # Valor muito baixo
-    elif amount_usd < 2.00:
+    # Descomente abaixo para usar valores de teste
+    # if amount_usd < 1.00:
+    #     return None  # Valor muito baixo
+    # elif amount_usd < 2.00:
+    #     return VipPlan.MENSAL      # 30 dias
+    # elif amount_usd < 3.00:
+    #     return VipPlan.TRIMESTRAL  # 90 dias
+    # elif amount_usd < 4.00:
+    #     return VipPlan.SEMESTRAL   # 180 dias
+    # else:
+    #     return VipPlan.ANUAL       # 365 dias
+
+    # ====== VALORES DE PRODUÇÃO ======
+    # Valores atualizados: Mensal $30 | Trimestral $70 | Semestral $110 | Anual $179
+    if amount_usd < 30.00:
+        return None  # Valor insuficiente
+    elif amount_usd < 70.00:
         return VipPlan.MENSAL      # 30 dias
-    elif amount_usd < 3.00:
+    elif amount_usd < 110.00:
         return VipPlan.TRIMESTRAL  # 90 dias
-    elif amount_usd < 4.00:
+    elif amount_usd < 179.00:
         return VipPlan.SEMESTRAL   # 180 dias
     else:
         return VipPlan.ANUAL       # 365 dias
-
-    # ====== VALORES ORIGINAIS (PRODUÇÃO) ======
-    # Descomente abaixo e comente o bloco acima quando voltar para produção
-    # Ranges de PRODUÇÃO:
-    # - $30.00 - $69.99: VIP 30 dias (MENSAL)
-    # - $70.00 - $109.99: VIP 90 dias (TRIMESTRAL)
-    # - $110.00 - $178.99: VIP 180 dias (SEMESTRAL)
-    # - $179.00+: VIP 365 dias (ANUAL)
     #
     # if amount_usd < 30.00:
     #     return None  # Valor muito baixo
