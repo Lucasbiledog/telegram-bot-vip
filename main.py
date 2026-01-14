@@ -7014,24 +7014,25 @@ async def send_promo_message_to_free(bot: Bot):
     bot_info = await bot.get_me()
     bot_username = bot_info.username
 
-    # ====== MODO TESTE - VALORES REDUZIDOS ======
+
     promo_msg = (
         "💎 <b>QUER TER ACESSO AO CONTEÚDO COMPLETO?</b>\n\n"
-        "🔥 Assine o canal VIP e receba:\n"
-        "  ✅ Conteúdos diários exclusivos\n"
-        "  ✅ Arquivos completos (sem limites)\n"
-        "  ✅ Sem anúncios\n"
-        "  ✅ Suporte prioritário\n\n"
-        "💰 <b>Planos Disponíveis:</b>\n"
-        "  • 30 dias: $1.00 USD (Mensal)\n"
-        "  • 90 dias: $2.00 USD (Trimestral) 💰\n"
-        "  • 180 dias: $3.00 USD (Semestral)\n"
-        "  • 365 dias: $4.00 USD (Anual) 🔥\n\n"
-        "🔒 <b>Pagamento 100% Seguro</b>\n"
-        "  • Aceita qualquer criptomoeda\n"
-        "  • Ativação automática e instantânea\n"
-        "  • Comprovante e convite enviados no privado\n\n"
-        "👇 Clique no botão abaixo para assinar!"
+         "🔥 Assine o canal VIP e receba:\n"
+         "  ✅ Conteúdos diários exclusivos\n"
+         "  ✅ Arquivos completos (sem limites)\n"
+         "  ✅ Sem anúncios\n"
+         "  ✅ Suporte prioritário\n\n"
+         "💰 <b>Planos Disponíveis:</b>\n"
+         "  • 30 dias: $30.00 USD (Mensal)\n"
+         "  • 90 dias: $70.00 USD (Trimestral) 💰\n"
+         "  • 180 dias: $110.00 USD (Semestral)\n"
+         "  • 365 dias: $179.00 USD (Anual) 🔥\n\n"
+         "🔒 <b>Pagamento 100% Seguro</b>\n"
+         "  • Aceita qualquer criptomoeda\n"
+         "  • Ativação automática e instantânea\n"
+         "  • Comprovante e convite enviados no privado\n\n"
+         "👇 Clique no botão abaixo para assinar!"
+
     )
 
     # ====== VALORES ORIGINAIS (PRODUÇÃO) ======
@@ -7480,20 +7481,11 @@ async def api_config(uid: str = None, ts: str = None, sig: str = None):
         # ====== MODO TESTE - VALORES REDUZIDOS ======
         # Use estes valores para testar com quantias pequenas
         value_tiers = {
-            "30": 1.00,    # Preço para 1 mês - TESTE
-            "90": 2.00,    # Preço para 3 meses - TESTE
-            "180": 3.00,   # Preço para 6 meses - TESTE
-            "365": 4.00    # Preço para 1 ano - TESTE
+            "30": 30.00,   # Preço para 1 mês
+            "90": 70.00,   # Preço para 3 meses
+            "180": 110.00, # Preço para 6 meses
+            "365": 179.00  # Preço para 1 ano
         }
-
-        # ====== VALORES ORIGINAIS (PRODUÇÃO) ======
-        # Descomente abaixo e comente o bloco acima quando voltar para produção
-        # value_tiers = {
-        #     "30": 30.00,   # Preço para 1 mês
-        #     "90": 70.00,   # Preço para 3 meses
-        #     "180": 110.00, # Preço para 6 meses
-        #     "365": 179.00  # Preço para 1 ano
-        # }
         
         return {
             "wallet": WALLET_ADDRESS,
