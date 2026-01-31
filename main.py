@@ -39,9 +39,11 @@ from auto_sender import (
     SourceFile,
     SentFile,
     setup_auto_sender,
+    setup_catalog,
     index_message_file,
     send_daily_vip_file,
     send_weekly_free_file,
+    send_or_update_vip_catalog,
     get_stats,
     reset_sent_history,
     SOURCE_CHAT_ID
@@ -1233,6 +1235,7 @@ async def startup_event():
 
         # Configurar sistema de envio automático (passar classes de modelo)
         setup_auto_sender(VIP_CHANNEL_ID, FREE_CHANNEL_ID, SourceFile, SentFile)
+        setup_catalog(cfg_get, cfg_set)
         logging.info(f"📤 Sistema de envio automático configurado - VIP: {VIP_CHANNEL_ID}, FREE: {FREE_CHANNEL_ID}")
 
         # Iniciar sistema keep-alive para manter bot ativo 24/7
@@ -6273,6 +6276,21 @@ async def confirmar_reset_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE
     )
 
 
+async def catalogo_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Força atualização do catálogo VIP (admin)"""
+    if not is_admin(update.effective_user.id):
+        return
+
+    await update.effective_message.reply_text("🔄 Atualizando catálogo VIP...")
+
+    with SessionLocal() as session:
+        try:
+            await send_or_update_vip_catalog(context.bot, session)
+            await update.effective_message.reply_text("✅ Catálogo VIP atualizado com sucesso!")
+        except Exception as e:
+            await update.effective_message.reply_text(f"❌ Erro ao atualizar catálogo: {e}")
+
+
 async def test_send_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Testa envio manual (admin) com debug detalhado"""
     if not is_admin(update.effective_user.id):
@@ -8254,6 +8272,7 @@ async def on_startup():
         application.add_handler(CommandHandler("reset_history", reset_history_cmd), group=1)
         application.add_handler(CommandHandler("confirmar_reset", confirmar_reset_cmd), group=1)
         application.add_handler(CommandHandler("test_send", test_send_cmd), group=1)
+        application.add_handler(CommandHandler("catalogo", catalogo_cmd), group=1)
         application.add_handler(CommandHandler("debug_version", debug_version_cmd), group=1)
         application.add_handler(CommandHandler("check_files", check_files_cmd), group=1)
         application.add_handler(CommandHandler("get_chat_id", get_chat_id_cmd), group=1)
@@ -8375,6 +8394,24 @@ async def on_startup():
             name='daily_vip_send'
         )
         logging.info("✅ Job VIP diário configurado (15h)")
+
+        # CATÁLOGO VIP: Atualiza lista de arquivos às 15:05 (após envio do arquivo)
+        async def daily_vip_catalog_job(context: ContextTypes.DEFAULT_TYPE):
+            """Job diário para atualizar catálogo de arquivos VIP"""
+            with SessionLocal() as session:
+                try:
+                    await send_or_update_vip_catalog(context.bot, session)
+                    await log_to_group("✅ <b>Catálogo VIP atualizado</b>")
+                except Exception as e:
+                    await log_to_group(f"❌ <b>Erro ao atualizar catálogo VIP</b>\n⚠️ {str(e)}")
+                    logging.error(f"Erro no job catálogo VIP: {e}")
+
+        application.job_queue.run_daily(
+            daily_vip_catalog_job,
+            time=dt.time(hour=15, minute=5, second=0, tzinfo=BR_TZ),
+            name='daily_vip_catalog'
+        )
+        logging.info("✅ Job catálogo VIP configurado (15:05)")
 
         # FREE: Arquivo semanal às 15h (quartas)
         application.job_queue.run_daily(

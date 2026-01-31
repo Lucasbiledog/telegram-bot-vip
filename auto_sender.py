@@ -1032,3 +1032,162 @@ async def reactivate_file(session: Session, file_unique_id: str) -> bool:
         LOG.error(f"[ADMIN] ❌ Erro ao reativar arquivo: {e}")
         session.rollback()
         return False
+
+
+# ===== CATÁLOGO VIP (Lista de arquivos disponíveis) =====
+
+# Referências para cfg_get/cfg_set — serão injetadas via setup_catalog()
+_cfg_get = None
+_cfg_set = None
+
+
+def setup_catalog(cfg_get_func, cfg_set_func):
+    """Injeta funções cfg_get/cfg_set do main.py para persistir message_id do catálogo."""
+    global _cfg_get, _cfg_set
+    _cfg_get = cfg_get_func
+    _cfg_set = cfg_set_func
+    LOG.info("[CATALOG] Funções de config injetadas com sucesso")
+
+
+def _build_catalog_content(session: Session) -> str:
+    """
+    Gera o conteúdo do catálogo .txt com TODOS os arquivos já enviados ao VIP.
+    Sem limite de tamanho — será enviado como arquivo.
+    """
+    from config import SOURCE_CHAT_ID as src_id
+
+    # Buscar todos os arquivos enviados para VIP (ordenados por data)
+    sent_records = session.query(SentFile).filter(
+        SentFile.sent_to_tier == 'vip',
+        SentFile.source_chat_id == src_id
+    ).order_by(SentFile.sent_at.desc()).all()
+
+    header = (
+        "╔════════════════════════════════════════╗\n"
+        "║     CATÁLOGO VIP — ARQUIVOS            ║\n"
+        "╚════════════════════════════════════════╝\n\n"
+        f"Atualizado em: {datetime.now().strftime('%d/%m/%Y %H:%M')}\n"
+        f"Total de arquivos: {len(sent_records)}\n\n"
+        "Use Ctrl+F para pesquisar pelo nome do arquivo.\n"
+        "════════════════════════════════════════\n\n"
+    )
+
+    if not sent_records:
+        return header + "Nenhum arquivo enviado ainda.\n"
+
+    # Buscar detalhes dos arquivos na tabela SourceFile
+    sent_unique_ids = [r.file_unique_id for r in sent_records]
+
+    source_map = {}
+    if sent_unique_ids:
+        sources = session.query(SourceFile).filter(
+            SourceFile.file_unique_id.in_(sent_unique_ids)
+        ).all()
+        source_map = {s.file_unique_id: s for s in sources}
+
+    # Agrupar por mês de envio
+    months = {}
+    for rec in sent_records:
+        src = source_map.get(rec.file_unique_id)
+        name = src.file_name if src and src.file_name else rec.caption or "Arquivo sem nome"
+        file_type = (src.file_type.upper() if src and src.file_type else "?")
+        size_str = ""
+        if src and src.file_size:
+            size_mb = src.file_size / (1024 * 1024)
+            size_str = f" [{size_mb:.1f} MB]" if size_mb >= 1 else f" [{src.file_size / 1024:.0f} KB]"
+
+        month_key = rec.sent_at.strftime('%m/%Y') if rec.sent_at else "Desconhecido"
+        day_str = rec.sent_at.strftime('%d/%m') if rec.sent_at else "??"
+
+        if month_key not in months:
+            months[month_key] = []
+        months[month_key].append(f"  [{day_str}] {name}{size_str}")
+
+    lines = []
+    for month, items in months.items():
+        lines.append(f"--- {month} ({len(items)} arquivo(s)) ---")
+        lines.extend(items)
+        lines.append("")
+
+    footer = (
+        "════════════════════════════════════════\n"
+        "Esta lista é atualizada diariamente.\n"
+        "Novos arquivos são adicionados todo dia às 15h.\n"
+    )
+
+    return header + "\n".join(lines) + "\n" + footer
+
+
+async def send_or_update_vip_catalog(bot: Bot, session: Session):
+    """
+    Envia o catálogo de arquivos VIP como arquivo .txt no grupo.
+    - Deleta o catálogo anterior (se existir)
+    - Envia um novo .txt atualizado
+    - Fixa (pin) a mensagem no topo do grupo
+    """
+    import tempfile
+    import os
+
+    if not VIP_CHANNEL_ID:
+        LOG.error("[CATALOG] VIP_CHANNEL_ID não configurado!")
+        return
+
+    if not _cfg_get or not _cfg_set:
+        LOG.error("[CATALOG] Funções cfg_get/cfg_set não configuradas! Chame setup_catalog() primeiro.")
+        return
+
+    catalog_content = _build_catalog_content(session)
+
+    # Deletar catálogo anterior (se existir)
+    saved_msg_id = _cfg_get("vip_catalog_message_id")
+    if saved_msg_id:
+        try:
+            await bot.delete_message(
+                chat_id=VIP_CHANNEL_ID,
+                message_id=int(saved_msg_id)
+            )
+            LOG.info(f"[CATALOG] Catálogo anterior deletado (message_id={saved_msg_id})")
+        except TelegramError as e:
+            LOG.warning(f"[CATALOG] Não foi possível deletar catálogo anterior: {e}")
+
+    # Criar arquivo .txt temporário e enviar
+    temp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8') as f:
+            f.write(catalog_content)
+            temp_path = f.name
+
+        with open(temp_path, 'rb') as f:
+            msg = await bot.send_document(
+                chat_id=VIP_CHANNEL_ID,
+                document=f,
+                filename=f"Catalogo_VIP_{datetime.now().strftime('%d_%m_%Y')}.txt",
+                caption=(
+                    "📋 <b>CATÁLOGO VIP — LISTA DE ARQUIVOS</b>\n\n"
+                    f"📦 Atualizado em {datetime.now().strftime('%d/%m/%Y às %H:%M')}\n"
+                    "🔍 Baixe o arquivo e use Ctrl+F para pesquisar!\n"
+                    "📌 Esta lista é atualizada diariamente."
+                ),
+                parse_mode='HTML'
+            )
+
+        if msg:
+            _cfg_set("vip_catalog_message_id", str(msg.message_id))
+            LOG.info(f"[CATALOG] ✅ Catálogo VIP enviado como .txt (message_id={msg.message_id})")
+
+            # Fixar no topo do grupo
+            try:
+                await bot.pin_chat_message(
+                    chat_id=VIP_CHANNEL_ID,
+                    message_id=msg.message_id,
+                    disable_notification=True
+                )
+                LOG.info("[CATALOG] 📌 Catálogo fixado no topo do grupo")
+            except TelegramError as pin_err:
+                LOG.warning(f"[CATALOG] Não foi possível fixar catálogo: {pin_err}")
+
+    except TelegramError as e:
+        LOG.error(f"[CATALOG] ❌ Erro ao enviar catálogo: {e}")
+    finally:
+        if temp_path and os.path.exists(temp_path):
+            os.unlink(temp_path)
