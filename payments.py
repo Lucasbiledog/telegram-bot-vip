@@ -12,13 +12,8 @@ from web3 import Web3
 
 LOG = logging.getLogger("payments")
 
-# Preços padrão dos planos VIP em USD (fallback quando banco não disponível)
-DEFAULT_VIP_PRICES_USD: Dict[int, float] = {
-    30: 30.0,    # Mensal
-    90: 70.0,    # Trimestral
-    180: 110.0,  # Semestral
-    365: 179.0,  # Anual
-}
+# Preços centralizados — altere SOMENTE em config.py
+from config import VIP_PRICES as DEFAULT_VIP_PRICES_USD
 
 # =========================
 # Configuração via ENV
@@ -1192,16 +1187,14 @@ async def pagar_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )]
         ])
 
+        from config import vip_plans_text_usd
         checkout_msg = (
             f"💸 <b>Pagamento VIP via Cripto</b>\n\n"
             f"✅ Clique no botão abaixo para acessar nossa página de checkout segura\n"
             f"🔒 Pague com qualquer criptomoeda\n"
             f"⚡ Ativação automática após confirmação\n\n"
             f"💰 <b>Planos disponíveis:</b>\n"
-            f"• 30 dias: $30.00 USD (Mensal)\n"
-            f"• 90 dias: $70.00 USD (Trimestral)\n"
-            f"• 180 dias: $110.00 USD (Semestral)\n"
-            f"• 365 dias: $179.00 USD (Anual)"
+            f"{vip_plans_text_usd()}"
         )
 
         sent = await send_with_retry(

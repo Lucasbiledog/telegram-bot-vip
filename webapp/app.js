@@ -360,10 +360,10 @@ async function loadBasicInfo() {
     // ====== VALORES DE PRODUÇÃO ======
     // Valores atualizados: Mensal $30 | Trimestral $70 | Semestral $110 | Anual $179
     const defaultPlans = {
-      "30": 30.00,   // Mensal
-      "90": 70.00,   // Trimestral
-      "180": 110.00, // Semestral
-      "365": 179.00  // Anual
+      "30": 1.00,    // Mensal (PRODUÇÃO: 30.00)
+      "90": 2.00,    // Trimestral (PRODUÇÃO: 70.00)
+      "180": 3.00,   // Semestral (PRODUÇÃO: 110.00)
+      "365": 4.00    // Anual (PRODUÇÃO: 179.00)
     };
     console.log("[loadBasicInfo] Renderizando planos padrão:", defaultPlans);
     renderPlans(defaultPlans);

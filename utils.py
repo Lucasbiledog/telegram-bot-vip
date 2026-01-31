@@ -51,23 +51,25 @@ def choose_plan_from_usd(amount_usd: float, prices: Dict[int, float] = None) -> 
     #     LOG.info(f"[PLAN-SELECT] ${amount_usd:.2f} → 365 dias (ANUAL)")
     #     return 365  # 1 ano (ANUAL)
 
-    # ====== VALORES DE PRODUÇÃO ======
-    # Valores atualizados: Mensal $30 | Trimestral $70 | Semestral $110 | Anual $179
-    if amount_usd < 30.0:  # Menos de $30 - não elegível
-        LOG.info(f"[PLAN-SELECT] ${amount_usd:.2f} < $30.00 → None (valor insuficiente)")
+    # Preços centralizados — altere SOMENTE em config.py
+    from config import VIP_PRICES
+    p = VIP_PRICES  # {30: X, 90: Y, 180: Z, 365: W}
+
+    if amount_usd < p[30]:
+        LOG.info(f"[PLAN-SELECT] ${amount_usd:.2f} < ${p[30]:.2f} → None (valor insuficiente)")
         return None
-    elif amount_usd < 70.0:  # $30.00 - $69.99
+    elif amount_usd < p[90]:
         LOG.info(f"[PLAN-SELECT] ${amount_usd:.2f} → 30 dias (MENSAL)")
-        return 30   # 1 mês (MENSAL)
-    elif amount_usd < 110.0:  # $70.00 - $109.99
+        return 30
+    elif amount_usd < p[180]:
         LOG.info(f"[PLAN-SELECT] ${amount_usd:.2f} → 90 dias (TRIMESTRAL)")
-        return 90   # 3 meses (TRIMESTRAL)
-    elif amount_usd < 179.0:  # $110.00 - $178.99
+        return 90
+    elif amount_usd < p[365]:
         LOG.info(f"[PLAN-SELECT] ${amount_usd:.2f} → 180 dias (SEMESTRAL)")
-        return 180  # 6 meses (SEMESTRAL)
-    else:  # $179.00+
+        return 180
+    else:
         LOG.info(f"[PLAN-SELECT] ${amount_usd:.2f} → 365 dias (ANUAL)")
-        return 365  # 1 ano (ANUAL)
+        return 365
 
 async def vip_upsert_and_get_until(tg_id: int, username: Optional[str], days: int, first_name: Optional[str] = None) -> datetime:
     """Create or replace VIP membership and return the new expiry (SEMPRE COMEÇA DO ZERO)."""

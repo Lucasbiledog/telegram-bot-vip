@@ -126,7 +126,7 @@ async def send_with_retry(func, *args, max_retries=3, **kwargs):
 
     # Se chegou aqui, todos os retries falharam
     raise last_exception
-from config import WEBAPP_URL
+from config import WEBAPP_URL, VIP_PRICES, vip_plans_text, vip_plans_text_usd
 
 from payments import (
     resolve_payment_usd_autochain,              # já está funcionando
@@ -2690,10 +2690,7 @@ async def _send_preview_media(context: ContextTypes.DEFAULT_TYPE, target_chat_id
             "🔒 Pague com qualquer criptomoeda\n"
             "⚡ Ativação automática\n\n"
             "💰 <b>Planos:</b>\n"
-            "• 30 dias: $30.00 USD (Mensal)\n"
-            "• 90 dias: $70.00 USD (Trimestral)\n"
-            "• 180 dias: $110.00 USD (Semestral)\n"
-            "• 365 dias: $179.00 USD (Anual)"
+            f"{vip_plans_text_usd()}"
         )
         
         try:
@@ -3119,10 +3116,7 @@ async def checkout_callback_handler(update: Update, context: ContextTypes.DEFAUL
                 f"🔒 Pague com qualquer criptomoeda\n"
                 f"⚡ Ativação automática do VIP\n\n"
                 f"💰 <b>Planos:</b>\n"
-                f"• 30 dias: $30.00 USD (Mensal)\n"
-                f"• 90 dias: $70.00 USD (Trimestral)\n"
-                f"• 180 dias: $110.00 USD (Semestral)\n"
-                f"• 365 dias: $179.00 USD (Anual)\n\n"
+                f"{vip_plans_text_usd()}\n\n"
                 f"📋 <b>Como funciona:</b>\n"
                 f"1. Clique no botão abaixo para pagar\n"
                 f"2. Após o pagamento, aguarde a confirmação\n"
@@ -3203,10 +3197,7 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"• Suporte prioritário\n"
                 f"• Sem anúncios ou spam\n\n"
                 f"💰 <b>Planos disponíveis:</b>\n"
-                f"• Mensal (30 dias): $30.00\n"
-                f"• Trimestral (90 dias): $70.00\n"
-                f"• Semestral (180 dias): $110.00\n"
-                f"• Anual (365 dias): $179.00\n\n"
+                f"{vip_plans_text()}\n\n"
                 f"🔐 <b>Pagamento seguro via blockchain</b>\n"
                 f"Aceitamos diversas criptomoedas em múltiplas redes.\n\n"
                 f"👇 <b>Clique no botão abaixo para pagar:</b>"
@@ -3308,10 +3299,7 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"• Suporte prioritário\n"
         f"• Sem anúncios ou spam\n\n"
         f"💰 <b>Planos disponíveis:</b>\n"
-        f"• Mensal (30 dias): $30.00\n"
-        f"• Trimestral (90 dias): $70.00\n"
-        f"• Semestral (180 dias): $110.00\n"
-        f"• Anual (365 dias): $179.00\n\n"
+        f"{vip_plans_text()}\n\n"
         f"🔐 <b>Pagamento seguro via blockchain</b>\n"
         f"Aceitamos diversas criptomoedas em múltiplas redes.\n\n"
         f"👇 <b>Clique no botão abaixo para pagar:</b>"
@@ -5050,11 +5038,13 @@ def _to_wei(amount_native: float, decimals: int = 18) -> int:
 
 PRICE_TOLERANCE = float(os.getenv("PRICE_TOLERANCE", "0.01"))  # 1%
 
+# Preços centralizados — altere SOMENTE em config.py
+from config import VIP_PRICES as _vp
 PLAN_PRICE_USD = {
-    VipPlan.MENSAL: 30.00,      # 30 dias
-    VipPlan.TRIMESTRAL: 70.00,  # 90 dias
-    VipPlan.SEMESTRAL: 110.00,  # 180 dias
-    VipPlan.ANUAL: 179.00,      # 365 dias
+    VipPlan.MENSAL: _vp[30],
+    VipPlan.TRIMESTRAL: _vp[90],
+    VipPlan.SEMESTRAL: _vp[180],
+    VipPlan.ANUAL: _vp[365],
 }
 
 def plan_from_amount(amount_usd: float) -> Optional[VipPlan]:
@@ -5081,18 +5071,18 @@ def plan_from_amount(amount_usd: float) -> Optional[VipPlan]:
     # else:
     #     return VipPlan.ANUAL       # 365 dias
 
-    # ====== VALORES DE PRODUÇÃO ======
-    # Valores atualizados: Mensal $30 | Trimestral $70 | Semestral $110 | Anual $179
-    if amount_usd < 30.00:
-        return None  # Valor insuficiente
-    elif amount_usd < 70.00:
-        return VipPlan.MENSAL      # 30 dias
-    elif amount_usd < 110.00:
-        return VipPlan.TRIMESTRAL  # 90 dias
-    elif amount_usd < 179.00:
-        return VipPlan.SEMESTRAL   # 180 dias
+    # Preços centralizados — altere SOMENTE em config.py
+    from config import VIP_PRICES as _p
+    if amount_usd < _p[30]:
+        return None
+    elif amount_usd < _p[90]:
+        return VipPlan.MENSAL
+    elif amount_usd < _p[180]:
+        return VipPlan.TRIMESTRAL
+    elif amount_usd < _p[365]:
+        return VipPlan.SEMESTRAL
     else:
-        return VipPlan.ANUAL       # 365 dias
+        return VipPlan.ANUAL
     #
     # if amount_usd < 30.00:
     #     return None  # Valor muito baixo
@@ -6033,10 +6023,7 @@ async def pagar_vip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🔒 Pague com qualquer criptomoeda\n"
         "⚡ Ativação automática\n\n"
         "💰 <b>Planos:</b>\n"
-        "• 30 dias: $30.00 USD (Mensal)\n"
-        "• 90 dias: $70.00 USD (Trimestral)\n"
-        "• 180 dias: $110.00 USD (Semestral)\n"
-        "• 365 dias: $179.00 USD (Anual)"
+        f"{vip_plans_text_usd()}"
     )
 
     await update.effective_message.reply_text(
@@ -7043,10 +7030,7 @@ async def send_promo_message_to_free(bot: Bot):
          "  ✅ Sem anúncios\n"
          "  ✅ Suporte prioritário\n\n"
          "💰 <b>Planos Disponíveis:</b>\n"
-         "  • 30 dias: $30.00 USD (Mensal)\n"
-         "  • 90 dias: $70.00 USD (Trimestral) 💰\n"
-         "  • 180 dias: $110.00 USD (Semestral)\n"
-         "  • 365 dias: $179.00 USD (Anual) 🔥\n\n"
+         f"{vip_plans_text_usd()}\n\n"
          "🔒 <b>Pagamento 100% Seguro</b>\n"
          "  • Aceita qualquer criptomoeda\n"
          "  • Ativação automática e instantânea\n"
@@ -7438,10 +7422,10 @@ async def get_vip_pricing():
     return {
         "wallet_address": WALLET_ADDRESS,
         "value_tiers": {
-            "$30.00": "30 dias (Mensal)",
-            "$70.00": "90 dias (Trimestral)",
-            "$110.00": "180 dias (Semestral)",
-            "$179.00": "365 dias (Anual)"
+            f"${VIP_PRICES[30]:.2f}": "30 dias (Mensal)",
+            f"${VIP_PRICES[90]:.2f}": "90 dias (Trimestral)",
+            f"${VIP_PRICES[180]:.2f}": "180 dias (Semestral)",
+            f"${VIP_PRICES[365]:.2f}": "365 dias (Anual)"
         },
         "min_confirmations": 3
     }
@@ -7498,14 +7482,8 @@ async def api_config(uid: str = None, ts: str = None, sig: str = None):
             if sig != expected_sig:
                 raise HTTPException(status_code=403, detail="Assinatura inválida")
         
-        # ====== MODO TESTE - VALORES REDUZIDOS ======
-        # Use estes valores para testar com quantias pequenas
-        value_tiers = {
-            "30": 30.00,   # Preço para 1 mês
-            "90": 70.00,   # Preço para 3 meses
-            "180": 110.00, # Preço para 6 meses
-            "365": 179.00  # Preço para 1 ano
-        }
+        # Preços centralizados — altere SOMENTE em config.py
+        value_tiers = {str(k): v for k, v in VIP_PRICES.items()}
         
         return {
             "wallet": WALLET_ADDRESS,
@@ -7756,12 +7734,12 @@ async def renew_vip_callback_handler(update: Update, context: ContextTypes.DEFAU
             # Criar botões para planos
             keyboard = InlineKeyboardMarkup([
                 [
-                    InlineKeyboardButton("💎 1 MÊS - $30.00", callback_data="renew_plan_30"),
-                    InlineKeyboardButton("💎 3 MESES - $70.00", callback_data="renew_plan_90")
+                    InlineKeyboardButton(f"💎 1 MÊS - ${VIP_PRICES[30]:.2f}", callback_data="renew_plan_30"),
+                    InlineKeyboardButton(f"💎 3 MESES - ${VIP_PRICES[90]:.2f}", callback_data="renew_plan_90")
                 ],
                 [
-                    InlineKeyboardButton("💎 6 MESES - $110.00", callback_data="renew_plan_180"),
-                    InlineKeyboardButton("💎 1 ANO - $179.00", callback_data="renew_plan_365")
+                    InlineKeyboardButton(f"💎 6 MESES - ${VIP_PRICES[180]:.2f}", callback_data="renew_plan_180"),
+                    InlineKeyboardButton(f"💎 1 ANO - ${VIP_PRICES[365]:.2f}", callback_data="renew_plan_365")
                 ],
                 [InlineKeyboardButton("❌ Cancelar", callback_data="cancel_renewal")]
             ])
@@ -7811,10 +7789,10 @@ async def renew_plan_callback_handler(update: Update, context: ContextTypes.DEFA
     
     # Mapeamento de dias para preços e descrições
     plan_info = {
-        30: {"price": 30.00, "name": "1 Mês"},
-        90: {"price": 70.00, "name": "3 Meses"},
-        180: {"price": 110.00, "name": "6 Meses"},
-        365: {"price": 179.00, "name": "1 Ano"}
+        30: {"price": VIP_PRICES[30], "name": "1 Mês"},
+        90: {"price": VIP_PRICES[90], "name": "3 Meses"},
+        180: {"price": VIP_PRICES[180], "name": "6 Meses"},
+        365: {"price": VIP_PRICES[365], "name": "1 Ano"}
     }
     
     if days not in plan_info:
