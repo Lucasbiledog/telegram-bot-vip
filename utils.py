@@ -68,19 +68,6 @@ def choose_plan_from_usd(amount_usd: float, prices: Dict[int, float] = None) -> 
     else:  # $179.00+
         LOG.info(f"[PLAN-SELECT] ${amount_usd:.2f} → 365 dias (ANUAL)")
         return 365  # 1 ano (ANUAL)
-    
-    # Fallback para compatibilidade (caso ainda existam preços fixos)
-    if prices:
-        tol = 0.01
-        best_days = None
-        best_price = -1.0
-        for days, price in prices.items():
-            if amount_usd + tol >= price and price > best_price:
-                best_price = price
-                best_days = days
-        return best_days
-    
-    return None
 
 async def vip_upsert_and_get_until(tg_id: int, username: Optional[str], days: int, first_name: Optional[str] = None) -> datetime:
     """Create or replace VIP membership and return the new expiry (SEMPRE COMEÇA DO ZERO)."""
@@ -286,9 +273,9 @@ def days_to_plan(days: int) -> VipPlan:
     if days >= 365:
         return VipPlan.ANUAL
     elif days >= 180:
+        return VipPlan.SEMESTRAL
+    elif days >= 90:
         return VipPlan.TRIMESTRAL
-    elif days >= 60:
-        return VipPlan.BIMESTRAL
     else:
         return VipPlan.MENSAL
 

@@ -92,7 +92,7 @@ from sqlalchemy.engine import make_url
 
 # Importar apenas User, PendingNotification e MemberLog do models.py
 # Pack e Payment já estão definidos no main.py com mais campos
-from models import User, PendingNotification, MemberLog, Base as ModelsBase
+from models import User, PendingNotification, MemberLog, SupportTicket, Base as ModelsBase
 
 # === Funções de Retry Automático ===
 async def send_with_retry(func, *args, max_retries=3, **kwargs):
@@ -3214,7 +3214,8 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             # Criar botão com link de pagamento
             keyboard = InlineKeyboardMarkup([
-                [InlineKeyboardButton("💳 Fazer Pagamento", url=payment_url)]
+                [InlineKeyboardButton("💳 Fazer Pagamento", url=payment_url)],
+                [InlineKeyboardButton("📩 Suporte", callback_data="support_start")],
             ])
 
             await msg.reply_text(payment_msg, parse_mode='HTML', reply_markup=keyboard)
@@ -3318,7 +3319,8 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Criar botão com link de pagamento
     keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("💳 Fazer Pagamento", url=payment_url)]
+        [InlineKeyboardButton("💳 Fazer Pagamento", url=payment_url)],
+        [InlineKeyboardButton("📩 Suporte", callback_data="support_start")],
     ])
 
     await msg.reply_text(payment_msg, parse_mode='HTML', reply_markup=keyboard)
@@ -8324,6 +8326,15 @@ async def on_startup():
         application.add_handler(CallbackQueryHandler(renew_vip_callback_handler, pattern="renew_vip_callback"), group=1)
         application.add_handler(CallbackQueryHandler(renew_plan_callback_handler, pattern="renew_plan_"), group=1)
         application.add_handler(CallbackQueryHandler(cancel_renewal_callback_handler, pattern="cancel_renewal"), group=1)
+
+        # ===== Sistema de Suporte =====
+        from support import get_support_conversation_handler, tickets_cmd, reply_cmd, close_ticket_cmd, msg_cmd
+        application.add_handler(get_support_conversation_handler(), group=-40)
+        application.add_handler(CommandHandler("tickets", tickets_cmd), group=1)
+        application.add_handler(CommandHandler("reply", reply_cmd), group=1)
+        application.add_handler(CommandHandler("close_ticket", close_ticket_cmd), group=1)
+        application.add_handler(CommandHandler("msg", msg_cmd), group=1)
+        logging.info("✅ Sistema de suporte registrado (/tickets, /reply, /close_ticket, /msg)")
 
         # Jobs
         await _reschedule_daily_packs()

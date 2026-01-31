@@ -12,6 +12,14 @@ from web3 import Web3
 
 LOG = logging.getLogger("payments")
 
+# Preços padrão dos planos VIP em USD (fallback quando banco não disponível)
+DEFAULT_VIP_PRICES_USD: Dict[int, float] = {
+    30: 30.0,    # Mensal
+    90: 70.0,    # Trimestral
+    180: 110.0,  # Semestral
+    365: 179.0,  # Anual
+}
+
 # =========================
 # Configuração via ENV
 # =========================

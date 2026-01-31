@@ -1286,6 +1286,20 @@ async def _send_catalog_to_channel(bot: Bot, channel_id: int, config_key: str, c
                     disable_notification=True
                 )
                 LOG.info(f"[CATALOG] 📌 Catálogo fixado no topo de {channel_id}")
+
+                # Apagar a mensagem de serviço "X fixou uma mensagem"
+                # O Telegram cria automaticamente uma notificação no grupo ao fixar.
+                # Geralmente tem message_id = msg.message_id + 1
+                await asyncio.sleep(1)
+                try:
+                    await bot.delete_message(
+                        chat_id=channel_id,
+                        message_id=msg.message_id + 1
+                    )
+                    LOG.info(f"[CATALOG] 🗑️ Mensagem de serviço 'fixado' removida de {channel_id}")
+                except TelegramError:
+                    pass  # Mensagem de serviço pode não existir ou ter outro ID
+
             except TelegramError as pin_err:
                 LOG.warning(f"[CATALOG] Não foi possível fixar catálogo em {channel_id}: {pin_err}")
 

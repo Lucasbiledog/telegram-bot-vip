@@ -38,6 +38,22 @@ class PendingNotification(Base):
     sent: Mapped[bool] = mapped_column(Boolean, default=False)
     sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
+class SupportTicket(Base):
+    """Tickets de suporte dos usuários"""
+    __tablename__ = "support_tickets"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer, index=True, nullable=False)
+    username: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    first_name: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default="open", nullable=False)  # open, answered, closed
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+    updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    admin_reply: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    replied_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
 class MemberLog(Base):
     """Log de entrada/saída de membros no grupo VIP"""
     __tablename__ = "member_logs"
