@@ -1334,8 +1334,9 @@ async def send_or_update_vip_catalog(bot: Bot, session: Session):
             caption=(
                 "📋 <b>CATÁLOGO — TODOS OS ARQUIVOS DISPONÍVEIS</b>\n\n"
                 f"📦 Atualizado em {datetime.now().strftime('%d/%m/%Y às %H:%M')}\n"
-                "🔍 Baixe o arquivo e use Ctrl+F para pesquisar!\n"
-                "💎 Assine o VIP para receber conteúdo diário!"
+                "🔍 Baixe o arquivo e use Ctrl+F para pesquisar!\n\n"
+                "💎 <b>Quer acesso VIP?</b>\n"
+                "👉 Envie <b>/start</b> no privado do bot para assinar!"
             )
         )
     else:
