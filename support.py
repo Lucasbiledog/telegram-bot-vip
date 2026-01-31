@@ -2,6 +2,7 @@
 Sistema de Suporte via Tickets.
 
 Handlers para usuários abrirem tickets e admins responderem/fecharem.
+Usa context.user_data para rastrear estado (sem ConversationHandler).
 """
 from __future__ import annotations
 
@@ -11,7 +12,6 @@ from datetime import datetime, timezone
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ContextTypes,
-    ConversationHandler,
     CallbackQueryHandler,
     MessageHandler,
     CommandHandler,
@@ -20,38 +20,53 @@ from telegram.ext import (
 
 LOG = logging.getLogger("support")
 
-# Estado da conversa de suporte
-WAITING_DESCRIPTION = 0
+# Chave no user_data para indicar que estamos esperando descrição
+_SUPPORT_WAITING = "support_waiting_description"
 
 
 # =====================
 # Handlers do Usuário
 # =====================
 
-async def support_start_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+async def support_start_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Callback quando usuário clica no botão Suporte."""
     query = update.callback_query
     await query.answer()
+
+    # Marcar que estamos esperando a descrição
+    context.user_data[_SUPPORT_WAITING] = True
+
     await query.message.reply_text(
         "📩 <b>Suporte</b>\n\n"
-        "Descreva seu problema ou dúvida em uma mensagem.\n"
-        "Nossa equipe responderá o mais breve possível.",
+        "Descreva seu problema ou dúvida na próxima mensagem.\n"
+        "Nossa equipe responderá o mais breve possível.\n\n"
+        "Para cancelar, envie /cancelar_suporte",
         parse_mode="HTML",
     )
-    return WAITING_DESCRIPTION
 
 
-async def support_receive_description(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Recebe a descrição do problema e cria o ticket."""
-    from main import SessionLocal, is_admin, log_to_group
+async def support_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Captura texto do usuário se estiver aguardando descrição do ticket."""
+    # Só processa se estamos esperando descrição
+    if not context.user_data.get(_SUPPORT_WAITING):
+        return  # Não estamos esperando, deixar outros handlers processar
+
+    # Só funciona em chat privado
+    if update.effective_chat.type != "private":
+        return
+
+    from main import SessionLocal, log_to_group
     from models import SupportTicket
 
     user = update.effective_user
-    description = update.message.text.strip()
+    description = (update.message.text or "").strip()
 
     if not description:
         await update.message.reply_text("Por favor, descreva seu problema.")
-        return WAITING_DESCRIPTION
+        return
+
+    # Limpar estado ANTES de processar (evita reprocessamento)
+    context.user_data.pop(_SUPPORT_WAITING, None)
 
     # Criar ticket no banco
     with SessionLocal() as s:
@@ -81,13 +96,11 @@ async def support_receive_description(update: Update, context: ContextTypes.DEFA
         f"Responder: <code>/reply {ticket_id} sua resposta aqui</code>"
     )
 
-    return ConversationHandler.END
 
-
-async def support_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+async def support_cancel_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Cancela a criação de ticket."""
-    await update.message.reply_text("Suporte cancelado.")
-    return ConversationHandler.END
+    if context.user_data.pop(_SUPPORT_WAITING, None):
+        await update.effective_message.reply_text("Suporte cancelado.")
 
 
 # =====================
@@ -280,26 +293,3 @@ async def msg_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.effective_message.reply_text(
             f"❌ Falha ao enviar mensagem: {e}"
         )
-
-
-# =====================
-# ConversationHandler de Suporte
-# =====================
-
-def get_support_conversation_handler() -> ConversationHandler:
-    """Retorna o ConversationHandler do sistema de suporte."""
-    return ConversationHandler(
-        entry_points=[
-            CallbackQueryHandler(support_start_callback, pattern="^support_start$"),
-        ],
-        states={
-            WAITING_DESCRIPTION: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, support_receive_description),
-            ],
-        },
-        fallbacks=[
-            CommandHandler("cancel", support_cancel),
-        ],
-        per_message=False,
-        name="support_conversation",
-    )

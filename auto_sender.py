@@ -541,7 +541,7 @@ async def send_teaser_to_free(bot: Bot, all_parts: list):
                     caption=(
                         f"👀 <b>Preview do conteúdo VIP de hoje!</b>\n\n"
                         f"💎 Quer ter acesso completo? Assine o VIP!\n\n"
-                        f"👉 Envie <b>/start</b> no privado do bot para assinar."
+                        f'👉 <a href="https://t.me/UnrealPack5_bot?start=vip">Clique aqui para assinar</a>'
                     ),
                     parse_mode='HTML'
                 )
@@ -1350,7 +1350,7 @@ async def send_or_update_vip_catalog(bot: Bot, session: Session):
                 f"📦 Atualizado em {datetime.now().strftime('%d/%m/%Y às %H:%M')}\n"
                 "🔍 Baixe o arquivo e use Ctrl+F para pesquisar!\n\n"
                 "💎 <b>Quer acesso VIP?</b>\n"
-                "👉 Envie <b>/start</b> no privado do bot para assinar!"
+                f'👉 <a href="https://t.me/UnrealPack5_bot?start=vip">Clique aqui para assinar</a>'
             )
         )
     else:

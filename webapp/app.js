@@ -375,12 +375,6 @@ async function loadBasicInfo() {
         <p>Esta página funciona completamente sem o bot do Telegram.</p>
         <p>Para receber o convite do grupo VIP, insira seu ID do Telegram no campo acima.</p>
       `, true);
-    } else {
-      // Tem UID válido - mostrar mensagem diferente
-      showAlert(`
-        <h3>✅ Seu ID foi capturado!</h3>
-        <p>Após validar o pagamento, você receberá o comprovante e o link do grupo VIP diretamente no Telegram.</p>
-      `, true);
     }
 
   } catch (err) {

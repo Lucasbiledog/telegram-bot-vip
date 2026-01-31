@@ -765,7 +765,7 @@ def ensure_schema():
 # Helpers
 # =========================
 # Quais comandos usuários comuns podem usar
-ALLOWED_FOR_NON_ADM = {"pagar", "tx", "start", "novopack", "novopackvip", "novopackfree", "getid", "comandos", "listar_comandos" }
+ALLOWED_FOR_NON_ADM = {"pagar", "tx", "start", "novopack", "novopackvip", "novopackfree", "getid", "comandos", "listar_comandos", "cancelar_suporte", "meu_vip" }
 
 def esc(s): return html.escape(str(s) if s is not None else "")
 def now_utc(): return dt.datetime.now(dt.timezone.utc)
@@ -8328,8 +8328,19 @@ async def on_startup():
         application.add_handler(CallbackQueryHandler(cancel_renewal_callback_handler, pattern="cancel_renewal"), group=1)
 
         # ===== Sistema de Suporte =====
-        from support import get_support_conversation_handler, tickets_cmd, reply_cmd, close_ticket_cmd, msg_cmd
-        application.add_handler(get_support_conversation_handler(), group=-40)
+        from support import (
+            support_start_callback, support_text_handler, support_cancel_cmd,
+            tickets_cmd, reply_cmd, close_ticket_cmd, msg_cmd,
+        )
+        # Callback do botão "Suporte"
+        application.add_handler(CallbackQueryHandler(support_start_callback, pattern="^support_start$"), group=1)
+        # Captura texto do usuário quando aguardando descrição (antes de outros handlers de texto)
+        application.add_handler(MessageHandler(
+            filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE,
+            support_text_handler
+        ), group=-3)
+        application.add_handler(CommandHandler("cancelar_suporte", support_cancel_cmd), group=1)
+        # Comandos admin
         application.add_handler(CommandHandler("tickets", tickets_cmd), group=1)
         application.add_handler(CommandHandler("reply", reply_cmd), group=1)
         application.add_handler(CommandHandler("close_ticket", close_ticket_cmd), group=1)
