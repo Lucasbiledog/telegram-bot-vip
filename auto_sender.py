@@ -873,6 +873,42 @@ async def send_weekly_free_file(bot: Bot, session: Session):
 
                     LOG.info(f"[AUTO-SEND] ✅ Replicado no VIP: {vip_success}/{len(parts_to_send_vip)} parte(s)")
 
+                # === BÔNUS VIP: enviar +1 arquivo extra para não interromper o fluxo diário ===
+                LOG.info("[AUTO-SEND] 🎁 Buscando arquivo bônus para o VIP...")
+                bonus_file = await get_random_file_from_source(session, 'vip')
+
+                if bonus_file:
+                    bonus_parts = get_all_parts(session, bonus_file)
+                    LOG.info(f"[AUTO-SEND] 🎁 Enviando bônus VIP: {len(bonus_parts)} parte(s)")
+
+                    bonus_success = 0
+                    for i, part in enumerate(bonus_parts, 1):
+                        if i == 1:
+                            bonus_caption = f"🎁 Bônus VIP Exclusivo\n📅 {datetime.now().strftime('%d/%m/%Y')}"
+                            if part.caption:
+                                bonus_caption += f"\n\n{part.caption}"
+                            if len(bonus_parts) > 1:
+                                bonus_caption += f"\n\n📦 Arquivo com {len(bonus_parts)} partes"
+                        else:
+                            bonus_caption = f"📦 Parte {i} de {len(bonus_parts)}"
+                            if part.caption:
+                                bonus_caption += f"\n{part.caption}"
+
+                        msg_bonus = await send_file_to_channel(bot, part, VIP_CHANNEL_ID, bonus_caption)
+                        if msg_bonus:
+                            await mark_file_as_sent(session, part, 'vip')
+                            bonus_success += 1
+
+                        if i < len(bonus_parts):
+                            await asyncio.sleep(0.5)
+
+                    LOG.info(f"[AUTO-SEND] 🎁 Bônus VIP enviado: {bonus_success}/{len(bonus_parts)} parte(s)")
+
+                    # Enviar teaser do bônus para o FREE
+                    await send_teaser_to_free(bot, bonus_parts)
+                else:
+                    LOG.warning("[AUTO-SEND] ⚠️ Nenhum arquivo disponível para bônus VIP")
+
         elif success_count > 0:
             LOG.warning(f"[AUTO-SEND] ⚠️ Envio parcial: {success_count}/{len(all_parts)} partes")
         else:
