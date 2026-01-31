@@ -538,7 +538,11 @@ async def send_teaser_to_free(bot: Bot, all_parts: list):
                     chat_id=FREE_CHANNEL_ID,
                     document=f,
                     filename=txt_name,
-                    caption=f"👀 <b>Preview do conteúdo VIP de hoje!</b>\n\n💎 Quer ter acesso completo? Assine o VIP!",
+                    caption=(
+                        f"👀 <b>Preview do conteúdo VIP de hoje!</b>\n\n"
+                        f"💎 Quer ter acesso completo? Assine o VIP!\n\n"
+                        f"👉 Envie <b>/start</b> no privado do bot para assinar."
+                    ),
                     parse_mode='HTML'
                 )
 
@@ -828,6 +832,47 @@ async def send_weekly_free_file(bot: Bot, session: Session):
 
         if success_count == len(all_parts):
             LOG.info(f"[AUTO-SEND] ✅ Envio FREE semanal concluído: {success_count} parte(s)")
+
+            # === REPLICAR NO VIP (mesmo arquivo nos 2 grupos) ===
+            if VIP_CHANNEL_ID:
+                LOG.info("[AUTO-SEND] 📤 Replicando arquivo FREE no canal VIP...")
+
+                # Verificar quais partes já foram enviadas ao VIP
+                sent_vip_ids = {
+                    r.file_unique_id for r in session.query(SentFile.file_unique_id).filter(
+                        SentFile.sent_to_tier == 'vip',
+                        SentFile.source_chat_id == SOURCE_CHAT_ID
+                    ).all()
+                }
+
+                parts_to_send_vip = [p for p in all_parts if p.file_unique_id not in sent_vip_ids]
+
+                if not parts_to_send_vip:
+                    LOG.info("[AUTO-SEND] Arquivo já existe no VIP, pulando replicação")
+                else:
+                    vip_success = 0
+                    for i, part in enumerate(parts_to_send_vip, 1):
+                        if i == 1:
+                            vip_caption = f"🔥 Conteúdo VIP Exclusivo\n📅 {datetime.now().strftime('%d/%m/%Y')}"
+                            if part.caption:
+                                vip_caption += f"\n\n{part.caption}"
+                            if len(parts_to_send_vip) > 1:
+                                vip_caption += f"\n\n📦 Arquivo com {len(parts_to_send_vip)} partes"
+                        else:
+                            vip_caption = f"📦 Parte {i} de {len(parts_to_send_vip)}"
+                            if part.caption:
+                                vip_caption += f"\n{part.caption}"
+
+                        msg_vip = await send_file_to_channel(bot, part, VIP_CHANNEL_ID, vip_caption)
+                        if msg_vip:
+                            await mark_file_as_sent(session, part, 'vip')
+                            vip_success += 1
+
+                        if i < len(parts_to_send_vip):
+                            await asyncio.sleep(0.5)
+
+                    LOG.info(f"[AUTO-SEND] ✅ Replicado no VIP: {vip_success}/{len(parts_to_send_vip)} parte(s)")
+
         elif success_count > 0:
             LOG.warning(f"[AUTO-SEND] ⚠️ Envio parcial: {success_count}/{len(all_parts)} partes")
         else:
