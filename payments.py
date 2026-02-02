@@ -12,6 +12,9 @@ from web3 import Web3
 
 LOG = logging.getLogger("payments")
 
+# Preços centralizados — altere SOMENTE em config.py
+from config import VIP_PRICES as DEFAULT_VIP_PRICES_USD
+
 # =========================
 # Configuração via ENV
 # =========================
@@ -83,12 +86,15 @@ FALLBACK_PRICE_META: Dict[str, Dict[str, Any]] = {
 
 
 def _update_fallback_prices() -> None:
-    """Atualiza preços de fallback principais a partir do CoinGecko."""
-    
+    """Atualiza preços de fallback via Binance (primário) → Kraken → CoinGecko (backup).
+
+    Também popula _PRICE_CACHE para que validações usem cache instantâneo.
+    """
+
     # Lista de tokens para atualizar automaticamente
     price_updates = [
         {
-            "cg_id": "bitcoin", 
+            "cg_id": "bitcoin",
             "keys": ["bitcoin", "0x38:0x7130d2a12b9bcbfae4f2634d864a1ee1ce3ead9c"],  # BTC/BTCB
             "name": "Bitcoin/BTCB"
         },
@@ -98,7 +104,7 @@ def _update_fallback_prices() -> None:
             "name": "Ethereum"
         },
         {
-            "cg_id": "binancecoin", 
+            "cg_id": "binancecoin",
             "keys": ["binancecoin"],
             "name": "BNB"
         },
@@ -148,46 +154,118 @@ def _update_fallback_prices() -> None:
             "name": "ApeCoin"
         }
     ]
-    
-    # Construir URL com múltiplas moedas
-    coin_ids = [item["cg_id"] for item in price_updates]
-    url = f"https://api.coingecko.com/api/v3/simple/price?ids={','.join(coin_ids)}&vs_currencies=usd"
-    
-    try:
-        r = httpx.get(url, timeout=15)
-        if r.status_code == 200:
-            data = r.json()
-            updated_count = 0
-            
-            for item in price_updates:
-                cg_id = item["cg_id"]
-                if cg_id in data and "usd" in data[cg_id]:
-                    px = float(data[cg_id]["usd"])
-                    
-                    # Atualizar todas as chaves para este token
-                    for key in item["keys"]:
-                        old_price = FALLBACK_PRICES.get(key, 0)
-                        FALLBACK_PRICES[key] = px
-                        FALLBACK_PRICE_META[key] = {"source": "coingecko_auto", "ts": time.time()}
-                        updated_count += 1
-                        
-                        LOG.info(
-                            "[AUTO-UPDATE] %s: $%.2f -> $%.2f (key: %s)",
-                            item["name"], old_price, px, key
-                        )
-            
+
+    # Mapeamento Binance: cg_id -> par Binance
+    binance_pairs = {
+        "bitcoin": "BTCUSDT",
+        "ethereum": "ETHUSDT",
+        "binancecoin": "BNBUSDT",
+        "avalanche-2": "AVAXUSDT",
+        "fantom": "FTMUSDT",
+        "apecoin": "APEUSDT",
+        "mantle": "MNTUSDT",
+        "celo": "CELOUSDT",
+        "polygon-pos": "MATICUSDT",
+    }
+
+    # Mapeamento Kraken: cg_id -> par Kraken
+    kraken_pairs = {
+        "bitcoin": "XBTUSD",
+        "ethereum": "ETHUSD",
+        "avalanche-2": "AVAXUSD",
+        "fantom": "FTMUSD",
+        "apecoin": "APEUSD",
+        "polygon-pos": "MATICUSD",
+    }
+
+    updated_count = 0
+    resolved: dict[str, float] = {}  # cg_id -> price
+
+    # --- Fonte 1: Binance (sem rate limit, gratuita) ---
+    binance_ids = [item["cg_id"] for item in price_updates if item["cg_id"] in binance_pairs]
+    if binance_ids:
+        # Buscar todos os preços de uma vez via /ticker/price (aceita múltiplos símbolos)
+        symbols_json = str([binance_pairs[cid] for cid in binance_ids]).replace("'", '"')
+        url = f"https://api.binance.com/api/v3/ticker/price?symbols={symbols_json}"
+        try:
+            r = httpx.get(url, timeout=10)
+            if r.status_code == 200:
+                data = r.json()
+                # Criar mapa reverso pair->cg_id
+                pair_to_cg = {v: k for k, v in binance_pairs.items()}
+                for entry in data:
+                    sym = entry.get("symbol", "")
+                    cg_id = pair_to_cg.get(sym)
+                    if cg_id and entry.get("price"):
+                        resolved[cg_id] = float(entry["price"])
+                LOG.info("[AUTO-UPDATE] Binance retornou %d preços", len([e for e in data if pair_to_cg.get(e.get("symbol"))]))
+            else:
+                LOG.warning("[AUTO-UPDATE] Binance HTTP %d", r.status_code)
+        except Exception as exc:
+            LOG.warning("[AUTO-UPDATE] Binance falhou: %s", exc)
+
+    # --- Fonte 2: Kraken para tokens não resolvidos ---
+    missing_kraken = [cid for cid in kraken_pairs if cid not in resolved]
+    for cg_id in missing_kraken:
+        pair = kraken_pairs[cg_id]
+        url = f"https://api.kraken.com/0/public/Ticker?pair={pair}"
+        try:
+            r = httpx.get(url, timeout=8)
+            if r.status_code == 200:
+                data = r.json()
+                if data and "result" in data and data["result"]:
+                    px = float(list(data["result"].values())[0]["c"][0])
+                    if px > 0:
+                        resolved[cg_id] = px
+                        LOG.info("[AUTO-UPDATE] Kraken %s = $%.2f", cg_id, px)
+        except Exception as exc:
+            LOG.warning("[AUTO-UPDATE] Kraken falhou p/ %s: %s", cg_id, exc)
+
+    # --- Fonte 3: CoinGecko como backup para tokens ainda não resolvidos ---
+    missing_cg = [item["cg_id"] for item in price_updates if item["cg_id"] not in resolved]
+    if missing_cg:
+        coin_ids_str = ",".join(missing_cg)
+        url = f"https://api.coingecko.com/api/v3/simple/price?ids={coin_ids_str}&vs_currencies=usd"
+        try:
+            r = httpx.get(url, timeout=15)
+            if r.status_code == 200:
+                data = r.json()
+                for cg_id in missing_cg:
+                    if cg_id in data and "usd" in data[cg_id]:
+                        resolved[cg_id] = float(data[cg_id]["usd"])
+                LOG.info("[AUTO-UPDATE] CoinGecko retornou %d preços (backup)", sum(1 for cid in missing_cg if cid in resolved))
+            elif r.status_code == 429:
+                LOG.warning("[AUTO-UPDATE] CoinGecko 429 (rate limit) — ignorado, Binance/Kraken já cobriram")
+            else:
+                LOG.warning("[AUTO-UPDATE] CoinGecko erro %d", r.status_code)
+        except Exception as exc:
+            LOG.warning("[AUTO-UPDATE] CoinGecko falhou: %s", exc)
+
+    # --- Aplicar preços resolvidos em FALLBACK_PRICES + _PRICE_CACHE ---
+    for item in price_updates:
+        cg_id = item["cg_id"]
+        if cg_id not in resolved:
+            continue
+        px = resolved[cg_id]
+
+        for key in item["keys"]:
+            old_price = FALLBACK_PRICES.get(key, 0)
+            FALLBACK_PRICES[key] = px
+            FALLBACK_PRICE_META[key] = {"source": "auto_binance_kraken", "ts": time.time()}
+            updated_count += 1
             LOG.info(
-                "[AUTO-UPDATE] Atualizados %d preços de fallback em %s",
-                updated_count,
-                time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()),
+                "[AUTO-UPDATE] %s: $%.2f -> $%.2f (key: %s)",
+                item["name"], old_price, px, key
             )
-        elif r.status_code == 429:
-            LOG.warning("[AUTO-UPDATE] Rate limit (429) - tentando novamente mais tarde")
-        else:
-            LOG.warning("[AUTO-UPDATE] CoinGecko erro %d", r.status_code)
-            
-    except Exception as exc:
-        LOG.warning("[AUTO-UPDATE] Falha ao atualizar preços de fallback: %s", exc)
+
+        # Popular _PRICE_CACHE para que validações usem cache instantâneo
+        _price_cache_put(f"native:{cg_id}", px, from_backup=True)
+
+    LOG.info(
+        "[AUTO-UPDATE] Atualizados %d preços de fallback em %s (fontes: Binance+Kraken+CoinGecko)",
+        updated_count,
+        time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()),
+    )
 
 
 # Atualizar preços de fallback no startup
@@ -200,10 +278,10 @@ _update_fallback_prices()
 import threading
 
 def _periodic_price_update():
-    """Atualiza preços de fallback a cada 2 horas (reduzido para evitar rate limit)"""
+    """Atualiza preços de fallback a cada 5 minutos via Binance/Kraken (sem rate limit)"""
     while True:
         try:
-            time.sleep(7200)  # 2 horas (reduzido de 30min para evitar 429)
+            time.sleep(300)  # 5 minutos — Binance/Kraken não têm rate limit restritivo
             LOG.info("[PERIODIC] Iniciando atualização automática de preços...")
             _update_fallback_prices()
         except Exception as e:
@@ -456,123 +534,79 @@ async def _get_confirmations(w3: Web3, block_number: Optional[int]) -> int:
 # CoinGecko + APIs de backup (com retry/backoff + cache)
 # =========================
 
-# APIs de backup GRÁTIS para preços de crypto (otimizado para 100+ tx/min)
-# CoinGecko → CryptoCompare → CoinCap → Binance → Coinbase
+# APIs de backup GRATUITAS para preços de crypto (principais moedas)
+# Binance → Kraken → CoinGecko → Fallback Prices
 BACKUP_PRICE_APIS = {
-    # CryptoCompare - API grátis com 100k requests/mês
-    "cryptocompare": {
-        "url_template": "https://min-api.cryptocompare.com/data/price?fsym={symbol}&tsyms=USD",
-        "symbol_map": {
-            "ethereum": "ETH",
-            "bitcoin": "BTC",
-            "binancecoin": "BNB",
-            "polygon-pos": "MATIC",
-            "avalanche-2": "AVAX",
-            "fantom": "FTM",
-            "crypto-com-chain": "CRO",
-            "celo": "CELO",
-            "moonbeam": "GLMR",
-            "moonriver": "MOVR",
-            "mantle": "MNT",
-            "apecoin": "APE"
-        },
-        "parser": lambda x: float(x.get("USD", 0)) if x and "USD" in x else None
-    },
-    # CoinCap - API grátis sem limite de requests
-    "coincap": {
-        "url_template": "https://api.coincap.io/v2/assets/{coincap_id}",
-        "id_map": {
-            "ethereum": "ethereum",
-            "bitcoin": "bitcoin",
-            "binancecoin": "binance-coin",
-            "polygon-pos": "polygon",
-            "avalanche-2": "avalanche",
-            "fantom": "fantom",
-            "crypto-com-chain": "crypto-com-coin",
-            "celo": "celo",
-            "apecoin": "apecoin"
-        },
-        "parser": lambda x: float(x["data"]["priceUsd"]) if x and "data" in x and "priceUsd" in x["data"] else None
-    },
-    # Binance - API pública grátis (limitado a pares específicos)
+    # Binance - API pública grátis (pares principais: BTC, ETH, BNB, USDT)
     "binance": {
         "pairs": {
             "ethereum": "ETHUSDT",
             "bitcoin": "BTCUSDT",
             "binancecoin": "BNBUSDT",
-            "polygon-pos": "MATICUSDT",
-            "avalanche-2": "AVAXUSDT"
+            "tether": "USDTUSD",      # Preço do USDT (sempre ~1.00)
+            "usd-coin": "USDCUSDT"    # Preço do USDC (sempre ~1.00)
         },
         "url_template": "https://api.binance.com/api/v3/ticker/price?symbol={pair}",
         "parser": lambda x: float(x.get("price", 0)) if x and "price" in x else None
+    },
+    # Kraken - API pública grátis, muito confiável
+    "kraken": {
+        "pairs": {
+            "ethereum": "ETHUSD",
+            "bitcoin": "XBTUSD",      # BTC = XBT no Kraken
+            "binancecoin": "BNBUSD",
+            "tether": "USDTUSD",
+            "usd-coin": "USDCUSD"
+        },
+        "url_template": "https://api.kraken.com/0/public/Ticker?pair={pair}",
+        "parser": lambda x: float(list(x["result"].values())[0]["c"][0]) if x and "result" in x and x["result"] else None
     }
 }
 
 async def _try_backup_apis(asset: str) -> Optional[float]:
-    """Tenta obter preço de APIs de backup GRATUITAS (otimizado para escala)"""
+    """Tenta obter preço via APIs GRATUITAS (Binance, Kraken)"""
 
-    # Tentar CryptoCompare
-    if asset in BACKUP_PRICE_APIS["cryptocompare"]["symbol_map"]:
-        symbol = BACKUP_PRICE_APIS["cryptocompare"]["symbol_map"][asset]
-        url = BACKUP_PRICE_APIS["cryptocompare"]["url_template"].format(symbol=symbol)
-        try:
-            LOG.info(f"[BACKUP-API] Tentando CryptoCompare para {asset} ({symbol})...")
-            async with httpx.AsyncClient(timeout=8) as cli:
-                r = await cli.get(url)
-                if r.status_code == 200:
-                    data = r.json()
-                    LOG.info(f"[BACKUP-API-DEBUG] CryptoCompare data: {data}")
-                    price = BACKUP_PRICE_APIS["cryptocompare"]["parser"](data)
-                    LOG.info(f"[BACKUP-API-DEBUG] Parsed price: {price} (type: {type(price)})")
-                    if price and price > 0:
-                        # GARANTIR que é float
-                        price = float(price)
-                        LOG.info(f"[BACKUP-API] ✅ CryptoCompare: {asset} = ${price:.2f}")
-                        return price
-                    else:
-                        LOG.warning(f"[BACKUP-API] CryptoCompare retornou preço inválido: {price}")
-        except Exception as e:
-            LOG.warning(f"[BACKUP-API] Erro CryptoCompare: {str(e)[:80]}")
-
-    # Tentar CoinCap
-    if asset in BACKUP_PRICE_APIS["coincap"]["id_map"]:
-        coincap_id = BACKUP_PRICE_APIS["coincap"]["id_map"][asset]
-        url = BACKUP_PRICE_APIS["coincap"]["url_template"].format(coincap_id=coincap_id)
-        try:
-            LOG.info(f"[BACKUP-API] Tentando CoinCap para {asset} ({coincap_id})...")
-            async with httpx.AsyncClient(timeout=8) as cli:
-                r = await cli.get(url)
-                if r.status_code == 200:
-                    data = r.json()
-                    price = BACKUP_PRICE_APIS["coincap"]["parser"](data)
-                    if price and price > 0:
-                        # GARANTIR que é float
-                        price = float(price)
-                        LOG.info(f"[BACKUP-API] ✅ CoinCap: {asset} = ${price:.2f}")
-                        return price
-        except Exception as e:
-            LOG.warning(f"[BACKUP-API] Erro CoinCap: {str(e)[:80]}")
-
-    # Tentar Binance
+    # 1) Tentar Binance primeiro (rápida e confiável)
     if asset in BACKUP_PRICE_APIS["binance"]["pairs"]:
         pair = BACKUP_PRICE_APIS["binance"]["pairs"][asset]
         url = BACKUP_PRICE_APIS["binance"]["url_template"].format(pair=pair)
         try:
-            LOG.info(f"[BACKUP-API] Tentando Binance para {asset} ({pair})...")
-            async with httpx.AsyncClient(timeout=8) as cli:
+            LOG.info(f"[BINANCE] Consultando Binance para {asset} ({pair})...")
+            async with httpx.AsyncClient(timeout=5) as cli:
                 r = await cli.get(url)
                 if r.status_code == 200:
                     data = r.json()
                     price = BACKUP_PRICE_APIS["binance"]["parser"](data)
                     if price and price > 0:
-                        # GARANTIR que é float
                         price = float(price)
-                        LOG.info(f"[BACKUP-API] ✅ Binance: {asset} = ${price:.2f}")
+                        LOG.info(f"[BINANCE] ✅ {asset} = ${price:.2f}")
                         return price
+                else:
+                    LOG.warning(f"[BINANCE] HTTP {r.status_code}")
         except Exception as e:
-            LOG.warning(f"[BACKUP-API] Erro Binance: {str(e)[:80]}")
+            LOG.warning(f"[BINANCE] Erro: {str(e)[:60]}")
 
-    LOG.warning(f"[BACKUP-API] Todas as APIs de backup falharam para {asset}")
+    # 2) Tentar Kraken como backup
+    if asset in BACKUP_PRICE_APIS["kraken"]["pairs"]:
+        pair = BACKUP_PRICE_APIS["kraken"]["pairs"][asset]
+        url = BACKUP_PRICE_APIS["kraken"]["url_template"].format(pair=pair)
+        try:
+            LOG.info(f"[KRAKEN] Consultando Kraken para {asset} ({pair})...")
+            async with httpx.AsyncClient(timeout=5) as cli:
+                r = await cli.get(url)
+                if r.status_code == 200:
+                    data = r.json()
+                    price = BACKUP_PRICE_APIS["kraken"]["parser"](data)
+                    if price and price > 0:
+                        price = float(price)
+                        LOG.info(f"[KRAKEN] ✅ {asset} = ${price:.2f}")
+                        return price
+                else:
+                    LOG.warning(f"[KRAKEN] HTTP {r.status_code}")
+        except Exception as e:
+            LOG.warning(f"[KRAKEN] Erro: {str(e)[:60]}")
+
+    LOG.warning(f"[BACKUP] Todas as APIs gratuitas falharam para {asset}")
     return None
 
 async def _cg_get(url: str) -> Optional[dict]:
@@ -583,35 +617,22 @@ async def _cg_get(url: str) -> Optional[dict]:
     delay = PRICE_RETRY_BASE_DELAY
     last_err = None
     
-    # Delay inicial inteligente baseado na situação da API
-    if not COINGECKO_API_KEY:  # Free tier - muito conservativo
-        await asyncio.sleep(10.0)  # 10s inicial
-    else:
-        await asyncio.sleep(3.0)  # API key ainda conservativo
-    
     for attempt in range(1, PRICE_MAX_RETRIES + 1):
         try:
-            async with httpx.AsyncClient(timeout=12) as cli:
+            async with httpx.AsyncClient(timeout=8) as cli:
                 r = await cli.get(url, headers=headers)
             if r.status_code == 200:
                 return r.json()
             if r.status_code == 429:
                 LOG.warning("Coingecko 429 (rate-limit). attempt=%d url=%s", attempt, url)
-                # Para rate limiting severo, desistir mais rápido e usar fallbacks
-                if attempt >= 2:  # Após 2 tentativas, desistir
-                    LOG.warning(f"[RATE-LIMIT] Desistindo do CoinGecko após {attempt} tentativas (429), usando fallbacks")
-                    break
-                
-                rate_limit_delay = 20 if COINGECKO_API_KEY else 30  # Delay fixo menor
-                LOG.warning(f"[RATE-LIMIT] Rate limited! Aguardando {rate_limit_delay}s (attempt {attempt}/{PRICE_MAX_RETRIES})")
-                await asyncio.sleep(rate_limit_delay)
-                continue
+                LOG.warning("[RATE-LIMIT] 429 recebido, usando fallbacks imediatamente")
+                break
             last_err = f"{r.status_code} {r.text[:100]}"
-            await asyncio.sleep(min(delay, 30))  # Cap de 30s
+            await asyncio.sleep(min(delay, 5))
             delay *= 2
         except Exception as e:
             last_err = str(e)[:100]
-            await asyncio.sleep(min(delay, 20))  # Cap menor para outros erros
+            await asyncio.sleep(min(delay, 5))
             delay *= 2
 
     LOG.warning("Coingecko GET falhou após retries: %s", last_err)
@@ -671,9 +692,8 @@ async def _usd_native(chain_id: str, amount_native: float, force_refresh: bool =
             ts = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(meta.get("ts", 0)))
             src = meta.get("source", "manual")
             LOG.warning(
-                "[STATIC-FALLBACK] CoinGecko + backup APIs indisponíveis, usando preço estático p/ %s: ${:.2f} | {} unidades = ${:.2f} (source={} ts={})".format(
-                    cg_id, px, amount_native, usd_value, src, ts
-                )
+                "[STATIC-FALLBACK] CoinGecko + backup APIs indisponíveis, usando preço estático p/ %s: $%.2f | %s unidades = $%.2f (source=%s ts=%s)",
+                cg_id, px, amount_native, usd_value, src, ts
             )
             _price_cache_put(cache_key, px, from_backup=True)  # Cache por mais tempo
             return px, usd_value
@@ -702,8 +722,26 @@ async def _usd_token(
     alt_cgid = KNOWN_TOKEN_TO_CGID.get(f"{chain_id}:{token_addr_lc}")
     if alt_cgid:
         cache_key = f"native:{alt_cgid}"
-        # SEMPRE forçar busca de preços atuais na internet
-        LOG.info(f"[LIVE-PRICE] Buscando preço atual de token mapeado {alt_cgid}...")
+
+        # Tentar cache primeiro (preenchido pelo background updater a cada 5 min)
+        cached = _price_cache_get(cache_key, force_refresh=False, allow_extended=True)
+        if cached is not None:
+            px = float(cached)
+            usd_value = amount * px
+            return px, usd_value
+
+        # Cache miss — tentar Binance/Kraken antes do CoinGecko
+        LOG.info(f"[CACHE-MISS] Token mapeado {alt_cgid} — tentando APIs de backup...")
+        backup_price = await _try_backup_apis(alt_cgid)
+        if backup_price:
+            px = backup_price
+            usd_value = amount * px
+            LOG.info(f"[BACKUP-SUCCESS] ✅ Token {alt_cgid}: ${px:.2f} | {amount} unidades = ${usd_value:.2f}")
+            _price_cache_put(cache_key, px, from_backup=True)
+            return px, usd_value
+
+        # Último recurso: CoinGecko com timeout curto
+        LOG.info(f"[CACHE-MISS] Tentando CoinGecko para {alt_cgid}...")
         data = await _cg_get(f"https://api.coingecko.com/api/v3/simple/price?ids={alt_cgid}&vs_currencies=usd")
         if data and alt_cgid in data and "usd" in data[alt_cgid]:
             px = float(data[alt_cgid]["usd"])
@@ -711,7 +749,7 @@ async def _usd_token(
             LOG.info(f"[LIVE-PRICE] ✅ Token {alt_cgid}: ${px:.2f} | {amount} unidades = ${usd_value:.2f}")
             _price_cache_put(cache_key, px)
             return px, usd_value
-        
+
         # Fallback para rate limiting ou API indisponível
         fallback_price = FALLBACK_PRICES.get(alt_cgid)
         if fallback_price:
@@ -725,15 +763,22 @@ async def _usd_token(
             )
             _price_cache_put(cache_key, px)
             return px, usd_value
-            
+
         LOG.info("[price] falhou alt_cgid=%s p/ token %s; tentando plataforma CG...", alt_cgid, token_addr_lc)
 
     # 2) fluxo padrão por plataforma/contrato
     platform = CHAINS[chain_id]["cg_platform"]
     cache_key = f"token:{platform}:{token_addr_lc}"
-    
-    # SEMPRE forçar busca de preços atuais na internet
-    LOG.info(f"[LIVE-PRICE] Buscando preço atual de token {token_addr_lc} na plataforma {platform}...")
+
+    # Tentar cache primeiro
+    cached = _price_cache_get(cache_key, force_refresh=False, allow_extended=True)
+    if cached is not None:
+        px = float(cached)
+        usd_value = amount * px
+        return px, usd_value
+
+    # Cache miss — chamar CoinGecko
+    LOG.info(f"[CACHE-MISS] Token {token_addr_lc} na plataforma {platform} — buscando preço...")
     data = await _cg_get(
         f"https://api.coingecko.com/api/v3/simple/token_price/{platform}"
         f"?contract_addresses={token_addr_lc}&vs_currencies=usd"
@@ -1026,13 +1071,20 @@ def human_chain(chain_id: str) -> str:
 
 
 async def resolve_payment_usd_autochain(
-    tx_hash: str, force_refresh: bool = False
+    tx_hash: str, force_refresh: bool = False, progress_cb=None
 ) -> Tuple[bool, str, Optional[float], Dict[str, Any]]:
     """
     Procura a transação em TODAS as chains em PARALELO (muito mais rápido).
     Ao achar a tx em alguma delas, resolve e retorna.
     OTIMIZADO: Timeout total de 15 segundos para validação rápida.
+
+    progress_cb: coroutine opcional (async def cb(text)) para atualizar progresso no Telegram.
     """
+
+    async def _progress(text: str) -> None:
+        if progress_cb:
+            await progress_cb(text)
+
     # Verificar cache de transações validadas (otimização para escala)
     if not force_refresh:
         normalized_hash = tx_hash.lower().replace('0x', '')
@@ -1050,6 +1102,10 @@ async def resolve_payment_usd_autochain(
                     LOG.info(f"[TX-CACHE] Cache expirado para {tx_hash} (idade: {age:.0f}s)")
 
     LOG.info(f"[AUTOCHAIN] Procurando transação {tx_hash} em {len(CHAINS)} chains em PARALELO...")
+    await _progress(
+        "🔍 <b>Validando transação...</b>\n\n"
+        "⏳ Etapa 1/4 — Localizando transação nas blockchains..."
+    )
 
     # Normalizar hash (remover 0x e garantir lowercase)
     clean_hash = tx_hash.lower().replace('0x', '')
@@ -1098,12 +1154,32 @@ async def resolve_payment_usd_autochain(
                 tx, w3 = result
                 chain_name = human_chain(chain_id)
                 LOG.info(f"[AUTOCHAIN] ✅ Transação encontrada em {chain_name}!")
+                await _progress(
+                    "🔍 <b>Validando transação...</b>\n\n"
+                    f"✅ Etapa 2/4 — Transação encontrada na <b>{chain_name}</b>\n"
+                    "⏳ Etapa 3/4 — Verificando confirmações e dados..."
+                )
                 ok, msg, usd, details = await _resolve_on_chain(
                     w3, chain_id, normalized_hash, force_refresh=force_refresh
                 )
                 details['found_on_chain'] = chain_name
                 details['search_time'] = 'fast'
                 LOG.info(f"[RESULT {chain_name}] ok={ok} msg={msg} usd=${usd}")
+
+                if ok and usd:
+                    await _progress(
+                        "🔍 <b>Validando transação...</b>\n\n"
+                        f"✅ Etapa 2/4 — Transação encontrada na <b>{chain_name}</b>\n"
+                        "✅ Etapa 3/4 — Confirmações e dados verificados\n"
+                        f"✅ Etapa 4/4 — Valor calculado: <b>${float(usd):.2f} USD</b>\n\n"
+                        "🎉 Finalizando..."
+                    )
+                elif not ok:
+                    await _progress(
+                        "🔍 <b>Validando transação...</b>\n\n"
+                        f"✅ Etapa 2/4 — Transação encontrada na <b>{chain_name}</b>\n"
+                        f"❌ Etapa 3/4 — {msg}"
+                    )
 
                 # Salvar no cache de transações
                 result = (ok, msg, usd, details)
@@ -1114,6 +1190,11 @@ async def resolve_payment_usd_autochain(
 
         # Fase 2: Se não encontrou nas prioritárias, buscar nas outras chains
         LOG.info(f"[AUTOCHAIN] Não encontrado nas prioritárias. Buscando em {len(other_chains)} chains restantes...")
+        await _progress(
+            "🔍 <b>Validando transação...</b>\n\n"
+            "⚠️ Etapa 1/4 — Não encontrada nas redes principais\n"
+            f"⏳ Etapa 2/4 — Buscando em {len(other_chains)} redes adicionais..."
+        )
         if other_chains:
             other_tasks = [try_chain(cid) for cid in other_chains]
             other_results = await asyncio.gather(*other_tasks, return_exceptions=True)
@@ -1125,12 +1206,32 @@ async def resolve_payment_usd_autochain(
                     tx, w3 = result
                     chain_name = human_chain(chain_id)
                     LOG.info(f"[AUTOCHAIN] ✅ Transação encontrada em {chain_name}!")
+                    await _progress(
+                        "🔍 <b>Validando transação...</b>\n\n"
+                        f"✅ Etapa 2/4 — Transação encontrada na <b>{chain_name}</b>\n"
+                        "⏳ Etapa 3/4 — Verificando confirmações e dados..."
+                    )
                     ok, msg, usd, details = await _resolve_on_chain(
                         w3, chain_id, normalized_hash, force_refresh=force_refresh
                     )
                     details['found_on_chain'] = chain_name
                     details['search_time'] = 'extended'
                     LOG.info(f"[RESULT {chain_name}] ok={ok} msg={msg} usd=${usd}")
+
+                    if ok and usd:
+                        await _progress(
+                            "🔍 <b>Validando transação...</b>\n\n"
+                            f"✅ Etapa 2/4 — Transação encontrada na <b>{chain_name}</b>\n"
+                            "✅ Etapa 3/4 — Confirmações e dados verificados\n"
+                            f"✅ Etapa 4/4 — Valor calculado: <b>${float(usd):.2f} USD</b>\n\n"
+                            "🎉 Finalizando..."
+                        )
+                    elif not ok:
+                        await _progress(
+                            "🔍 <b>Validando transação...</b>\n\n"
+                            f"✅ Etapa 2/4 — Transação encontrada na <b>{chain_name}</b>\n"
+                            f"❌ Etapa 3/4 — {msg}"
+                        )
 
                     # Salvar no cache de transações
                     result = (ok, msg, usd, details)
@@ -1229,16 +1330,14 @@ async def pagar_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )]
         ])
 
+        from config import vip_plans_text_usd
         checkout_msg = (
             f"💸 <b>Pagamento VIP via Cripto</b>\n\n"
             f"✅ Clique no botão abaixo para acessar nossa página de checkout segura\n"
             f"🔒 Pague com qualquer criptomoeda\n"
             f"⚡ Ativação automática após confirmação\n\n"
             f"💰 <b>Planos disponíveis:</b>\n"
-            f"• 30 dias: $30.00 USD (Mensal)\n"
-            f"• 90 dias: $70.00 USD (Trimestral)\n"
-            f"• 180 dias: $110.00 USD (Semestral)\n"
-            f"• 365 dias: $179.00 USD (Anual)"
+            f"{vip_plans_text_usd()}"
         )
 
         sent = await send_with_retry(
@@ -1321,15 +1420,33 @@ async def tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     f"Status atual: {existing.status}"
                 )
     
+    # Mensagem de progresso para o usuário acompanhar em tempo real
+    status_msg = await msg.reply_text(
+        "🔍 <b>Validando transação...</b>\n\n"
+        "⏳ Etapa 1/4 — Localizando transação nas blockchains...",
+        parse_mode="HTML",
+    )
+
+    async def _update_status(text: str) -> None:
+        """Atualiza a mensagem de progresso (ignora erros de edição)."""
+        try:
+            await status_msg.edit_text(text, parse_mode="HTML")
+        except Exception:
+            pass  # mensagem pode já ter sido deletada ou inalterada
+
     # Verificar transação on-chain SEMPRE com preços atuais
     try:
         # SEMPRE usar force_refresh=True para garantir preços atualizados
         ok, msg_result, usd_paid, details = await resolve_payment_usd_autochain(
-            tx_hash, force_refresh=True
+            tx_hash, force_refresh=True, progress_cb=_update_status
         )
-        
+
         LOG.info(f"[PRICE-CHECK] Verificação com preços atuais - Hash: {tx_hash[:12]}... USD: ${float(usd_paid):.4f}" if usd_paid else f"[PRICE-CHECK] Falha na verificação - Hash: {tx_hash[:12]}...")
         
+        # Apagar mensagem de progresso antes da resposta final
+        with suppress(Exception):
+            await status_msg.delete()
+
         if ok and usd_paid:
             # Import necessário para funções do main
             from utils import choose_plan_from_usd
@@ -1418,9 +1535,11 @@ async def tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
         else:
             return await msg.reply_text(f"❌ {msg_result}")
-            
+
     except Exception as e:
         LOG.error(f"Erro ao verificar transação {tx_hash}: {e}")
+        with suppress(Exception):
+            await status_msg.delete()
         return await msg.reply_text("❌ Erro interno ao verificar transação.")
 
 async def listar_pendentes_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1603,66 +1722,37 @@ async def approve_by_usd_and_invite(tg_id, username: Optional[str], tx_hash: str
     if not days:
         return False, f"Valor insuficiente (${float(usd):.2f})", {"details": details, "usd": usd}
 
-    # Verificar se é UID temporário (formato antigo "temp_*" ou novo timestamp)
-    is_temp_uid = False
-    if isinstance(tg_id, str) and tg_id.startswith("temp_"):
-        is_temp_uid = True
-    elif isinstance(tg_id, (int, str)):
-        # Verificar se é um timestamp (UID temporário numérico)
-        # UIDs do Telegram são tipicamente menores que 2^31 (2147483647)
-        # Timestamps são maiores que 1600000000 (2020) e menores que 2000000000 (2033)
-        uid_num = int(tg_id) if isinstance(tg_id, str) else tg_id
-        if 1600000000 <= uid_num <= 2000000000:
-            is_temp_uid = True
-            LOG.info(f"[INVITE-DEBUG] UID detectado como timestamp temporário: {uid_num}")
+    # Verificar se o UID é válido (veio via deep link com assinatura)
+    # UIDs válidos: numéricos, < 15 dígitos, >= 100000000
+    is_valid_uid = False
+    if tg_id and str(tg_id).isdigit() and len(str(tg_id)) < 15 and int(tg_id) >= 100000000:
+        is_valid_uid = True
+        LOG.info(f"[INVITE-DEBUG] UID válido detectado: {tg_id} - ID real capturado via deep link")
+    else:
+        LOG.info(f"[INVITE-DEBUG] UID inválido ou ausente: '{tg_id}' - será tratado como temporário")
 
-    actual_tg_id = None
+    is_temp_uid = not is_valid_uid
+    actual_tg_id = int(tg_id) if is_valid_uid else None
     until = None
     link = None
-    
-    LOG.info(f"[INVITE-DEBUG] UID recebido: '{tg_id}' (tipo: {type(tg_id)}) | is_temp_uid: {is_temp_uid}")
-    
-    if not is_temp_uid:
-        try:
-            actual_tg_id = int(tg_id)
-            LOG.info(f"[INVITE-DEBUG] UID convertido para int: {actual_tg_id}")
-            
-            # Estender VIP apenas se for ID real
-            until = await vip_upsert_and_get_until(actual_tg_id, username, days, None)
-            LOG.info(f"[INVITE-DEBUG] VIP estendido até: {until}")
-            
-            # Gerar convite - tentar múltiplas estratégias
-            if bot_available and application and application.bot:
-                try:
-                    from utils import create_invite_link_flexible
-                    LOG.info(f"[INVITE-DEBUG] Tentando gerar convite para canal {GROUP_VIP_ID}")
-                    link = await create_invite_link_flexible(application.bot, GROUP_VIP_ID, retries=3)
-                    if link:
-                        LOG.info(f"[INVITE-DEBUG] ✅ Convite gerado com sucesso: {link[:50]}...")
-                    else:
-                        LOG.warning(f"[INVITE-DEBUG] ❌ Não foi possível gerar convite")
-                except Exception as e:
-                    LOG.error(f"[INVITE-DEBUG] ❌ Erro ao gerar convite: {e}", exc_info=True)
-                    link = None
-            else:
-                LOG.warning(f"[INVITE-DEBUG] Bot não disponível, pulando geração de convite")
-                link = None
-        except (ValueError, TypeError) as e:
-            LOG.warning(f"[INVITE-DEBUG] Erro ao processar UID, tratando como temporário: {e}")
-            is_temp_uid = True
 
-    # Salvar pagamento
+    # Salvar pagamento com ID real (se disponível) ou temporário (user_id=0)
     with SessionLocal() as s:
         # Extrair informações do payment para salvar
         token_symbol = details.get("token_symbol", "Unknown")
         token_amount = details.get("amount_human", details.get("amount", "N/A"))
-        
+
+        # Usar ID real se disponível, senão usar 0 (temporário)
         user_id_to_save = actual_tg_id if actual_tg_id else 0
-        LOG.info(f"[PAYMENT-SAVE] Salvando pagamento - actual_tg_id: {actual_tg_id}, user_id_to_save: {user_id_to_save}, is_temp_uid: {is_temp_uid}")
+
+        if actual_tg_id:
+            LOG.info(f"[PAYMENT-SAVE] Salvando pagamento com user_id={actual_tg_id} (ID real capturado via deep link)")
+        else:
+            LOG.info(f"[PAYMENT-SAVE] Salvando pagamento com user_id=0 (ID será capturado ao entrar no grupo)")
 
         p = Payment(
             tx_hash=tx_hash,
-            user_id=user_id_to_save,  # 0 para pagamentos sem ID válido
+            user_id=user_id_to_save,
             username=username,
             chain=details.get("chain_id", "unknown"),
             amount=str(token_amount),
@@ -1675,10 +1765,34 @@ async def approve_by_usd_and_invite(tg_id, username: Optional[str], tx_hash: str
         s.add(p)
         s.commit()
 
+        # Se temos ID real, criar ou atualizar VipMembership usando vip_upsert_and_get_until
+        # que já tem lógica de substituição correta
+        if actual_tg_id:
+            from utils import vip_upsert_and_get_until
+
+            # vip_upsert_and_get_until é async, precisa ser chamado fora da sessão
+            pass  # Será executado depois da sessão fechar
+        else:
+            # NÃO criar VipMembership aqui - será criado quando usuário entrar no grupo
+            # Isso evita violação de constraint UNIQUE em user_id quando há múltiplos pagamentos pendentes
+            LOG.info(f"[PAYMENT-SAVE] VIP será criado quando usuário entrar no grupo")
+
+    # Criar/atualizar VIP membership se temos ID real (fora da sessão de Payment)
+    if actual_tg_id:
+        from utils import vip_upsert_and_get_until
+        until = await vip_upsert_and_get_until(actual_tg_id, username, days)
+        LOG.info(f"[VIP-UPSERT] VIP criado/atualizado para {actual_tg_id}: válido até {until.strftime('%d/%m/%Y %H:%M')}")
+    else:
+        # Para IDs temporários, calcular data estimada
+        import datetime as dt
+        until = dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=days)
+
     LOG.info(f"[INVITE-DEBUG] Finalizando: is_temp_uid={is_temp_uid}, link={link is not None if link else False}")
-    
-    # Calcular data de expiração do VIP
-    vip_until_str = until.strftime('%d/%m/%Y') if until else "N/A"
+
+    # Calcular data de expiração do VIP para mensagens (sempre usar 'until' se disponível)
+    import datetime as dt
+    vip_until = until if until else (dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=days))
+    vip_until_str = vip_until.strftime('%d/%m/%Y')
 
     # Criar mensagem de boas-vindas personalizada
     plan_names = {30: "Mensal", 90: "Trimestral", 180: "Semestral", 365: "Anual"}
@@ -1718,105 +1832,122 @@ async def approve_by_usd_and_invite(tg_id, username: Optional[str], tx_hash: str
         )
         return True, msg, {"usd": usd, "days": days, "temp_uid": True}
     else:
-        if link:
-            msg = (
-                f"🎉 <b>PAGAMENTO CONFIRMADO!</b>\n\n"
-                f"✅ Valor recebido: <b>${float(usd):.2f} USD</b>\n"
-                f"👑 Plano ativado: <b>{plan_name} ({days} dias)</b>\n"
-                f"📅 Válido até: <b>{vip_until_str}</b>\n\n"
-                f"🔗 <b>Clique no link abaixo para entrar no grupo VIP:</b>\n"
-                f"{link}\n\n"
-                f"⚠️ <b>IMPORTANTE:</b> Este link expira em 2 horas e tem apenas 1 uso.\n\n"
-                f"🎁 <b>Seja bem-vindo(a) ao VIP!</b>\n"
-                f"💎 Aproveite todo o conteúdo exclusivo!\n"
-                f"📬 Você receberá atualizações diárias de novos arquivos!\n\n"
-                f"Obrigado pela confiança! 🙏"
-            )
-            payload = {"invite": link, "until": until.isoformat(), "usd": usd, "days": days}
-            LOG.info(f"[INVITE-DEBUG] Retornando com convite automático")
-        else:
-            msg = (
-                f"🎉 <b>PAGAMENTO CONFIRMADO!</b>\n\n"
-                f"✅ Valor recebido: <b>${float(usd):.2f} USD</b>\n"
-                f"👑 Plano ativado: <b>{plan_name} ({days} dias)</b>\n"
-                f"📅 Válido até: <b>{vip_until_str}</b>\n\n"
-                f"⚠️ <b>VIP ATIVADO COM SUCESSO!</b>\n"
-                f"📬 Entre em contato para receber o convite do grupo VIP.\n\n"
-                f"🎁 <b>Benefícios do seu plano:</b>\n"
-                f"• Acesso a conteúdo exclusivo premium\n"
-                f"• Atualizações diárias de arquivos\n"
-                f"• Suporte prioritário\n\n"
-                f"Obrigado pela preferência! 🙏"
-            )
-            payload = {"no_auto_invite": True, "until": until.isoformat(), "usd": usd, "days": days}
-            LOG.info(f"[INVITE-DEBUG] Retornando sem convite automático")
-
-        if notify_user and actual_tg_id and bot_available and application and application.bot:
+        # ID real capturado via deep link - enviar tudo no privado
+        if bot_available and application and application.bot:
             try:
+                from utils import create_invite_link_flexible
+                link = await create_invite_link_flexible(application.bot, GROUP_VIP_ID, retries=3)
+                LOG.info(f"[INVITE-REAL-ID] Convite gerado para ID real {actual_tg_id}: {link is not None}")
+
+                # Salvar mapeamento link -> user_id para validação posterior
+                if link:
+                    import hashlib
+                    link_hash = hashlib.md5(link.encode()).hexdigest()[:12]
+                    from main import cfg_set
+                    # Salvar (será limpo manualmente depois ou permanecerá como histórico)
+                    cfg_set(f"invite_link_{link_hash}", str(actual_tg_id))
+                    LOG.info(f"[LINK-PROTECTION] Link protegido para user {actual_tg_id}: {link_hash}")
+
+                # Criar comprovante completo
+                from main import now_utc
+                comprovante = (
+                    f"📜 <b>COMPROVANTE DE PAGAMENTO VIP</b> 📜\n"
+                    f"{'='*35}\n\n"
+
+                    f"📅 <b>Data:</b> {now_utc().strftime('%d/%m/%Y às %H:%M')}\n"
+                    f"👤 <b>Usuário:</b> {username or 'N/A'}\n"
+                    f"🆔 <b>ID Telegram:</b> <code>{actual_tg_id}</code>\n\n"
+
+                    f"💰 <b>DETALHES DO PAGAMENTO</b>\n"
+                    f"• <b>Valor Pago:</b> ${float(usd):.2f} USD\n"
+                    f"• <b>Criptomoeda:</b> {token_symbol}\n"
+                    f"• <b>Quantidade:</b> {token_amount}\n"
+                    f"• <b>Hash:</b> <code>{tx_hash[:16]}...{tx_hash[-8:]}</code>\n\n"
+
+                    f"👑 <b>VIP ATIVADO</b>\n"
+                    f"• <b>Plano:</b> {plan_name}\n"
+                    f"• <b>Duração:</b> {days} dias\n"
+                    f"• <b>Válido até:</b> {until.strftime('%d/%m/%Y às %H:%M')}\n"
+                    f"• <b>Status:</b> ✅ Ativo\n\n"
+                )
+
+                if link:
+                    comprovante += (
+                        f"🔗 <b>CONVITE DO GRUPO VIP</b>\n"
+                        f"{link}\n\n"
+                        f"⚠️ <b>IMPORTANTE:</b> Este link expira em 2 horas e tem apenas 1 uso.\n\n"
+                        f"📁 <b>REGRAS DO GRUPO VIP</b>\n"
+                        f"• Respeite todos os membros\n"
+                        f"• Proibido spam ou conteúdo inapropriado\n"
+                        f"• Não compartilhe links de convite\n"
+                        f"• Mantenha conversa relevante ao tema\n"
+                        f"• Proibido revenda de conteúdo\n\n"
+                        f"🎉 <b>Bem-vindo ao grupo VIP!</b>\n"
+                        f"Aproveite o conteúdo exclusivo!"
+                    )
+                else:
+                    comprovante += (
+                        f"⚠️ Não foi possível gerar o link de convite automaticamente.\n"
+                        f"Entre em contato com o suporte para receber o convite.\n\n"
+                        f"🎁 Seu VIP está ativo e válido!"
+                    )
+
+                # Enviar comprovante no privado
                 await application.bot.send_message(
                     chat_id=actual_tg_id,
-                    text=msg,
+                    text=comprovante,
                     parse_mode="HTML"
                 )
-                LOG.info(f"[NOTIFY] ✅ Mensagem de boas-vindas enviada para user {actual_tg_id}")
+                LOG.info(f"[NOTIFY] ✅ Comprovante enviado no privado para {actual_tg_id}")
 
-                # Enviar log de sucesso para grupo de logs
+                # Enviar log para grupo de logs
                 try:
                     from main import LOGS_GROUP_ID
                     log_msg = (
-                        f"✅ <b>MENSAGEM DE BOAS-VINDAS ENVIADA</b>\n"
+                        f"✅ <b>PAGAMENTO CONFIRMADO VIA DEEP LINK</b>\n"
                         f"👤 User: <code>{actual_tg_id}</code> (@{username or 'sem_username'})\n"
                         f"💰 Valor: ${float(usd):.2f} USD\n"
                         f"📅 Plano: {plan_name} ({days} dias)\n"
-                        f"⏰ VIP até: {until.strftime('%d/%m/%Y %H:%M') if until else 'N/A'}\n"
-                        f"🔗 Link gerado: {'Sim' if link else 'Não'}"
+                        f"⏰ VIP até: {until.strftime('%d/%m/%Y %H:%M')}\n"
+                        f"🔗 Link enviado: {'Sim' if link else 'Não'}\n"
+                        f"📨 Comprovante enviado no privado"
                     )
                     await application.bot.send_message(
                         chat_id=LOGS_GROUP_ID,
                         text=log_msg,
                         parse_mode="HTML"
                     )
+                    LOG.info(f"[NOTIFY] ✅ Log enviado para grupo de logs")
                 except Exception as log_error:
-                    LOG.warning(f"[NOTIFY] Erro ao enviar log de sucesso: {log_error}")
+                    LOG.warning(f"[NOTIFY] Erro ao enviar log: {log_error}")
+
             except Exception as e:
-                LOG.warning(f"[NOTIFY] ❌ Falha ao enviar mensagem (usuário não iniciou conversa): {e}")
-                # Salvar mensagem pendente para enviar quando o usuário der /start ou entrar no grupo
-                try:
-                    from models import PendingNotification
-                    from main import LOGS_GROUP_ID
+                LOG.error(f"[NOTIFY] Erro ao enviar comprovante: {e}")
 
-                    with SessionLocal() as s:
-                        pending = PendingNotification(
-                            user_id=actual_tg_id,
-                            username=username,
-                            message=msg
-                        )
-                        s.add(pending)
-                        s.commit()
-                    LOG.info(f"[NOTIFY] 📝 Mensagem salva como pendente para user {actual_tg_id}")
-
-                    # Enviar log para grupo de logs
-                    try:
-                        log_msg = (
-                            f"📝 <b>MENSAGEM PENDENTE SALVA</b>\n"
-                            f"👤 User: <code>{actual_tg_id}</code> (@{username or 'sem_username'})\n"
-                            f"💰 Valor: ${float(usd):.2f} USD\n"
-                            f"📅 Plano: {plan_name} ({days} dias)\n"
-                            f"⏰ VIP até: {until.strftime('%d/%m/%Y %H:%M') if until else 'N/A'}\n\n"
-                            f"ℹ️ Mensagem será enviada quando o usuário entrar no grupo VIP"
-                        )
-                        await application.bot.send_message(
-                            chat_id=LOGS_GROUP_ID,
-                            text=log_msg,
-                            parse_mode="HTML"
-                        )
-                    except Exception as log_error:
-                        LOG.warning(f"[NOTIFY] Erro ao enviar log: {log_error}")
-
-                except Exception as save_error:
-                    LOG.error(f"[NOTIFY] Erro ao salvar mensagem pendente: {save_error}")
-
-        return True, msg, payload
+        # Mensagem de retorno para a página web (com redirecionamento se houver link)
+        if link:
+            msg = (
+                f"🎉 <b>PAGAMENTO CONFIRMADO!</b>\n\n"
+                f"✅ Valor recebido: <b>${float(usd):.2f} USD</b>\n"
+                f"👑 Plano ativado: <b>{plan_name} ({days} dias)</b>\n"
+                f"📅 Válido até: <b>{vip_until_str}</b>\n\n"
+                f"📬 <b>Redirecionando para o grupo VIP...</b>\n"
+                f"Verifique também suas mensagens no Telegram!\n\n"
+                f"🎁 Aproveite o conteúdo exclusivo!"
+            )
+            # Incluir link no payload para redirecionar automaticamente
+            return True, msg, {"invite": link, "usd": usd, "days": days, "private_sent": True}
+        else:
+            msg = (
+                f"🎉 <b>PAGAMENTO CONFIRMADO!</b>\n\n"
+                f"✅ Valor recebido: <b>${float(usd):.2f} USD</b>\n"
+                f"👑 Plano ativado: <b>{plan_name} ({days} dias)</b>\n"
+                f"📅 Válido até: <b>{vip_until_str}</b>\n\n"
+                f"📬 <b>Verifique suas mensagens no Telegram!</b>\n"
+                f"Enviamos o comprovante no seu privado.\n\n"
+                f"🎁 Entre em contato para receber o convite do grupo!"
+            )
+            return True, msg, {"usd": usd, "days": days, "private_sent": True}
 
 # =========================
 # Função para verificar se hash já foi usada
