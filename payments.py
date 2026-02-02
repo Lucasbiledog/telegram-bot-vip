@@ -12,9 +12,6 @@ from web3 import Web3
 
 LOG = logging.getLogger("payments")
 
-# Preços centralizados — altere SOMENTE em config.py
-from config import VIP_PRICES as DEFAULT_VIP_PRICES_USD
-
 # =========================
 # Configuração via ENV
 # =========================
@@ -1990,4 +1987,4 @@ async def get_prices_from_db():
                 return json.loads(config.value)
     except Exception:
         pass
-    return DEFAULT_VIP_PRICES_USD
+    return {}
