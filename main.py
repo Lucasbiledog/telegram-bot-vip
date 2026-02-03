@@ -3200,7 +3200,8 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     [InlineKeyboardButton(
                         "💳 Pagar com Crypto",
                         web_app=WebAppInfo(url=secure_url)
-                    )]
+                    )],
+                    [InlineKeyboardButton("📞 Suporte", callback_data="support_start")]
                 ])
 
                 checkout_msg = (
@@ -3212,7 +3213,7 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                       "• Anual (365 dias): <b>$4.00</b>\n\n"
                       "🔐 Pagamento seguro via blockchain\n"
                       "Aceitamos diversas criptomoedas em múltiplas redes.\n\n"
-                      "👇 Clique no botão abaixo para pagar:"
+                      "👇 Clique nos botões abaixo:"
                 )
 
                 await msg.reply_text(checkout_msg, parse_mode="HTML", reply_markup=keyboard)
@@ -8027,6 +8028,144 @@ async def on_startup():
             allow_reentry=True,
         )
         application.add_handler(excluir_todos_conv, group=-50)
+
+        # ===== Sistema de Suporte (usuário → grupo de logs → admin responde)
+
+        async def support_start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+            """Callback quando o usuário clica no botão Suporte"""
+            query = update.callback_query
+            if not query:
+                return
+            await query.answer()
+
+            context.user_data["awaiting_support"] = True
+
+            support_msg = (
+                "📞 <b>Suporte</b>\n\n"
+                "Descreva sua dúvida ou problema abaixo.\n"
+                "Um atendente responderá em breve.\n\n"
+                "💡 <i>Envie sua mensagem agora:</i>"
+            )
+            await query.message.reply_text(support_msg, parse_mode="HTML")
+
+        async def support_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+            """Captura mensagem de suporte do usuário e encaminha para o grupo de logs"""
+            if not context.user_data.get("awaiting_support"):
+                return  # Não está em modo suporte, ignorar
+
+            msg = update.effective_message
+            user = update.effective_user
+            if not msg or not user:
+                return
+
+            context.user_data["awaiting_support"] = False
+
+            user_text = msg.text or "(sem texto)"
+            username_str = f"@{user.username}" if user.username else "sem username"
+
+            # Encaminhar para grupo de logs
+            from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+            reply_kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("💬 Responder", callback_data=f"support_reply_{user.id}")]
+            ])
+
+            log_msg = (
+                f"📞 <b>SUPORTE</b>\n"
+                f"━━━━━━━━━━━━━━━\n"
+                f"👤 <b>{user.first_name}</b> ({username_str})\n"
+                f"🆔 <code>{user.id}</code>\n\n"
+                f"💬 <b>Mensagem:</b>\n"
+                f"{user_text}"
+            )
+
+            try:
+                await application.bot.send_message(
+                    chat_id=LOGS_GROUP_ID,
+                    text=log_msg,
+                    parse_mode="HTML",
+                    reply_markup=reply_kb,
+                )
+            except Exception as e:
+                logging.warning(f"[SUPORTE] Erro ao encaminhar para logs: {e}")
+
+            await msg.reply_text(
+                "✅ <b>Mensagem enviada!</b>\n\n"
+                "Aguarde, um atendente responderá em breve.\n"
+                "Você receberá a resposta aqui mesmo nesta conversa.",
+                parse_mode="HTML",
+            )
+
+        async def support_reply_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+            """Quando admin clica em 'Responder' no grupo de logs"""
+            query = update.callback_query
+            if not query or not query.data:
+                return
+            await query.answer()
+
+            target_uid = query.data.replace("support_reply_", "")
+            await query.message.reply_text(
+                f"📝 Para responder, use o comando:\n\n"
+                f"<code>/r {target_uid} sua resposta aqui</code>",
+                parse_mode="HTML",
+            )
+
+        async def support_respond_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+            """/r <user_id> <mensagem> — admin responde ao usuário via bot"""
+            msg = update.effective_message
+            user = update.effective_user
+            chat = update.effective_chat
+
+            if not user or not is_admin(user.id):
+                return
+
+            # Aceitar de qualquer chat (grupo de logs ou privado do admin)
+            if not context.args or len(context.args) < 2:
+                return await msg.reply_text(
+                    "Uso: <code>/r &lt;user_id&gt; mensagem</code>",
+                    parse_mode="HTML",
+                )
+
+            target_uid = context.args[0]
+            reply_text = " ".join(context.args[1:])
+
+            try:
+                target_uid_int = int(target_uid)
+            except ValueError:
+                return await msg.reply_text("❌ user_id deve ser numérico.")
+
+            # Enviar resposta ao usuário como se fosse o bot
+            from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+            support_kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("📞 Novo Suporte", callback_data="support_start")]
+            ])
+
+            response_msg = (
+                f"📞 <b>Resposta do Suporte</b>\n"
+                f"━━━━━━━━━━━━━━━\n\n"
+                f"{reply_text}\n\n"
+                f"<i>Se precisar de mais ajuda, clique no botão abaixo.</i>"
+            )
+
+            try:
+                await application.bot.send_message(
+                    chat_id=target_uid_int,
+                    text=response_msg,
+                    parse_mode="HTML",
+                    reply_markup=support_kb,
+                )
+                await msg.reply_text(f"✅ Resposta enviada para <code>{target_uid}</code>", parse_mode="HTML")
+            except Exception as e:
+                await msg.reply_text(f"❌ Erro ao enviar: {e}")
+
+        # Registrar handlers de suporte
+        application.add_handler(CallbackQueryHandler(support_start_handler, pattern="support_start"), group=1)
+        application.add_handler(CallbackQueryHandler(support_reply_callback, pattern="^support_reply_"), group=1)
+        application.add_handler(CommandHandler("r", support_respond_cmd), group=1)
+        application.add_handler(
+            MessageHandler(filters.ChatType.PRIVATE & filters.TEXT & ~filters.COMMAND, support_message_handler),
+            group=5,  # group alto para não conflitar com outros handlers
+        )
+        logging.info("✅ Sistema de suporte ativado")
 
         # ===== Handlers de storage
         application.add_handler(
