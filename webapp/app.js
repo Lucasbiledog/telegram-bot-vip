@@ -379,17 +379,7 @@ async function loadBasicInfo() {
     // Mostrar carteira padrão (pode ser obtida da API)
     $("addr").value = "0x40dDBD27F878d07808339F9965f013F1CBc2F812";
 
-    // ====== MODO TESTE - VALORES REDUZIDOS ======
-    // Use estes valores para testar com quantias pequenas
-    //const defaultPlans = {
-     // "30": 30.00,    // Mensal - TESTE
-      //"90": 2.00,    // Trimestral - TESTE
-    // "180": 3.00,   // Semestral - TESTE
-     // "365": 4.00    // Anual - TESTE
-    //};
-
-    // ====== VALORES ORIGINAIS (PRODUÇÃO) ======
-    // Descomente abaixo e comente o bloco acima quando voltar para produção
+    // ====== VALORES DE PRODUÇÃO ======
     const defaultPlans = {
       "30": 30.00,   // Mensal
       "90": 70.00,   // Trimestral

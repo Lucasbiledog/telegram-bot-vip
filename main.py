@@ -4964,14 +4964,13 @@ PLAN_PRICE_USD = {
 
 def plan_from_amount(amount_usd: float) -> Optional[VipPlan]:
     """
-    Determina o plano VIP baseado no valor pago usando ranges ao invés de valores exatos.
+    Determina o plano VIP baseado no valor pago usando ranges.
 
-    ====== MODO TESTE - VALORES REDUZIDOS ======
-    Ranges de TESTE:
-    - $1.00 - $1.99: VIP 30 dias (MENSAL)
-    - $2.00 - $2.99: VIP 90 dias (TRIMESTRAL)
-    - $3.00 - $3.99: VIP 180 dias (SEMESTRAL)
-    - $4.00+: VIP 365 dias (ANUAL)
+    Ranges de PRODUÇÃO:
+    - $30.00 - $69.99: VIP 30 dias (MENSAL)
+    - $70.00 - $109.99: VIP 90 dias (TRIMESTRAL)
+    - $110.00 - $178.99: VIP 180 dias (SEMESTRAL)
+    - $179.00+: VIP 365 dias (ANUAL)
     """
     if amount_usd < 30.00:
          return None  # Valor muito baixo
