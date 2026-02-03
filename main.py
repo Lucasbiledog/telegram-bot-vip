@@ -3168,8 +3168,67 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if msg: await msg.reply_text(text, parse_mode="Markdown")
         return
 
-    # Mensagem padrão para outros chats
-    text = ("Fala! Eu gerencio packs VIP/FREE, pagamentos via MetaMask e mensagens agendadas.\nOs pagamentos são automáticos quando as imagens são enviadas.")
+    # No privado: mostrar mensagem de boas-vindas com planos VIP + botão de pagamento
+    if chat and chat.type == "private":
+        try:
+            from payments import pagar_cmd
+            # Reutilizar lógica do /pagar para exibir planos + botão
+            welcome_header = (
+                f"👋 Olá, <b>{user.first_name}</b>!\n\n"
+                f"🎯 <b>Quer ter acesso ao conteúdo completo?</b>\n\n"
+                f"💎 <b>Benefícios VIP:</b>\n"
+                f"• Acesso a conteúdo exclusivo premium\n"
+                f"• Atualizações diárias de novos arquivos\n"
+                f"• Suporte prioritário\n"
+                f"• Sem anúncios ou spam\n\n"
+            )
+
+            from config import WEBAPP_URL
+            from payments import WALLET_ADDRESS, MIN_CONFIRMATIONS
+
+            if WEBAPP_URL and WALLET_ADDRESS:
+                from telegram import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
+                from utils import make_link_sig
+                import time as _time
+
+                uid = user.id
+                ts = int(_time.time())
+                sig = make_link_sig(os.getenv("BOT_SECRET", "default"), uid, ts)
+                secure_url = f"{WEBAPP_URL}?uid={uid}&ts={ts}&sig={sig}&username={user.first_name}"
+
+                keyboard = InlineKeyboardMarkup([
+                    [InlineKeyboardButton(
+                        "💳 Pagar com Crypto",
+                        web_app=WebAppInfo(url=secure_url)
+                    )]
+                ])
+
+                checkout_msg = (
+                    welcome_header
+                    + "💰 <b>Planos disponíveis:</b>\n"
+                      "• Mensal (30 dias): <b>$1.00</b>\n"
+                      "• Trimestral (90 dias): <b>$2.00</b>\n"
+                      "• Semestral (180 dias): <b>$3.00</b>\n"
+                      "• Anual (365 dias): <b>$4.00</b>\n\n"
+                      "🔐 Pagamento seguro via blockchain\n"
+                      "Aceitamos diversas criptomoedas em múltiplas redes.\n\n"
+                      "👇 Clique no botão abaixo para pagar:"
+                )
+
+                await msg.reply_text(checkout_msg, parse_mode="HTML", reply_markup=keyboard)
+            else:
+                # Fallback sem webapp
+                await msg.reply_text(
+                    welcome_header
+                    + "💰 Use /pagar para ver as opções de pagamento.",
+                    parse_mode="HTML",
+                )
+            return
+        except Exception as e:
+            logging.warning(f"[start_cmd] Erro ao montar mensagem de pagamento: {e}")
+
+    # Mensagem padrão para grupos/outros chats
+    text = "Fala! Eu gerencio packs VIP/FREE e pagamentos via crypto.\nUse /pagar para ver os planos."
     if msg: await msg.reply_text(text)
 
 
