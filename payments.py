@@ -82,6 +82,35 @@ FALLBACK_PRICE_META: Dict[str, Dict[str, Any]] = {
 }
 
 
+def _price_cache_get(key: str, force_refresh: bool = False, allow_extended: bool = False) -> Optional[float]:
+    """Obter preço do cache com TTL configurável"""
+    if force_refresh and not allow_extended:
+        return None
+    item = _PRICE_CACHE.get(key)
+    if not item:
+        return None
+    price, ts = item
+    age = time.time() - ts
+
+    # TTL normal (30 min)
+    if age <= PRICE_TTL_SECONDS:
+        LOG.info(f"[CACHE-HIT] {key}: ${price:.2f} (idade: {int(age/60)}min)")
+        return price
+
+    # TTL extendido para casos de rate limit (1 hora)
+    if allow_extended and age <= PRICE_EXTENDED_TTL_SECONDS:
+        LOG.info(f"[CACHE-EXTENDED] {key}: ${price:.2f} (idade: {int(age/60)}min)")
+        return price
+
+    return None
+
+def _price_cache_put(key: str, price: float, from_backup: bool = False) -> None:
+    """Armazenar preço no cache com timestamp"""
+    _PRICE_CACHE[key] = (price, time.time())
+    source = "backup-api" if from_backup else "coingecko"
+    LOG.info(f"[CACHE-PUT] {key}: ${price:.2f} (fonte: {source})")
+
+
 def _update_fallback_prices() -> None:
     """Atualiza preços de fallback via Binance (primário) → Kraken → CoinGecko (backup).
 
@@ -179,27 +208,32 @@ def _update_fallback_prices() -> None:
     resolved: dict[str, float] = {}  # cg_id -> price
 
     # --- Fonte 1: Binance (sem rate limit, gratuita) ---
+    # Tenta api.binance.com primeiro; se bloqueado (451/403), tenta api.binance.us
     binance_ids = [item["cg_id"] for item in price_updates if item["cg_id"] in binance_pairs]
     if binance_ids:
-        # Buscar todos os preços de uma vez via /ticker/price (aceita múltiplos símbolos)
         symbols_json = str([binance_pairs[cid] for cid in binance_ids]).replace("'", '"')
-        url = f"https://api.binance.com/api/v3/ticker/price?symbols={symbols_json}"
-        try:
-            r = httpx.get(url, timeout=10)
-            if r.status_code == 200:
-                data = r.json()
-                # Criar mapa reverso pair->cg_id
-                pair_to_cg = {v: k for k, v in binance_pairs.items()}
-                for entry in data:
-                    sym = entry.get("symbol", "")
-                    cg_id = pair_to_cg.get(sym)
-                    if cg_id and entry.get("price"):
-                        resolved[cg_id] = float(entry["price"])
-                LOG.info("[AUTO-UPDATE] Binance retornou %d preços", len([e for e in data if pair_to_cg.get(e.get("symbol"))]))
-            else:
-                LOG.warning("[AUTO-UPDATE] Binance HTTP %d", r.status_code)
-        except Exception as exc:
-            LOG.warning("[AUTO-UPDATE] Binance falhou: %s", exc)
+        binance_hosts = ["https://api.binance.com", "https://api.binance.us"]
+        for bhost in binance_hosts:
+            url = f"{bhost}/api/v3/ticker/price?symbols={symbols_json}"
+            try:
+                r = httpx.get(url, timeout=10)
+                if r.status_code == 200:
+                    data = r.json()
+                    pair_to_cg = {v: k for k, v in binance_pairs.items()}
+                    for entry in data:
+                        sym = entry.get("symbol", "")
+                        cg_id = pair_to_cg.get(sym)
+                        if cg_id and entry.get("price"):
+                            resolved[cg_id] = float(entry["price"])
+                    LOG.info("[AUTO-UPDATE] Binance (%s) retornou %d preços", bhost, len([e for e in data if pair_to_cg.get(e.get("symbol"))]))
+                    break  # sucesso, não precisa tentar próximo host
+                elif r.status_code in (451, 403):
+                    LOG.warning("[AUTO-UPDATE] Binance (%s) bloqueado (HTTP %d), tentando próximo...", bhost, r.status_code)
+                    continue
+                else:
+                    LOG.warning("[AUTO-UPDATE] Binance (%s) HTTP %d", bhost, r.status_code)
+            except Exception as exc:
+                LOG.warning("[AUTO-UPDATE] Binance (%s) falhou: %s", bhost, exc)
 
     # --- Fonte 2: Kraken para tokens não resolvidos ---
     missing_kraken = [cid for cid in kraken_pairs if cid not in resolved]
@@ -288,35 +322,6 @@ def _periodic_price_update():
 _update_thread = threading.Thread(target=_periodic_price_update, daemon=True)
 _update_thread.start()
 LOG.info("[PERIODIC] Thread de atualização automática de preços iniciada")
-
-
-def _price_cache_get(key: str, force_refresh: bool = False, allow_extended: bool = False) -> Optional[float]:
-    """Obter preço do cache com TTL configurável"""
-    if force_refresh and not allow_extended:
-        return None
-    item = _PRICE_CACHE.get(key)
-    if not item:
-        return None
-    price, ts = item
-    age = time.time() - ts
-    
-    # TTL normal (30 min)
-    if age <= PRICE_TTL_SECONDS:
-        LOG.info(f"[CACHE-HIT] {key}: ${price:.2f} (idade: {int(age/60)}min)")
-        return price
-    
-    # TTL extendido para casos de rate limit (1 hora)
-    if allow_extended and age <= PRICE_EXTENDED_TTL_SECONDS:
-        LOG.info(f"[CACHE-EXTENDED] {key}: ${price:.2f} (idade: {int(age/60)}min)")
-        return price
-    
-    return None
-
-def _price_cache_put(key: str, price: float, from_backup: bool = False) -> None:
-    """Armazenar preço no cache com timestamp"""
-    _PRICE_CACHE[key] = (price, time.time())
-    source = "backup-api" if from_backup else "coingecko"
-    LOG.info(f"[CACHE-PUT] {key}: ${price:.2f} (fonte: {source})")
 
 
 # =========================
