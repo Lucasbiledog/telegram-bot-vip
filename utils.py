@@ -22,29 +22,18 @@ def choose_plan_from_usd(amount_usd: float, prices: Dict[int, float] = None) -> 
             amount_usd = float(amount_usd)
         except (ValueError, TypeError):
             return None
-        if amount_usd < 30.0:  # Menos de $30 - não elegível
-         return None
-    elif amount_usd < 70.0:  # $30.00 - $69.99
-         return 30   # 1 mês (MENSAL)
-    elif amount_usd < 110.0:  # $70.00 - $109.99
+
+    # Faixas de valor de produção
+    if amount_usd < 30.0:
+        return None
+    elif amount_usd < 70.0:
+        return 30   # 1 mês (MENSAL)
+    elif amount_usd < 110.0:
         return 90   # 3 meses (TRIMESTRAL)
-    elif amount_usd < 179.0:  # $110.00 - $178.99
-         return 180  # 6 meses (SEMESTRAL)
-    else:  # $179.00+
-         return 365  # 1 ano (ANUAL)
-    
-    # Fallback para compatibilidade (caso ainda existam preços fixos)
-    if prices:
-        tol = 0.01
-        best_days = None
-        best_price = -1.0
-        for days, price in prices.items():
-            if amount_usd + tol >= price and price > best_price:
-                best_price = price
-                best_days = days
-        return best_days
-    
-    return None
+    elif amount_usd < 179.0:
+        return 180  # 6 meses (SEMESTRAL)
+    else:
+        return 365  # 1 ano (ANUAL)
 
 async def vip_upsert_and_get_until(tg_id: int, username: Optional[str], days: int, first_name: Optional[str] = None) -> datetime:
     """Create or extend VIP membership and return the new expiry."""
