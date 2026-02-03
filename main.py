@@ -4973,36 +4973,16 @@ def plan_from_amount(amount_usd: float) -> Optional[VipPlan]:
     - $3.00 - $3.99: VIP 180 dias (SEMESTRAL)
     - $4.00+: VIP 365 dias (ANUAL)
     """
-    # ====== MODO TESTE - VALORES REDUZIDOS ======
-    if amount_usd < 1.00:
-        return None  # Valor muito baixo
-    elif amount_usd < 2.00:
-        return VipPlan.MENSAL      # 30 dias
-    elif amount_usd < 3.00:
-        return VipPlan.TRIMESTRAL  # 90 dias
-    elif amount_usd < 4.00:
-        return VipPlan.SEMESTRAL   # 180 dias
+    if amount_usd < 30.00:
+         return None  # Valor muito baixo
+    elif amount_usd < 70.00:
+         return VipPlan.MENSAL      # 30 dias
+    elif amount_usd < 110.00:
+         return VipPlan.TRIMESTRAL  # 90 dias
+    elif amount_usd < 179.00:
+         return VipPlan.SEMESTRAL   # 180 dias
     else:
-        return VipPlan.ANUAL       # 365 dias
-
-    # ====== VALORES ORIGINAIS (PRODUÇÃO) ======
-    # Descomente abaixo e comente o bloco acima quando voltar para produção
-    # Ranges de PRODUÇÃO:
-    # - $30.00 - $69.99: VIP 30 dias (MENSAL)
-    # - $70.00 - $109.99: VIP 90 dias (TRIMESTRAL)
-    # - $110.00 - $178.99: VIP 180 dias (SEMESTRAL)
-    # - $179.00+: VIP 365 dias (ANUAL)
-    #
-    # if amount_usd < 30.00:
-    #     return None  # Valor muito baixo
-    # elif amount_usd < 70.00:
-    #     return VipPlan.MENSAL      # 30 dias
-    # elif amount_usd < 110.00:
-    #     return VipPlan.TRIMESTRAL  # 90 dias
-    # elif amount_usd < 179.00:
-    #     return VipPlan.SEMESTRAL   # 180 dias
-    # else:
-    #     return VipPlan.ANUAL       # 365 dias
+         return VipPlan.ANUAL       # 365 dias
 
 async def fetch_price_usd() -> Optional[float]:
     try:
@@ -7354,24 +7334,12 @@ async def api_config(uid: str = None, ts: str = None, sig: str = None):
             expected_sig = make_link_sig(BOT_SECRET or "default", uid_int, ts_int)
             if sig != expected_sig:
                 raise HTTPException(status_code=403, detail="Assinatura inválida")
-        
-        # ====== MODO TESTE - VALORES REDUZIDOS ======
-        # Use estes valores para testar com quantias pequenas
-        value_tiers = {
-            "30": 1.00,    # Preço para 1 mês - TESTE
-            "90": 2.00,    # Preço para 3 meses - TESTE
-            "180": 3.00,   # Preço para 6 meses - TESTE
-            "365": 4.00    # Preço para 1 ano - TESTE
-        }
-
-        # ====== VALORES ORIGINAIS (PRODUÇÃO) ======
-        # Descomente abaixo e comente o bloco acima quando voltar para produção
-        # value_tiers = {
-        #     "30": 30.00,   # Preço para 1 mês
-        #     "90": 70.00,   # Preço para 3 meses
-        #     "180": 110.00, # Preço para 6 meses
-        #     "365": 179.00  # Preço para 1 ano
-        # }
+            value_tiers = {
+             "30": 30.00,   # Preço para 1 mês
+             "90": 70.00,   # Preço para 3 meses
+             "180": 110.00, # Preço para 6 meses
+             "365": 179.00  # Preço para 1 ano
+         }
         
         return {
             "wallet": WALLET_ADDRESS,

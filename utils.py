@@ -22,35 +22,16 @@ def choose_plan_from_usd(amount_usd: float, prices: Dict[int, float] = None) -> 
             amount_usd = float(amount_usd)
         except (ValueError, TypeError):
             return None
-    
-    # Faixas de valor dinâmicas baseadas no valor real pago
-    # CORRIGIDO: Agora consistente com plan_from_amount em main.py
-
-    # ====== MODO TESTE - VALORES REDUZIDOS ======
-    # Use estes valores para testar com quantias pequenas
-    if amount_usd < 1.0:  # Menos de $1 - não elegível
-        return None
-    elif amount_usd < 2.0:  # $1.00 - $1.99
-        return 30   # 1 mês (MENSAL)
-    elif amount_usd < 3.0:  # $2.00 - $2.99
+        if amount_usd < 30.0:  # Menos de $30 - não elegível
+         return None
+    elif amount_usd < 70.0:  # $30.00 - $69.99
+         return 30   # 1 mês (MENSAL)
+    elif amount_usd < 110.0:  # $70.00 - $109.99
         return 90   # 3 meses (TRIMESTRAL)
-    elif amount_usd < 4.0:  # $3.00 - $3.99
-        return 180  # 6 meses (SEMESTRAL)
-    else:  # $4.00+
-        return 365  # 1 ano (ANUAL)
-
-    # ====== VALORES ORIGINAIS (PRODUÇÃO) ======
-    # Descomente abaixo e comente o bloco acima quando voltar para produção
-    # if amount_usd < 30.0:  # Menos de $30 - não elegível
-    #     return None
-    # elif amount_usd < 70.0:  # $30.00 - $69.99
-    #     return 30   # 1 mês (MENSAL)
-    # elif amount_usd < 110.0:  # $70.00 - $109.99
-    #     return 90   # 3 meses (TRIMESTRAL)
-    # elif amount_usd < 179.0:  # $110.00 - $178.99
-    #     return 180  # 6 meses (SEMESTRAL)
-    # else:  # $179.00+
-    #     return 365  # 1 ano (ANUAL)
+    elif amount_usd < 179.0:  # $110.00 - $178.99
+         return 180  # 6 meses (SEMESTRAL)
+    else:  # $179.00+
+         return 365  # 1 ano (ANUAL)
     
     # Fallback para compatibilidade (caso ainda existam preços fixos)
     if prices:
