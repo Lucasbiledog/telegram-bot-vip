@@ -233,7 +233,26 @@ async function validatePayment() {
   updateProgress(50, "Conectando com o servidor...");
 
   try {
-    updateProgress(60, "Enviando dados para validação...");
+    updateProgress(55, "Enviando hash para o servidor...");
+
+    // Progresso simulado enquanto aguarda resposta do backend
+    // O servidor faz: buscar em 27 blockchains → verificar confirmações → consultar preço → calcular USD
+    const progressSteps = [
+      { at: 60, msg: "Buscando transação nas blockchains (Ethereum, BSC, Polygon)..." },
+      { at: 65, msg: "Verificando redes principais..." },
+      { at: 70, msg: "Consultando RPCs de backup se necessário..." },
+      { at: 75, msg: "Verificando confirmações do bloco..." },
+      { at: 80, msg: "Identificando token e calculando valor em USD..." },
+      { at: 85, msg: "Validando destino e valor da transação..." },
+    ];
+    let stepIndex = 0;
+    const progressInterval = setInterval(() => {
+      if (stepIndex < progressSteps.length) {
+        const step = progressSteps[stepIndex];
+        updateProgress(step.at, step.msg);
+        stepIndex++;
+      }
+    }, 2000); // a cada 2s mostra um novo passo
 
     // Timeout de 60 segundos para a requisição
     const controller = new AbortController();
@@ -244,9 +263,12 @@ async function validatePayment() {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ uid: userID, username: null, hash }),
       signal: controller.signal
-    }).finally(() => clearTimeout(timeoutId));
+    }).finally(() => {
+      clearTimeout(timeoutId);
+      clearInterval(progressInterval);
+    });
 
-    updateProgress(70, "Processando resposta do servidor...");
+    updateProgress(88, "Resposta recebida, processando resultado...");
 
     const j = await r.json().catch(() => ({}));
     if (!r.ok) {
@@ -256,10 +278,10 @@ async function validatePayment() {
       return;
     }
 
-    updateProgress(80, "Validação concluída, processando resultado...");
+    updateProgress(92, "Validação concluída!", "success");
 
     if (j.ok) {
-      updateProgress(90, "Pagamento confirmado! ✅", "success");
+      updateProgress(95, "Pagamento confirmado! ✅", "success");
 
       // mostra mensagem e redireciona para o convite se existir
       showAlert(j.message || "Pagamento confirmado!", true);
