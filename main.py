@@ -3207,10 +3207,10 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 checkout_msg = (
                     welcome_header
                     + "💰 <b>Planos disponíveis:</b>\n"
-                      "• Mensal (30 dias): <b>$1.00</b>\n"
-                      "• Trimestral (90 dias): <b>$2.00</b>\n"
-                      "• Semestral (180 dias): <b>$3.00</b>\n"
-                      "• Anual (365 dias): <b>$4.00</b>\n\n"
+                      "• Mensal (30 dias): <b>$30.00</b>\n"
+                      "• Trimestral (90 dias): <b>$70.00</b>\n"
+                      "• Semestral (180 dias): <b>$110.00</b>\n"
+                      "• Anual (365 dias): <b>$179.00</b>\n\n"
                       "🔐 Pagamento seguro via blockchain\n"
                       "Aceitamos diversas criptomoedas em múltiplas redes.\n\n"
                       "👇 Clique nos botões abaixo:"
