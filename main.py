@@ -8039,6 +8039,12 @@ async def on_startup():
             await query.answer()
 
             context.user_data["awaiting_support"] = True
+            context.user_data["support_active"] = True
+
+            from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+            cancel_kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("❌ Cancelar", callback_data="support_close_user")]
+            ])
 
             support_msg = (
                 "📞 <b>Suporte</b>\n\n"
@@ -8046,7 +8052,7 @@ async def on_startup():
                 "Um atendente responderá em breve.\n\n"
                 "💡 <i>Envie sua mensagem agora:</i>"
             )
-            await query.message.reply_text(support_msg, parse_mode="HTML")
+            await query.message.reply_text(support_msg, parse_mode="HTML", reply_markup=cancel_kb)
 
         async def support_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             """Captura mensagem de suporte do usuário e encaminha para o grupo de logs"""
@@ -8066,7 +8072,8 @@ async def on_startup():
             # Encaminhar para grupo de logs
             from telegram import InlineKeyboardButton, InlineKeyboardMarkup
             reply_kb = InlineKeyboardMarkup([
-                [InlineKeyboardButton("💬 Responder", callback_data=f"support_reply_{user.id}")]
+                [InlineKeyboardButton("💬 Responder", callback_data=f"support_reply_{user.id}")],
+                [InlineKeyboardButton("✅ Encerrar atendimento", callback_data=f"support_close_admin_{user.id}")]
             ])
 
             log_msg = (
@@ -8088,11 +8095,17 @@ async def on_startup():
             except Exception as e:
                 logging.warning(f"[SUPORTE] Erro ao encaminhar para logs: {e}")
 
+            from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+            user_kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("❌ Encerrar conversa", callback_data="support_close_user")]
+            ])
+
             await msg.reply_text(
                 "✅ <b>Mensagem enviada!</b>\n\n"
                 "Aguarde, um atendente responderá em breve.\n"
                 "Você receberá a resposta aqui mesmo nesta conversa.",
                 parse_mode="HTML",
+                reply_markup=user_kb,
             )
 
         async def support_reply_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -8108,6 +8121,84 @@ async def on_startup():
                 f"<code>/r {target_uid} sua resposta aqui</code>",
                 parse_mode="HTML",
             )
+
+        async def support_close_user_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+            """Usuário encerra a conversa de suporte"""
+            query = update.callback_query
+            if not query:
+                return
+            await query.answer()
+
+            context.user_data["awaiting_support"] = False
+            context.user_data["support_active"] = False
+
+            from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+            restart_kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("📞 Novo Suporte", callback_data="support_start")]
+            ])
+
+            await query.message.edit_text(
+                "📞 <b>Suporte encerrado</b>\n\n"
+                "Obrigado pelo contato! Se precisar de ajuda novamente, "
+                "clique no botão abaixo.",
+                parse_mode="HTML",
+                reply_markup=restart_kb,
+            )
+
+            # Notificar admin no grupo de logs
+            user = update.effective_user
+            try:
+                await application.bot.send_message(
+                    chat_id=LOGS_GROUP_ID,
+                    text=(
+                        f"📞 <b>SUPORTE ENCERRADO</b> (pelo usuário)\n"
+                        f"━━━━━━━━━━━━━━━\n"
+                        f"👤 <b>{user.first_name}</b> (<code>{user.id}</code>)"
+                    ),
+                    parse_mode="HTML",
+                )
+            except Exception:
+                pass
+
+        async def support_close_admin_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+            """Admin encerra o atendimento de suporte"""
+            query = update.callback_query
+            if not query or not query.data:
+                return
+            await query.answer()
+
+            target_uid = query.data.replace("support_close_admin_", "")
+
+            try:
+                target_uid_int = int(target_uid)
+            except ValueError:
+                return
+
+            # Atualizar mensagem no grupo de logs
+            await query.message.edit_text(
+                query.message.text + "\n\n✅ <b>Atendimento encerrado pelo admin.</b>",
+                parse_mode="HTML",
+            )
+
+            # Notificar o usuário
+            from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+            restart_kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("📞 Novo Suporte", callback_data="support_start")]
+            ])
+
+            try:
+                await application.bot.send_message(
+                    chat_id=target_uid_int,
+                    text=(
+                        "📞 <b>Atendimento encerrado</b>\n\n"
+                        "Seu chamado de suporte foi finalizado.\n"
+                        "Se precisar de mais ajuda, clique no botão abaixo."
+                    ),
+                    parse_mode="HTML",
+                    reply_markup=restart_kb,
+                )
+            except Exception as e:
+                logging.warning(f"[SUPORTE] Erro ao notificar encerramento para {target_uid}: {e}")
 
         async def support_respond_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             """/r <user_id> <mensagem> — admin responde ao usuário via bot"""
@@ -8136,14 +8227,15 @@ async def on_startup():
             # Enviar resposta ao usuário como se fosse o bot
             from telegram import InlineKeyboardButton, InlineKeyboardMarkup
             support_kb = InlineKeyboardMarkup([
-                [InlineKeyboardButton("📞 Novo Suporte", callback_data="support_start")]
+                [InlineKeyboardButton("📞 Novo Suporte", callback_data="support_start"),
+                 InlineKeyboardButton("❌ Encerrar", callback_data="support_close_user")]
             ])
 
             response_msg = (
                 f"📞 <b>Resposta do Suporte</b>\n"
                 f"━━━━━━━━━━━━━━━\n\n"
                 f"{reply_text}\n\n"
-                f"<i>Se precisar de mais ajuda, clique no botão abaixo.</i>"
+                f"<i>Se precisar de mais ajuda, clique em \"Novo Suporte\".</i>"
             )
 
             try:
@@ -8160,6 +8252,8 @@ async def on_startup():
         # Registrar handlers de suporte
         application.add_handler(CallbackQueryHandler(support_start_handler, pattern="support_start"), group=1)
         application.add_handler(CallbackQueryHandler(support_reply_callback, pattern="^support_reply_"), group=1)
+        application.add_handler(CallbackQueryHandler(support_close_user_handler, pattern="support_close_user"), group=1)
+        application.add_handler(CallbackQueryHandler(support_close_admin_handler, pattern="^support_close_admin_"), group=1)
         application.add_handler(CommandHandler("r", support_respond_cmd), group=1)
         application.add_handler(
             MessageHandler(filters.ChatType.PRIVATE & filters.TEXT & ~filters.COMMAND, support_message_handler),
