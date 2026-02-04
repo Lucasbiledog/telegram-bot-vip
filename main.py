@@ -8439,7 +8439,7 @@ async def on_startup():
         async def weekly_free_promo_job(context: ContextTypes.DEFAULT_TYPE):
             """Job semanal para mensagem promocional FREE (quartas 15:30)"""
             # Verificar se é quarta-feira
-            if datetime.now().weekday() != 2:  # 0=segunda, 2=quarta
+            if dt.datetime.now().weekday() != 2:  # 0=segunda, 2=quarta
                 logging.info(f"[PROMO] Hoje não é quarta-feira, pulando mensagem promocional")
                 return
 
