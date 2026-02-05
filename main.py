@@ -6244,6 +6244,76 @@ async def test_send_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
 
 
+async def enviar_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Comando /enviar - Envia próximo arquivo da fila imediatamente.
+    Uso: /enviar [vip|free] [quantidade]
+    Exemplos:
+        /enviar        -> envia 1 arquivo VIP
+        /enviar free   -> envia 1 arquivo FREE
+        /enviar vip 3  -> envia 3 arquivos VIP
+    """
+    if not is_admin(update.effective_user.id):
+        return
+
+    # Parse argumentos
+    args = context.args or []
+    tier = 'vip'
+    quantidade = 1
+
+    for arg in args:
+        if arg.lower() in ['vip', 'free']:
+            tier = arg.lower()
+        elif arg.isdigit():
+            quantidade = min(int(arg), 10)  # máximo 10 por vez
+
+    msg = await update.effective_message.reply_text(
+        f"📤 Enviando {quantidade} arquivo(s) {tier.upper()}...\n⏳ Aguarde..."
+    )
+
+    enviados = 0
+    erros = 0
+
+    with SessionLocal() as session:
+        for i in range(quantidade):
+            try:
+                if tier == 'vip':
+                    await send_daily_vip_file(context.bot, session)
+                else:
+                    await send_weekly_free_file(context.bot, session)
+                enviados += 1
+
+                # Atualizar mensagem de progresso a cada envio
+                if quantidade > 1:
+                    await msg.edit_text(
+                        f"📤 Enviando {tier.upper()}...\n"
+                        f"✅ {enviados}/{quantidade} enviado(s)"
+                    )
+
+            except Exception as e:
+                erros += 1
+                logging.error(f"[ENVIAR] Erro no arquivo {i+1}: {e}")
+
+    # Resultado final
+    if enviados > 0:
+        resultado = (
+            f"✅ <b>Envio concluído!</b>\n\n"
+            f"📤 Enviados: {enviados}\n"
+            f"🎯 Tier: {tier.upper()}"
+        )
+        if erros > 0:
+            resultado += f"\n⚠️ Erros: {erros}"
+    else:
+        resultado = (
+            f"❌ <b>Nenhum arquivo enviado</b>\n\n"
+            f"Possíveis causas:\n"
+            f"• Fila vazia (use /stats_auto)\n"
+            f"• Erro de permissão no canal"
+        )
+
+    await msg.edit_text(resultado, parse_mode='HTML')
+
+
 async def debug_version_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Mostra versão do código em execução (admin)"""
     if not is_admin(update.effective_user.id):
@@ -8339,6 +8409,7 @@ async def on_startup():
         application.add_handler(CommandHandler("reset_history", reset_history_cmd), group=1)
         application.add_handler(CommandHandler("confirmar_reset", confirmar_reset_cmd), group=1)
         application.add_handler(CommandHandler("test_send", test_send_cmd), group=1)
+        application.add_handler(CommandHandler("enviar", enviar_cmd), group=1)
         application.add_handler(CommandHandler("debug_version", debug_version_cmd), group=1)
         application.add_handler(CommandHandler("check_files", check_files_cmd), group=1)
         application.add_handler(CommandHandler("get_chat_id", get_chat_id_cmd), group=1)
