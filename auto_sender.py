@@ -516,7 +516,15 @@ async def send_teaser_to_free(bot: Bot, all_parts: list):
 
 """
 
-        content += """════════════════════════════════════════
+        # Obter username do bot para o link
+        try:
+            bot_info = await bot.get_me()
+            bot_username = bot_info.username
+            bot_link = f"https://t.me/{bot_username}?start=vip"
+        except Exception:
+            bot_link = ""
+
+        content += f"""════════════════════════════════════════
 
 💎 QUER TER ACESSO A ESTE E OUTROS CONTEÚDOS?
 
@@ -526,7 +534,7 @@ async def send_teaser_to_free(bot: Bot, all_parts: list):
    • Acesso vitalício
    • Suporte prioritário
 
-🔗 Para assinar, clique no link do canal!
+🔗 Clique aqui para assinar: {bot_link}
 
 ════════════════════════════════════════
 """
@@ -537,13 +545,23 @@ async def send_teaser_to_free(bot: Bot, all_parts: list):
             temp_path = f.name
 
         try:
+            # Obter link para a caption também
+            caption_text = (
+                f"👀 <b>Preview do conteúdo VIP de hoje!</b>\n\n"
+                f"💎 Quer ter acesso completo? Assine o VIP!\n"
+                f"👉 <a href='{bot_link}'>Clique aqui para assinar</a>"
+            ) if bot_link else (
+                f"👀 <b>Preview do conteúdo VIP de hoje!</b>\n\n"
+                f"💎 Quer ter acesso completo? Assine o VIP!"
+            )
+
             # Enviar arquivo .txt para o canal FREE
             with open(temp_path, 'rb') as f:
                 await bot.send_document(
                     chat_id=FREE_CHANNEL_ID,
                     document=f,
                     filename=txt_name,
-                    caption=f"👀 <b>Preview do conteúdo VIP de hoje!</b>\n\n💎 Quer ter acesso completo? Assine o VIP!",
+                    caption=caption_text,
                     parse_mode='HTML'
                 )
 
