@@ -315,12 +315,17 @@ async def get_random_file_from_source(
 
             return None
 
-        # Selecionar arquivo aleatório
-        selected_file = random.choice(available_files)
+        # Ordenar por tamanho (maiores primeiro) - arquivos maiores tendem a ser de melhor qualidade
+        # Arquivos sem tamanho (None) vão para o final
+        available_files.sort(key=lambda f: f.file_size or 0, reverse=True)
 
+        # Selecionar o maior arquivo disponível
+        selected_file = available_files[0]
+
+        size_mb = (selected_file.file_size or 0) / (1024 * 1024)
         LOG.info(
             f"[AUTO-SEND] ✅ Arquivo selecionado: {selected_file.file_type} "
-            f"(ID: {selected_file.message_id}, {len(available_files)} disponíveis)"
+            f"({size_mb:.1f}MB, ID: {selected_file.message_id}, {len(available_files)} disponíveis)"
         )
 
         return selected_file
