@@ -233,26 +233,7 @@ async function validatePayment() {
   updateProgress(50, "Conectando com o servidor...");
 
   try {
-    updateProgress(55, "Enviando hash para o servidor...");
-
-    // Progresso simulado enquanto aguarda resposta do backend
-    // O servidor faz: buscar em 27 blockchains → verificar confirmações → consultar preço → calcular USD
-    const progressSteps = [
-      { at: 60, msg: "Buscando transação nas blockchains (Ethereum, BSC, Polygon)..." },
-      { at: 65, msg: "Verificando redes principais..." },
-      { at: 70, msg: "Consultando RPCs de backup se necessário..." },
-      { at: 75, msg: "Verificando confirmações do bloco..." },
-      { at: 80, msg: "Identificando token e calculando valor em USD..." },
-      { at: 85, msg: "Validando destino e valor da transação..." },
-    ];
-    let stepIndex = 0;
-    const progressInterval = setInterval(() => {
-      if (stepIndex < progressSteps.length) {
-        const step = progressSteps[stepIndex];
-        updateProgress(step.at, step.msg);
-        stepIndex++;
-      }
-    }, 2000); // a cada 2s mostra um novo passo
+    updateProgress(60, "Enviando dados para validação...");
 
     // Timeout de 60 segundos para a requisição
     const controller = new AbortController();
@@ -263,12 +244,9 @@ async function validatePayment() {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ uid: userID, username: null, hash }),
       signal: controller.signal
-    }).finally(() => {
-      clearTimeout(timeoutId);
-      clearInterval(progressInterval);
-    });
+    }).finally(() => clearTimeout(timeoutId));
 
-    updateProgress(88, "Resposta recebida, processando resultado...");
+    updateProgress(70, "Processando resposta do servidor...");
 
     const j = await r.json().catch(() => ({}));
     if (!r.ok) {
@@ -278,10 +256,10 @@ async function validatePayment() {
       return;
     }
 
-    updateProgress(92, "Validação concluída!", "success");
+    updateProgress(80, "Validação concluída, processando resultado...");
 
     if (j.ok) {
-      updateProgress(95, "Pagamento confirmado! ✅", "success");
+      updateProgress(90, "Pagamento confirmado! ✅", "success");
 
       // mostra mensagem e redireciona para o convite se existir
       showAlert(j.message || "Pagamento confirmado!", true);
@@ -380,22 +358,25 @@ async function loadBasicInfo() {
     $("addr").value = "0x40dDBD27F878d07808339F9965f013F1CBc2F812";
 
     // ====== VALORES DE PRODUÇÃO ======
+    // Valores atualizados: Mensal $30 | Trimestral $70 | Semestral $110 | Anual $179
     const defaultPlans = {
-      "30": 30.00,   // Mensal
-      "90": 70.00,   // Trimestral
-      "180": 110.00, // Semestral
-      "365": 179.00  // Anual
+      "30": 1.00,    // Mensal (PRODUÇÃO: 30.00)
+      "90": 2.00,    // Trimestral (PRODUÇÃO: 70.00)
+      "180": 3.00,   // Semestral (PRODUÇÃO: 110.00)
+      "365": 4.00    // Anual (PRODUÇÃO: 179.00)
     };
     console.log("[loadBasicInfo] Renderizando planos padrão:", defaultPlans);
     renderPlans(defaultPlans);
-    
-    // Página totalmente funcional
-    showAlert(`
-      <h3>✅ Página de pagamento independente</h3>
-      <p>Esta página funciona completamente sem o bot do Telegram.</p>
-      <p>Para receber o convite do grupo VIP, insira seu ID do Telegram no campo acima.</p>
-    `, true);
-    
+
+    // Mostrar mensagem apenas se não tiver UID válido
+    if (!uid || uid === "null" || uid === "undefined") {
+      showAlert(`
+        <h3>✅ Página de pagamento independente</h3>
+        <p>Esta página funciona completamente sem o bot do Telegram.</p>
+        <p>Para receber o convite do grupo VIP, insira seu ID do Telegram no campo acima.</p>
+      `, true);
+    }
+
   } catch (err) {
     console.warn("Erro ao carregar info básica:", err);
   }

@@ -12,6 +12,9 @@ from web3 import Web3
 
 LOG = logging.getLogger("payments")
 
+# Preços centralizados — altere SOMENTE em config.py
+from config import VIP_PRICES as DEFAULT_VIP_PRICES_USD
+
 # =========================
 # Configuração via ENV
 # =========================
@@ -82,45 +85,13 @@ FALLBACK_PRICE_META: Dict[str, Dict[str, Any]] = {
 }
 
 
-def _price_cache_get(key: str, force_refresh: bool = False, allow_extended: bool = False) -> Optional[float]:
-    """Obter preço do cache com TTL configurável"""
-    if force_refresh and not allow_extended:
-        return None
-    item = _PRICE_CACHE.get(key)
-    if not item:
-        return None
-    price, ts = item
-    age = time.time() - ts
-
-    # TTL normal (30 min)
-    if age <= PRICE_TTL_SECONDS:
-        LOG.info(f"[CACHE-HIT] {key}: ${price:.2f} (idade: {int(age/60)}min)")
-        return price
-
-    # TTL extendido para casos de rate limit (1 hora)
-    if allow_extended and age <= PRICE_EXTENDED_TTL_SECONDS:
-        LOG.info(f"[CACHE-EXTENDED] {key}: ${price:.2f} (idade: {int(age/60)}min)")
-        return price
-
-    return None
-
-def _price_cache_put(key: str, price: float, from_backup: bool = False) -> None:
-    """Armazenar preço no cache com timestamp"""
-    _PRICE_CACHE[key] = (price, time.time())
-    source = "backup-api" if from_backup else "coingecko"
-    LOG.info(f"[CACHE-PUT] {key}: ${price:.2f} (fonte: {source})")
-
-
 def _update_fallback_prices() -> None:
-    """Atualiza preços de fallback via Binance (primário) → Kraken → CoinGecko (backup).
-
-    Também popula _PRICE_CACHE para que validações usem cache instantâneo.
-    """
-
+    """Atualiza preços de fallback principais a partir do CoinGecko."""
+    
     # Lista de tokens para atualizar automaticamente
     price_updates = [
         {
-            "cg_id": "bitcoin",
+            "cg_id": "bitcoin", 
             "keys": ["bitcoin", "0x38:0x7130d2a12b9bcbfae4f2634d864a1ee1ce3ead9c"],  # BTC/BTCB
             "name": "Bitcoin/BTCB"
         },
@@ -130,7 +101,7 @@ def _update_fallback_prices() -> None:
             "name": "Ethereum"
         },
         {
-            "cg_id": "binancecoin",
+            "cg_id": "binancecoin", 
             "keys": ["binancecoin"],
             "name": "BNB"
         },
@@ -180,123 +151,46 @@ def _update_fallback_prices() -> None:
             "name": "ApeCoin"
         }
     ]
-
-    # Mapeamento Binance: cg_id -> par Binance
-    binance_pairs = {
-        "bitcoin": "BTCUSDT",
-        "ethereum": "ETHUSDT",
-        "binancecoin": "BNBUSDT",
-        "avalanche-2": "AVAXUSDT",
-        "fantom": "FTMUSDT",
-        "apecoin": "APEUSDT",
-        "mantle": "MNTUSDT",
-        "celo": "CELOUSDT",
-        "polygon-pos": "MATICUSDT",
-    }
-
-    # Mapeamento Kraken: cg_id -> par Kraken
-    kraken_pairs = {
-        "bitcoin": "XBTUSD",
-        "ethereum": "ETHUSD",
-        "avalanche-2": "AVAXUSD",
-        "fantom": "FTMUSD",
-        "apecoin": "APEUSD",
-        "polygon-pos": "MATICUSD",
-    }
-
-    updated_count = 0
-    resolved: dict[str, float] = {}  # cg_id -> price
-
-    # --- Fonte 1: Binance (sem rate limit, gratuita) ---
-    # Tenta api.binance.com primeiro; se bloqueado (451/403), tenta api.binance.us
-    binance_ids = [item["cg_id"] for item in price_updates if item["cg_id"] in binance_pairs]
-    if binance_ids:
-        symbols_json = str([binance_pairs[cid] for cid in binance_ids]).replace("'", '"')
-        binance_hosts = ["https://api.binance.com", "https://api.binance.us"]
-        for bhost in binance_hosts:
-            url = f"{bhost}/api/v3/ticker/price?symbols={symbols_json}"
-            try:
-                r = httpx.get(url, timeout=10)
-                if r.status_code == 200:
-                    data = r.json()
-                    pair_to_cg = {v: k for k, v in binance_pairs.items()}
-                    for entry in data:
-                        sym = entry.get("symbol", "")
-                        cg_id = pair_to_cg.get(sym)
-                        if cg_id and entry.get("price"):
-                            resolved[cg_id] = float(entry["price"])
-                    LOG.info("[AUTO-UPDATE] Binance (%s) retornou %d preços", bhost, len([e for e in data if pair_to_cg.get(e.get("symbol"))]))
-                    break  # sucesso, não precisa tentar próximo host
-                elif r.status_code in (451, 403):
-                    LOG.warning("[AUTO-UPDATE] Binance (%s) bloqueado (HTTP %d), tentando próximo...", bhost, r.status_code)
-                    continue
-                else:
-                    LOG.warning("[AUTO-UPDATE] Binance (%s) HTTP %d", bhost, r.status_code)
-            except Exception as exc:
-                LOG.warning("[AUTO-UPDATE] Binance (%s) falhou: %s", bhost, exc)
-
-    # --- Fonte 2: Kraken para tokens não resolvidos ---
-    missing_kraken = [cid for cid in kraken_pairs if cid not in resolved]
-    for cg_id in missing_kraken:
-        pair = kraken_pairs[cg_id]
-        url = f"https://api.kraken.com/0/public/Ticker?pair={pair}"
-        try:
-            r = httpx.get(url, timeout=8)
-            if r.status_code == 200:
-                data = r.json()
-                if data and "result" in data and data["result"]:
-                    px = float(list(data["result"].values())[0]["c"][0])
-                    if px > 0:
-                        resolved[cg_id] = px
-                        LOG.info("[AUTO-UPDATE] Kraken %s = $%.2f", cg_id, px)
-        except Exception as exc:
-            LOG.warning("[AUTO-UPDATE] Kraken falhou p/ %s: %s", cg_id, exc)
-
-    # --- Fonte 3: CoinGecko como backup para tokens ainda não resolvidos ---
-    missing_cg = [item["cg_id"] for item in price_updates if item["cg_id"] not in resolved]
-    if missing_cg:
-        coin_ids_str = ",".join(missing_cg)
-        url = f"https://api.coingecko.com/api/v3/simple/price?ids={coin_ids_str}&vs_currencies=usd"
-        try:
-            r = httpx.get(url, timeout=15)
-            if r.status_code == 200:
-                data = r.json()
-                for cg_id in missing_cg:
-                    if cg_id in data and "usd" in data[cg_id]:
-                        resolved[cg_id] = float(data[cg_id]["usd"])
-                LOG.info("[AUTO-UPDATE] CoinGecko retornou %d preços (backup)", sum(1 for cid in missing_cg if cid in resolved))
-            elif r.status_code == 429:
-                LOG.warning("[AUTO-UPDATE] CoinGecko 429 (rate limit) — ignorado, Binance/Kraken já cobriram")
-            else:
-                LOG.warning("[AUTO-UPDATE] CoinGecko erro %d", r.status_code)
-        except Exception as exc:
-            LOG.warning("[AUTO-UPDATE] CoinGecko falhou: %s", exc)
-
-    # --- Aplicar preços resolvidos em FALLBACK_PRICES + _PRICE_CACHE ---
-    for item in price_updates:
-        cg_id = item["cg_id"]
-        if cg_id not in resolved:
-            continue
-        px = resolved[cg_id]
-
-        for key in item["keys"]:
-            old_price = FALLBACK_PRICES.get(key, 0)
-            FALLBACK_PRICES[key] = px
-            FALLBACK_PRICE_META[key] = {"source": "auto_binance_kraken", "ts": time.time()}
-            updated_count += 1
+    
+    # Construir URL com múltiplas moedas
+    coin_ids = [item["cg_id"] for item in price_updates]
+    url = f"https://api.coingecko.com/api/v3/simple/price?ids={','.join(coin_ids)}&vs_currencies=usd"
+    
+    try:
+        r = httpx.get(url, timeout=15)
+        if r.status_code == 200:
+            data = r.json()
+            updated_count = 0
+            
+            for item in price_updates:
+                cg_id = item["cg_id"]
+                if cg_id in data and "usd" in data[cg_id]:
+                    px = float(data[cg_id]["usd"])
+                    
+                    # Atualizar todas as chaves para este token
+                    for key in item["keys"]:
+                        old_price = FALLBACK_PRICES.get(key, 0)
+                        FALLBACK_PRICES[key] = px
+                        FALLBACK_PRICE_META[key] = {"source": "coingecko_auto", "ts": time.time()}
+                        updated_count += 1
+                        
+                        LOG.info(
+                            "[AUTO-UPDATE] %s: $%.2f -> $%.2f (key: %s)",
+                            item["name"], old_price, px, key
+                        )
+            
             LOG.info(
-                "[AUTO-UPDATE] %s: $%.2f -> $%.2f (key: %s)",
-                item["name"], old_price, px, key
+                "[AUTO-UPDATE] Atualizados %d preços de fallback em %s",
+                updated_count,
+                time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()),
             )
-
-        # Popular _PRICE_CACHE para que validações usem cache instantâneo
-        _price_cache_put(f"native:{cg_id}", px, from_backup=True)
-
-    LOG.info(
-        "[AUTO-UPDATE] Atualizados %d preços de fallback em %s (fontes: Binance+Kraken+CoinGecko)",
-        updated_count,
-        time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()),
-    )
+        elif r.status_code == 429:
+            LOG.warning("[AUTO-UPDATE] Rate limit (429) - tentando novamente mais tarde")
+        else:
+            LOG.warning("[AUTO-UPDATE] CoinGecko erro %d", r.status_code)
+            
+    except Exception as exc:
+        LOG.warning("[AUTO-UPDATE] Falha ao atualizar preços de fallback: %s", exc)
 
 
 # Atualizar preços de fallback no startup
@@ -309,10 +203,10 @@ _update_fallback_prices()
 import threading
 
 def _periodic_price_update():
-    """Atualiza preços de fallback a cada 5 minutos via Binance/Kraken (sem rate limit)"""
+    """Atualiza preços de fallback a cada 2 horas (reduzido para evitar rate limit)"""
     while True:
         try:
-            time.sleep(300)  # 5 minutos — Binance/Kraken não têm rate limit restritivo
+            time.sleep(7200)  # 2 horas (reduzido de 30min para evitar 429)
             LOG.info("[PERIODIC] Iniciando atualização automática de preços...")
             _update_fallback_prices()
         except Exception as e:
@@ -322,6 +216,35 @@ def _periodic_price_update():
 _update_thread = threading.Thread(target=_periodic_price_update, daemon=True)
 _update_thread.start()
 LOG.info("[PERIODIC] Thread de atualização automática de preços iniciada")
+
+
+def _price_cache_get(key: str, force_refresh: bool = False, allow_extended: bool = False) -> Optional[float]:
+    """Obter preço do cache com TTL configurável"""
+    if force_refresh and not allow_extended:
+        return None
+    item = _PRICE_CACHE.get(key)
+    if not item:
+        return None
+    price, ts = item
+    age = time.time() - ts
+    
+    # TTL normal (30 min)
+    if age <= PRICE_TTL_SECONDS:
+        LOG.info(f"[CACHE-HIT] {key}: ${price:.2f} (idade: {int(age/60)}min)")
+        return price
+    
+    # TTL extendido para casos de rate limit (1 hora)
+    if allow_extended and age <= PRICE_EXTENDED_TTL_SECONDS:
+        LOG.info(f"[CACHE-EXTENDED] {key}: ${price:.2f} (idade: {int(age/60)}min)")
+        return price
+    
+    return None
+
+def _price_cache_put(key: str, price: float, from_backup: bool = False) -> None:
+    """Armazenar preço no cache com timestamp"""
+    _PRICE_CACHE[key] = (price, time.time())
+    source = "backup-api" if from_backup else "coingecko"
+    LOG.info(f"[CACHE-PUT] {key}: ${price:.2f} (fonte: {source})")
 
 
 # =========================
@@ -619,22 +542,35 @@ async def _cg_get(url: str) -> Optional[dict]:
     delay = PRICE_RETRY_BASE_DELAY
     last_err = None
     
+    # Delay inicial inteligente baseado na situação da API
+    if not COINGECKO_API_KEY:  # Free tier - muito conservativo
+        await asyncio.sleep(10.0)  # 10s inicial
+    else:
+        await asyncio.sleep(3.0)  # API key ainda conservativo
+    
     for attempt in range(1, PRICE_MAX_RETRIES + 1):
         try:
-            async with httpx.AsyncClient(timeout=8) as cli:
+            async with httpx.AsyncClient(timeout=12) as cli:
                 r = await cli.get(url, headers=headers)
             if r.status_code == 200:
                 return r.json()
             if r.status_code == 429:
                 LOG.warning("Coingecko 429 (rate-limit). attempt=%d url=%s", attempt, url)
-                LOG.warning("[RATE-LIMIT] 429 recebido, usando fallbacks imediatamente")
-                break
+                # Para rate limiting severo, desistir mais rápido e usar fallbacks
+                if attempt >= 2:  # Após 2 tentativas, desistir
+                    LOG.warning(f"[RATE-LIMIT] Desistindo do CoinGecko após {attempt} tentativas (429), usando fallbacks")
+                    break
+                
+                rate_limit_delay = 20 if COINGECKO_API_KEY else 30  # Delay fixo menor
+                LOG.warning(f"[RATE-LIMIT] Rate limited! Aguardando {rate_limit_delay}s (attempt {attempt}/{PRICE_MAX_RETRIES})")
+                await asyncio.sleep(rate_limit_delay)
+                continue
             last_err = f"{r.status_code} {r.text[:100]}"
-            await asyncio.sleep(min(delay, 5))
+            await asyncio.sleep(min(delay, 30))  # Cap de 30s
             delay *= 2
         except Exception as e:
             last_err = str(e)[:100]
-            await asyncio.sleep(min(delay, 5))
+            await asyncio.sleep(min(delay, 20))  # Cap menor para outros erros
             delay *= 2
 
     LOG.warning("Coingecko GET falhou após retries: %s", last_err)
@@ -724,26 +660,8 @@ async def _usd_token(
     alt_cgid = KNOWN_TOKEN_TO_CGID.get(f"{chain_id}:{token_addr_lc}")
     if alt_cgid:
         cache_key = f"native:{alt_cgid}"
-
-        # Tentar cache primeiro (preenchido pelo background updater a cada 5 min)
-        cached = _price_cache_get(cache_key, force_refresh=False, allow_extended=True)
-        if cached is not None:
-            px = float(cached)
-            usd_value = amount * px
-            return px, usd_value
-
-        # Cache miss — tentar Binance/Kraken antes do CoinGecko
-        LOG.info(f"[CACHE-MISS] Token mapeado {alt_cgid} — tentando APIs de backup...")
-        backup_price = await _try_backup_apis(alt_cgid)
-        if backup_price:
-            px = backup_price
-            usd_value = amount * px
-            LOG.info(f"[BACKUP-SUCCESS] ✅ Token {alt_cgid}: ${px:.2f} | {amount} unidades = ${usd_value:.2f}")
-            _price_cache_put(cache_key, px, from_backup=True)
-            return px, usd_value
-
-        # Último recurso: CoinGecko com timeout curto
-        LOG.info(f"[CACHE-MISS] Tentando CoinGecko para {alt_cgid}...")
+        # SEMPRE forçar busca de preços atuais na internet
+        LOG.info(f"[LIVE-PRICE] Buscando preço atual de token mapeado {alt_cgid}...")
         data = await _cg_get(f"https://api.coingecko.com/api/v3/simple/price?ids={alt_cgid}&vs_currencies=usd")
         if data and alt_cgid in data and "usd" in data[alt_cgid]:
             px = float(data[alt_cgid]["usd"])
@@ -751,7 +669,7 @@ async def _usd_token(
             LOG.info(f"[LIVE-PRICE] ✅ Token {alt_cgid}: ${px:.2f} | {amount} unidades = ${usd_value:.2f}")
             _price_cache_put(cache_key, px)
             return px, usd_value
-
+        
         # Fallback para rate limiting ou API indisponível
         fallback_price = FALLBACK_PRICES.get(alt_cgid)
         if fallback_price:
@@ -765,22 +683,15 @@ async def _usd_token(
             )
             _price_cache_put(cache_key, px)
             return px, usd_value
-
+            
         LOG.info("[price] falhou alt_cgid=%s p/ token %s; tentando plataforma CG...", alt_cgid, token_addr_lc)
 
     # 2) fluxo padrão por plataforma/contrato
     platform = CHAINS[chain_id]["cg_platform"]
     cache_key = f"token:{platform}:{token_addr_lc}"
-
-    # Tentar cache primeiro
-    cached = _price_cache_get(cache_key, force_refresh=False, allow_extended=True)
-    if cached is not None:
-        px = float(cached)
-        usd_value = amount * px
-        return px, usd_value
-
-    # Cache miss — chamar CoinGecko
-    LOG.info(f"[CACHE-MISS] Token {token_addr_lc} na plataforma {platform} — buscando preço...")
+    
+    # SEMPRE forçar busca de preços atuais na internet
+    LOG.info(f"[LIVE-PRICE] Buscando preço atual de token {token_addr_lc} na plataforma {platform}...")
     data = await _cg_get(
         f"https://api.coingecko.com/api/v3/simple/token_price/{platform}"
         f"?contract_addresses={token_addr_lc}&vs_currencies=usd"
@@ -1073,20 +984,13 @@ def human_chain(chain_id: str) -> str:
 
 
 async def resolve_payment_usd_autochain(
-    tx_hash: str, force_refresh: bool = False, progress_cb=None
+    tx_hash: str, force_refresh: bool = False
 ) -> Tuple[bool, str, Optional[float], Dict[str, Any]]:
     """
     Procura a transação em TODAS as chains em PARALELO (muito mais rápido).
     Ao achar a tx em alguma delas, resolve e retorna.
     OTIMIZADO: Timeout total de 15 segundos para validação rápida.
-
-    progress_cb: coroutine opcional (async def cb(text)) para atualizar progresso no Telegram.
     """
-
-    async def _progress(text: str) -> None:
-        if progress_cb:
-            await progress_cb(text)
-
     # Verificar cache de transações validadas (otimização para escala)
     if not force_refresh:
         normalized_hash = tx_hash.lower().replace('0x', '')
@@ -1104,10 +1008,6 @@ async def resolve_payment_usd_autochain(
                     LOG.info(f"[TX-CACHE] Cache expirado para {tx_hash} (idade: {age:.0f}s)")
 
     LOG.info(f"[AUTOCHAIN] Procurando transação {tx_hash} em {len(CHAINS)} chains em PARALELO...")
-    await _progress(
-        "🔍 <b>Validando transação...</b>\n\n"
-        "⏳ Etapa 1/4 — Localizando transação nas blockchains..."
-    )
 
     # Normalizar hash (remover 0x e garantir lowercase)
     clean_hash = tx_hash.lower().replace('0x', '')
@@ -1156,32 +1056,12 @@ async def resolve_payment_usd_autochain(
                 tx, w3 = result
                 chain_name = human_chain(chain_id)
                 LOG.info(f"[AUTOCHAIN] ✅ Transação encontrada em {chain_name}!")
-                await _progress(
-                    "🔍 <b>Validando transação...</b>\n\n"
-                    f"✅ Etapa 2/4 — Transação encontrada na <b>{chain_name}</b>\n"
-                    "⏳ Etapa 3/4 — Verificando confirmações e dados..."
-                )
                 ok, msg, usd, details = await _resolve_on_chain(
                     w3, chain_id, normalized_hash, force_refresh=force_refresh
                 )
                 details['found_on_chain'] = chain_name
                 details['search_time'] = 'fast'
                 LOG.info(f"[RESULT {chain_name}] ok={ok} msg={msg} usd=${usd}")
-
-                if ok and usd:
-                    await _progress(
-                        "🔍 <b>Validando transação...</b>\n\n"
-                        f"✅ Etapa 2/4 — Transação encontrada na <b>{chain_name}</b>\n"
-                        "✅ Etapa 3/4 — Confirmações e dados verificados\n"
-                        f"✅ Etapa 4/4 — Valor calculado: <b>${float(usd):.2f} USD</b>\n\n"
-                        "🎉 Finalizando..."
-                    )
-                elif not ok:
-                    await _progress(
-                        "🔍 <b>Validando transação...</b>\n\n"
-                        f"✅ Etapa 2/4 — Transação encontrada na <b>{chain_name}</b>\n"
-                        f"❌ Etapa 3/4 — {msg}"
-                    )
 
                 # Salvar no cache de transações
                 result = (ok, msg, usd, details)
@@ -1192,11 +1072,6 @@ async def resolve_payment_usd_autochain(
 
         # Fase 2: Se não encontrou nas prioritárias, buscar nas outras chains
         LOG.info(f"[AUTOCHAIN] Não encontrado nas prioritárias. Buscando em {len(other_chains)} chains restantes...")
-        await _progress(
-            "🔍 <b>Validando transação...</b>\n\n"
-            "⚠️ Etapa 1/4 — Não encontrada nas redes principais\n"
-            f"⏳ Etapa 2/4 — Buscando em {len(other_chains)} redes adicionais..."
-        )
         if other_chains:
             other_tasks = [try_chain(cid) for cid in other_chains]
             other_results = await asyncio.gather(*other_tasks, return_exceptions=True)
@@ -1208,32 +1083,12 @@ async def resolve_payment_usd_autochain(
                     tx, w3 = result
                     chain_name = human_chain(chain_id)
                     LOG.info(f"[AUTOCHAIN] ✅ Transação encontrada em {chain_name}!")
-                    await _progress(
-                        "🔍 <b>Validando transação...</b>\n\n"
-                        f"✅ Etapa 2/4 — Transação encontrada na <b>{chain_name}</b>\n"
-                        "⏳ Etapa 3/4 — Verificando confirmações e dados..."
-                    )
                     ok, msg, usd, details = await _resolve_on_chain(
                         w3, chain_id, normalized_hash, force_refresh=force_refresh
                     )
                     details['found_on_chain'] = chain_name
                     details['search_time'] = 'extended'
                     LOG.info(f"[RESULT {chain_name}] ok={ok} msg={msg} usd=${usd}")
-
-                    if ok and usd:
-                        await _progress(
-                            "🔍 <b>Validando transação...</b>\n\n"
-                            f"✅ Etapa 2/4 — Transação encontrada na <b>{chain_name}</b>\n"
-                            "✅ Etapa 3/4 — Confirmações e dados verificados\n"
-                            f"✅ Etapa 4/4 — Valor calculado: <b>${float(usd):.2f} USD</b>\n\n"
-                            "🎉 Finalizando..."
-                        )
-                    elif not ok:
-                        await _progress(
-                            "🔍 <b>Validando transação...</b>\n\n"
-                            f"✅ Etapa 2/4 — Transação encontrada na <b>{chain_name}</b>\n"
-                            f"❌ Etapa 3/4 — {msg}"
-                        )
 
                     # Salvar no cache de transações
                     result = (ok, msg, usd, details)
@@ -1422,33 +1277,15 @@ async def tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     f"Status atual: {existing.status}"
                 )
     
-    # Mensagem de progresso para o usuário acompanhar em tempo real
-    status_msg = await msg.reply_text(
-        "🔍 <b>Validando transação...</b>\n\n"
-        "⏳ Etapa 1/4 — Localizando transação nas blockchains...",
-        parse_mode="HTML",
-    )
-
-    async def _update_status(text: str) -> None:
-        """Atualiza a mensagem de progresso (ignora erros de edição)."""
-        try:
-            await status_msg.edit_text(text, parse_mode="HTML")
-        except Exception:
-            pass  # mensagem pode já ter sido deletada ou inalterada
-
     # Verificar transação on-chain SEMPRE com preços atuais
     try:
         # SEMPRE usar force_refresh=True para garantir preços atualizados
         ok, msg_result, usd_paid, details = await resolve_payment_usd_autochain(
-            tx_hash, force_refresh=True, progress_cb=_update_status
+            tx_hash, force_refresh=True
         )
-
+        
         LOG.info(f"[PRICE-CHECK] Verificação com preços atuais - Hash: {tx_hash[:12]}... USD: ${float(usd_paid):.4f}" if usd_paid else f"[PRICE-CHECK] Falha na verificação - Hash: {tx_hash[:12]}...")
         
-        # Apagar mensagem de progresso antes da resposta final
-        with suppress(Exception):
-            await status_msg.delete()
-
         if ok and usd_paid:
             # Import necessário para funções do main
             from utils import choose_plan_from_usd
@@ -1537,11 +1374,9 @@ async def tx_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
         else:
             return await msg.reply_text(f"❌ {msg_result}")
-
+            
     except Exception as e:
         LOG.error(f"Erro ao verificar transação {tx_hash}: {e}")
-        with suppress(Exception):
-            await status_msg.delete()
         return await msg.reply_text("❌ Erro interno ao verificar transação.")
 
 async def listar_pendentes_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1992,4 +1827,4 @@ async def get_prices_from_db():
                 return json.loads(config.value)
     except Exception:
         pass
-    return {}
+    return DEFAULT_VIP_PRICES_USD
