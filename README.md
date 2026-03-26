@@ -59,11 +59,11 @@ O bot aceita pagamentos em múltiplas blockchains:
 - Avalanche
 - E mais 20+ blockchains
 
-### Planos VIP (Modo Teste)
-- $1.00 - $1.99 = 30 dias (Mensal)
-- $2.00 - $2.99 = 90 dias (Trimestral)
-- $3.00 - $3.99 = 180 dias (Semestral)
-- $4.00+ = 365 dias (Anual)
+### Planos VIP
+- $30.00 - $69.99 = 30 dias (Mensal)
+- $70.00 - $109.99 = 90 dias (Trimestral)
+- $110.00 - $178.99 = 180 dias (Semestral)
+- $179.00+ = 365 dias (Anual)
 
 ## 🔧 Funcionalidades
 
