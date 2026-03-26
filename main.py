@@ -1811,6 +1811,15 @@ def ensure_schema_once():
                 # MIGRAÇÃO CRÍTICA: Colunas de notificação VIP (necessárias para funcionamento)
                 ensure_vip_notification_columns()
 
+                # MIGRAÇÃO: Coluna category em source_files (organização por categoria)
+                try:
+                    with engine.connect() as _conn:
+                        _conn.execute(text("ALTER TABLE source_files ADD COLUMN IF NOT EXISTS category VARCHAR"))
+                        _conn.commit()
+                    logging.info("[SCHEMA] Coluna 'category' garantida em source_files")
+                except Exception as _e:
+                    logging.warning(f"[SCHEMA] Migração category: {_e}")
+
                 # Configurações básicas
                 init_db()
                 _schema_initialized = True
@@ -3445,20 +3454,12 @@ async def organizar_arquivos_cmd(update: Update, context: ContextTypes.DEFAULT_T
     /organizar_arquivos — Categoriza automaticamente todos os arquivos indexados.
     Não altera a fila de envio, apenas adiciona metadado de categoria no banco.
     """
+    logging.info(f"[ORGANIZAR] Comando recebido de user={update.effective_user and update.effective_user.id}")
     if not (update.effective_user and is_admin(update.effective_user.id)):
         return await update.effective_message.reply_text("⛔ Apenas admins.")
 
     msg = update.effective_message
-
-    # Garantir que coluna category existe (migration segura)
-    try:
-        engine = SessionLocal.kw.get("bind") or SessionLocal().bind
-        with engine.connect() as conn:
-            conn.execute(text("ALTER TABLE source_files ADD COLUMN category VARCHAR"))
-            conn.commit()
-        logging.info("[ORGANIZAR] Coluna 'category' criada na tabela source_files")
-    except Exception:
-        pass  # Coluna já existe — ok
+    logging.info("[ORGANIZAR] Admin confirmado, iniciando organização...")
 
     status_msg = await msg.reply_text(
         "⏳ <b>Organizando arquivos por categoria...</b>\n\nIsso pode levar alguns segundos.",
