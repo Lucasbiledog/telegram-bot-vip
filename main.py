@@ -3506,6 +3506,21 @@ async def organizar_arquivos_cmd(update: Update, context: ContextTypes.DEFAULT_T
         await status_msg.edit_text(f"❌ Erro ao organizar: <code>{e}</code>", parse_mode="HTML")
 
 
+# Flag global de cancelamento do /organizar_canal
+_organizar_canal_cancelar: bool = False
+
+
+async def parar_canal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /parar_canal — Cancela um /organizar_canal em andamento.
+    """
+    global _organizar_canal_cancelar
+    if not (update.effective_user and is_admin(update.effective_user.id)):
+        return await update.effective_message.reply_text("⛔ Apenas admins.")
+    _organizar_canal_cancelar = True
+    await update.effective_message.reply_text("🛑 Sinal de parada enviado. O envio será interrompido no próximo arquivo.")
+
+
 async def organizar_canal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     /organizar_canal — Reenvia os arquivos do grupo fonte para o mesmo grupo,
@@ -3600,12 +3615,22 @@ async def organizar_canal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE
         parse_mode="HTML"
     )
 
+    global _organizar_canal_cancelar
+    _organizar_canal_cancelar = False  # reset ao iniciar
+
     bot = context.bot
     enviados = 0
     erros = 0
 
     try:
         for cat_idx, (cat, grupos) in enumerate(plano, 1):
+            if _organizar_canal_cancelar:
+                await status_msg.edit_text(
+                    f"🛑 <b>Organização cancelada.</b>\n\n"
+                    f"📤 {enviados} arquivo(s) enviados até o momento.",
+                    parse_mode="HTML"
+                )
+                return
             # Cabeçalho da categoria
             header = (
                 f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -3621,8 +3646,12 @@ async def organizar_canal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE
 
             # Arquivos da categoria
             for g in grupos:
+                if _organizar_canal_cancelar:
+                    break
                 partes = g["partes"]
                 for i, arq in enumerate(partes, 1):
+                    if _organizar_canal_cancelar:
+                        break
                     if i == 1 and len(partes) > 1:
                         caption = f"📂 {cat}\n📦 {g['base_name']}\n\n🗂 Parte {i} de {len(partes)}"
                     elif i == 1:
@@ -3697,11 +3726,9 @@ def _agrupar_partes(arquivos: list) -> list:
     ordem: list = []    # mantém ordem de inserção
 
     for arq in arquivos:
-        if is_part_file(arq.file_name, arq.caption):
-            base = extract_base_name(arq.file_name) or arq.file_name or "?"
-        else:
-            # Arquivo único: usa o próprio nome como chave (sem extensão para agrupar variantes)
-            base = arq.file_name or f"[{arq.file_type}_{arq.id}]"
+        # Sempre usa extract_base_name para agrupar arquivos com mesmo nome base
+        # (ex: arquivo.zip.001 e arquivo.zip.002 → chave "arquivo.zip")
+        base = extract_base_name(arq.file_name) or arq.file_name or f"[{arq.file_type}_{arq.id}]"
 
         if base not in grupos:
             grupos[base] = []
@@ -3849,6 +3876,7 @@ async def comandos_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• /organizar_arquivos — categoriza todos os arquivos indexados por tipo",
         "• /organizar_canal — reenvia os arquivos no mesmo grupo, organizados por categoria",
         "• /organizar_canal preview — mostra o plano sem enviar nada",
+        "• /parar_canal — cancela um /organizar_canal em andamento",
         "• /listar_categorias [nome] — resumo ou lista de uma categoria específica",
         "• /comandos — esta lista",
         "• /listar_comandos — (alias)",
@@ -8595,6 +8623,7 @@ async def on_startup():
         application.add_handler(CommandHandler("index_files", index_files_cmd), group=1)  # Indexação automática
         application.add_handler(CommandHandler("organizar_arquivos", organizar_arquivos_cmd), group=1)
         application.add_handler(CommandHandler("organizar_canal", organizar_canal_cmd), group=1)
+        application.add_handler(CommandHandler("parar_canal", parar_canal_cmd), group=1)
         application.add_handler(CommandHandler("listar_categorias", listar_categorias_cmd), group=1)
         application.add_handler(CommandHandler("comandos", comandos_cmd), group=5)
         application.add_handler(CommandHandler("listar_comandos", comandos_cmd), group=5)
