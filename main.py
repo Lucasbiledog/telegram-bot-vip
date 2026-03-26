@@ -39,9 +39,11 @@ from auto_sender import (
     SourceFile,
     SentFile,
     setup_auto_sender,
+    setup_catalog,
     index_message_file,
     send_daily_vip_file,
     send_weekly_free_file,
+    send_or_update_vip_catalog,
     get_stats,
     reset_sent_history,
     SOURCE_CHAT_ID
@@ -90,7 +92,7 @@ from sqlalchemy.engine import make_url
 
 # Importar apenas User, PendingNotification e MemberLog do models.py
 # Pack e Payment já estão definidos no main.py com mais campos
-from models import User, PendingNotification, MemberLog, Base as ModelsBase
+from models import User, PendingNotification, MemberLog, SupportTicket, Base as ModelsBase
 
 # === Funções de Retry Automático ===
 async def send_with_retry(func, *args, max_retries=3, **kwargs):
@@ -124,7 +126,7 @@ async def send_with_retry(func, *args, max_retries=3, **kwargs):
 
     # Se chegou aqui, todos os retries falharam
     raise last_exception
-from config import WEBAPP_URL
+from config import WEBAPP_URL, VIP_PRICES, vip_plans_text, vip_plans_text_usd
 
 from payments import (
     resolve_payment_usd_autochain,              # já está funcionando
@@ -763,7 +765,7 @@ def ensure_schema():
 # Helpers
 # =========================
 # Quais comandos usuários comuns podem usar
-ALLOWED_FOR_NON_ADM = {"pagar", "tx", "start", "novopack", "novopackvip", "novopackfree", "getid", "comandos", "listar_comandos" }
+ALLOWED_FOR_NON_ADM = {"pagar", "tx", "start", "novopack", "novopackvip", "novopackfree", "getid", "comandos", "listar_comandos", "cancelar_suporte", "meu_vip" }
 
 def esc(s): return html.escape(str(s) if s is not None else "")
 def now_utc(): return dt.datetime.now(dt.timezone.utc)
@@ -1183,6 +1185,8 @@ LOCAL_MODE  = os.getenv("LOCAL_MODE", "false").lower() == "true"
 # Payment Configuration
 WALLET_ADDRESS = os.getenv("WALLET_ADDRESS", "")
 BOT_SECRET = os.getenv("BOT_SECRET", "")
+WEBAPP_URL = os.getenv("WEBAPP_URL", "")
+WEBAPP_LINK_SECRET = os.getenv("WEBAPP_LINK_SECRET", "")
 
 STORAGE_GROUP_ID       = int(os.getenv("STORAGE_GROUP_ID", "-4806334341"))
 GROUP_VIP_ID           = int(os.getenv("Group_VIP_ID", os.getenv("GROUP_VIP_ID", "-1003255098941")))
@@ -1231,6 +1235,7 @@ async def startup_event():
 
         # Configurar sistema de envio automático (passar classes de modelo)
         setup_auto_sender(VIP_CHANNEL_ID, FREE_CHANNEL_ID, SourceFile, SentFile)
+        setup_catalog(cfg_get, cfg_set)
         logging.info(f"📤 Sistema de envio automático configurado - VIP: {VIP_CHANNEL_ID}, FREE: {FREE_CHANNEL_ID}")
 
         # Iniciar sistema keep-alive para manter bot ativo 24/7
@@ -1687,6 +1692,7 @@ class SourceFile(Base):
     file_size = Column(BigInteger, nullable=True)
     indexed_at = Column(DateTime(timezone=True), nullable=False, default=now_utc)
     active = Column(Boolean, default=True)  # Pode ser desativado manualmente
+    category = Column(String, nullable=True)  # Categoria organizada manualmente ou auto
 
 
 class SentFile(Base):
@@ -2100,15 +2106,19 @@ async def process_vip_member_entry(user, entry_type: str):
                 
             else:
                 # Lógica normal para novos VIPs
-                # Atualizar VIP membership com o ID correto
-                vip = s.query(VipMembership).filter(
-                    VipMembership.user_id == 0
-                ).order_by(VipMembership.created_at.desc()).first()
-                
-                if vip:
-                    vip.user_id = user_id
-                    vip.username = username
-                    logging.info(f"[VIP-ENTRY] VIP associado ao usuário {user_id}")
+                # Criar VipMembership com ID real baseado nos dados do pagamento
+                vip_expires = now_utc() + dt.timedelta(days=payment.vip_days)
+
+                vip = VipMembership(
+                    user_id=user_id,
+                    username=username,
+                    active=True,
+                    expires_at=vip_expires,
+                    created_at=now_utc(),
+                    plan=f"{payment.vip_days}d"
+                )
+                s.add(vip)
+                logging.info(f"[VIP-ENTRY] VIP criado para {user_id} - expira em {vip_expires.strftime('%d/%m/%Y %H:%M')}")
             
             # Associar pagamento ao usuário que entrou
             payment.user_id = user_id
@@ -2170,13 +2180,69 @@ async def process_vip_member_entry(user, entry_type: str):
                 logging.error(f"[VIP-ENTRY] Erro ao enviar comprovante: {e}")
         else:
             logging.info(f"[VIP-ENTRY] Nenhum pagamento pendente encontrado para associar ao usuário {user_id}")
-            
+
             # Verificar se usuário já tem VIP ativo (pagamento antigo)
             existing_vip = s.query(VipMembership).filter(
                 VipMembership.user_id == user_id,
                 VipMembership.active == True
             ).first()
-            
+
+            # PROTEÇÃO: Se não tem pagamento pendente NEM VIP ativo, remover do grupo
+            if not existing_vip:
+                try:
+                    logging.warning(f"[LINK-PROTECTION] ⚠️ Usuário {user_id} tentou entrar sem pagamento válido - REMOVENDO")
+                    await application.bot.ban_chat_member(
+                        chat_id=GROUP_VIP_ID,
+                        user_id=user_id
+                    )
+                    # Desbanir imediatamente para permitir entrada futura com pagamento
+                    await application.bot.unban_chat_member(
+                        chat_id=GROUP_VIP_ID,
+                        user_id=user_id
+                    )
+
+                    # Notificar no privado
+                    try:
+                        await application.bot.send_message(
+                            chat_id=user_id,
+                            text=(
+                                "⚠️ <b>Acesso Negado ao Grupo VIP</b>\n\n"
+                                "Você foi removido do grupo VIP porque não encontramos "
+                                "um pagamento válido associado ao seu ID.\n\n"
+                                "💳 <b>Para acessar o grupo VIP:</b>\n"
+                                "1. Faça o pagamento através do link oficial\n"
+                                "2. Aguarde a confirmação\n"
+                                "3. Use o link de convite enviado no seu privado\n\n"
+                                "🔐 Cada link é único e só funciona para quem fez o pagamento.\n\n"
+                                "Dúvidas? Entre em contato com o suporte."
+                            ),
+                            parse_mode="HTML"
+                        )
+                    except Exception as notify_error:
+                        logging.error(f"[LINK-PROTECTION] Erro ao notificar usuário removido: {notify_error}")
+
+                    # Log no grupo de administração
+                    from main import LOGS_GROUP_ID
+                    try:
+                        await application.bot.send_message(
+                            chat_id=LOGS_GROUP_ID,
+                            text=(
+                                f"🚫 <b>ACESSO NEGADO - PROTEÇÃO DE LINK</b>\n\n"
+                                f"👤 User: <code>{user_id}</code> (@{username})\n"
+                                f"⚠️ Tentou entrar sem pagamento válido\n"
+                                f"✅ Removido automaticamente do grupo\n\n"
+                                f"💡 O link de convite é protegido e só funciona para quem fez o pagamento."
+                            ),
+                            parse_mode="HTML"
+                        )
+                    except Exception as log_error:
+                        logging.error(f"[LINK-PROTECTION] Erro ao enviar log: {log_error}")
+
+                    return  # Não continuar processamento
+
+                except Exception as e:
+                    logging.error(f"[LINK-PROTECTION] Erro ao remover usuário não autorizado: {e}")
+
             if existing_vip:
                 # Debug: verificar por que a data está tão longe no futuro
                 logging.info(f"[VIP-ENTRY] VIP existente para {user_id}:")
@@ -2625,10 +2691,7 @@ async def _send_preview_media(context: ContextTypes.DEFAULT_TYPE, target_chat_id
             "🔒 Pague com qualquer criptomoeda\n"
             "⚡ Ativação automática\n\n"
             "💰 <b>Planos:</b>\n"
-            "• 30 dias: $30.00 USD (Mensal)\n"
-            "• 90 dias: $70.00 USD (Trimestral)\n"
-            "• 180 dias: $110.00 USD (Semestral)\n"
-            "• 365 dias: $179.00 USD (Anual)"
+            f"{vip_plans_text_usd()}"
         )
         
         try:
@@ -3054,10 +3117,7 @@ async def checkout_callback_handler(update: Update, context: ContextTypes.DEFAUL
                 f"🔒 Pague com qualquer criptomoeda\n"
                 f"⚡ Ativação automática do VIP\n\n"
                 f"💰 <b>Planos:</b>\n"
-                f"• 30 dias: $30.00 USD (Mensal)\n"
-                f"• 90 dias: $70.00 USD (Trimestral)\n"
-                f"• 180 dias: $110.00 USD (Semestral)\n"
-                f"• 365 dias: $179.00 USD (Anual)\n\n"
+                f"{vip_plans_text_usd()}\n\n"
                 f"📋 <b>Como funciona:</b>\n"
                 f"1. Clique no botão abaixo para pagar\n"
                 f"2. Após o pagamento, aguarde a confirmação\n"
@@ -3108,6 +3168,52 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Verificar se há argumentos (deep link)
     if context.args:
         arg = context.args[0]
+
+        # Deep link para página de pagamento: /start vip ou /start payment
+        if arg in ['vip', 'payment', 'acesso']:
+            # Capturar ID real do usuário
+            user_id = user.id
+            # Garantir que sempre temos um username válido
+            username = user.username if user.username else (user.first_name if user.first_name else f"user_{user_id}")
+
+            logging.info(f"[DEEP-LINK] Usuário {user_id} (@{username}) solicitou acesso VIP via deep link")
+
+            # Gerar link de pagamento personalizado com assinatura
+            from utils import make_link_sig
+            import time
+
+            ts = int(time.time())
+            sig = make_link_sig(WEBAPP_LINK_SECRET, user_id, ts)
+
+            # URL da página de pagamento com parâmetros de autenticação
+            payment_url = f"{WEBAPP_URL}?uid={user_id}&ts={ts}&sig={sig}&username={username}"
+
+            # Mensagem com link de pagamento
+            payment_msg = (
+                f"👋 <b>Olá, {user.first_name}!</b>\n\n"
+                f"🎯 <b>Quer ter acesso ao conteúdo completo?</b>\n\n"
+                f"💎 <b>Benefícios VIP:</b>\n"
+                f"• Acesso a conteúdo exclusivo premium\n"
+                f"• Atualizações diárias de novos arquivos\n"
+                f"• Suporte prioritário\n"
+                f"• Sem anúncios ou spam\n\n"
+                f"💰 <b>Planos disponíveis:</b>\n"
+                f"{vip_plans_text()}\n\n"
+                f"🔐 <b>Pagamento seguro via blockchain</b>\n"
+                f"Aceitamos diversas criptomoedas em múltiplas redes.\n\n"
+                f"👇 <b>Clique no botão abaixo para pagar:</b>"
+            )
+
+            # Criar botão com link de pagamento
+            keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton("💳 Fazer Pagamento", url=payment_url)],
+                [InlineKeyboardButton("📩 Suporte", callback_data="support_start")],
+            ])
+
+            await msg.reply_text(payment_msg, parse_mode='HTML', reply_markup=keyboard)
+
+            logging.info(f"[DEEP-LINK] Link de pagamento enviado para {user_id}: {payment_url}")
+            return
 
         # Deep link para acesso VIP: /start vip_CODIGO
         if arg.startswith('vip_'):
@@ -3168,69 +3274,47 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if msg: await msg.reply_text(text, parse_mode="Markdown")
         return
 
-    # No privado: mostrar mensagem de boas-vindas com planos VIP + botão de pagamento
-    if chat and chat.type == "private":
-        try:
-            from payments import pagar_cmd
-            # Reutilizar lógica do /pagar para exibir planos + botão
-            welcome_header = (
-                f"👋 Olá, <b>{user.first_name}</b>!\n\n"
-                f"🎯 <b>Quer ter acesso ao conteúdo completo?</b>\n\n"
-                f"💎 <b>Benefícios VIP:</b>\n"
-                f"• Acesso a conteúdo exclusivo premium\n"
-                f"• Atualizações diárias de novos arquivos\n"
-                f"• Suporte prioritário\n"
-                f"• Sem anúncios ou spam\n\n"
-            )
+    # Mensagem padrão: enviar mensagem VIP para todos os usuários
+    user_id = user.id
+    username = user.username if user.username else (user.first_name if user.first_name else f"user_{user_id}")
 
-            from config import WEBAPP_URL
-            from payments import WALLET_ADDRESS, MIN_CONFIRMATIONS
+    logging.info(f"[START] Usuário {user_id} (@{username}) enviou /start")
 
-            if WEBAPP_URL and WALLET_ADDRESS:
-                from telegram import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
-                from utils import make_link_sig
-                import time as _time
+    # Gerar link de pagamento personalizado com assinatura
+    from utils import make_link_sig
+    import time
 
-                uid = user.id
-                ts = int(_time.time())
-                sig = make_link_sig(os.getenv("BOT_SECRET", "default"), uid, ts)
-                secure_url = f"{WEBAPP_URL}?uid={uid}&ts={ts}&sig={sig}&username={user.first_name}"
+    ts = int(time.time())
+    sig = make_link_sig(WEBAPP_LINK_SECRET, user_id, ts)
 
-                keyboard = InlineKeyboardMarkup([
-                    [InlineKeyboardButton(
-                        "💳 Pagar com Crypto",
-                        web_app=WebAppInfo(url=secure_url)
-                    )],
-                    [InlineKeyboardButton("📞 Suporte", callback_data="support_start")]
-                ])
+    # URL da página de pagamento com parâmetros de autenticação
+    payment_url = f"{WEBAPP_URL}?uid={user_id}&ts={ts}&sig={sig}&username={username}"
 
-                checkout_msg = (
-                    welcome_header
-                    + "💰 <b>Planos disponíveis:</b>\n"
-                      "• Mensal (30 dias): <b>$30.00</b>\n"
-                      "• Trimestral (90 dias): <b>$70.00</b>\n"
-                      "• Semestral (180 dias): <b>$110.00</b>\n"
-                      "• Anual (365 dias): <b>$179.00</b>\n\n"
-                      "🔐 Pagamento seguro via blockchain\n"
-                      "Aceitamos diversas criptomoedas em múltiplas redes.\n\n"
-                      "👇 Clique nos botões abaixo:"
-                )
+    # Mensagem com link de pagamento
+    payment_msg = (
+        f"👋 <b>Olá, {user.first_name}!</b>\n\n"
+        f"🎯 <b>Quer ter acesso ao conteúdo completo?</b>\n\n"
+        f"💎 <b>Benefícios VIP:</b>\n"
+        f"• Acesso a conteúdo exclusivo premium\n"
+        f"• Atualizações diárias de novos arquivos\n"
+        f"• Suporte prioritário\n"
+        f"• Sem anúncios ou spam\n\n"
+        f"💰 <b>Planos disponíveis:</b>\n"
+        f"{vip_plans_text()}\n\n"
+        f"🔐 <b>Pagamento seguro via blockchain</b>\n"
+        f"Aceitamos diversas criptomoedas em múltiplas redes.\n\n"
+        f"👇 <b>Clique no botão abaixo para pagar:</b>"
+    )
 
-                await msg.reply_text(checkout_msg, parse_mode="HTML", reply_markup=keyboard)
-            else:
-                # Fallback sem webapp
-                await msg.reply_text(
-                    welcome_header
-                    + "💰 Use /pagar para ver as opções de pagamento.",
-                    parse_mode="HTML",
-                )
-            return
-        except Exception as e:
-            logging.warning(f"[start_cmd] Erro ao montar mensagem de pagamento: {e}")
+    # Criar botão com link de pagamento
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("💳 Fazer Pagamento", url=payment_url)],
+        [InlineKeyboardButton("📩 Suporte", callback_data="support_start")],
+    ])
 
-    # Mensagem padrão para grupos/outros chats
-    text = "Fala! Eu gerencio packs VIP/FREE e pagamentos via crypto.\nUse /pagar para ver os planos."
-    if msg: await msg.reply_text(text)
+    await msg.reply_text(payment_msg, parse_mode='HTML', reply_markup=keyboard)
+
+    logging.info(f"[START] Link de pagamento enviado para {user_id}: {payment_url}")
 
 
 async def index_files_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -3323,6 +3407,435 @@ async def index_files_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
+# ──────────────────────────────────────────────────────────────────────────────
+# Categorização de arquivos indexados
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _detectar_categoria(file_name: Optional[str], caption: Optional[str]) -> str:
+    """
+    Detecta a categoria de um arquivo com base em palavras-chave no nome/legenda.
+    Retorna o nome da categoria (string).
+    """
+    texto = f"{file_name or ''} {caption or ''}".lower()
+
+    regras = [
+        ("Foliage / Natureza",    ["foliage", "grass", "tree", "bush", "plant", "flower", "leaf", "nature", "forest", "hedge", "shrub", "fern", "weed", "branch", "bark"]),
+        ("Personagem / NPC",      ["character", "human", "npc", "creature", "monster", "zombie", "soldier", "warrior", "female", "male", "body", "face", "skin", "avatar", "hero", "villain", "modular"]),
+        ("Animação",              ["animation", "anim", "motion", "mocap", "walk", "run", "idle", "attack", "locomotion", "recoil", "fps shooter", "shooter"]),
+        ("Veículo",               ["vehicle", "car", "truck", "bike", "aircraft", "ship", "boat", "plane", "helicopter", "moto", "jeep", "tank"]),
+        ("Arquitetura / Prédio",  ["building", "house", "interior", "exterior", "room", "office", "lobby", "hotel", "church", "castle", "dungeon", "apartment", "cabin", "shed", "warehouse", "ruin", "tower", "wall", "door", "window", "roof", "pillar", "arch", "medieval", "slavic", "alley"]),
+        ("Paisagem / Cenário",    ["landscape", "environment", "terrain", "world", "map", "scene", "level", "village", "city", "town", "island", "cave", "mountain", "desert", "snow", "ocean", "river", "lake", "swamp", "field", "satellite", "england", "farm"]),
+        ("Weapon / Arma",         ["weapon", "gun", "rifle", "sword", "bow", "axe", "shield", "pistol", "shotgun", "knife", "blade", "spear", "crossbow", "grenade"]),
+        ("VFX / Partículas",      ["vfx", "particle", "effect", "fire", "water", "smoke", "explosion", "sparks", "blood", "impact", "trail", "magic", "spell", "aura"]),
+        ("Material / Textura",    ["material", "texture", "pbr", "surface", "shader", "decal", "atlas", "tileable", "seamless"]),
+        ("Prop / Objeto",         ["prop", "furniture", "table", "chair", "barrel", "crate", "box", "lamp", "chest", "shelf", "ladder", "fence", "bridge", "statue", "candle", "bottle", "book"]),
+        ("Audio / Som",           ["audio", "sound", "music", "sfx", "ambience", "soundtrack"]),
+        ("Sistema / Blueprint",   ["system", "blueprint", "tool", "plugin", "framework", "survival", "multiplayer", "inventory", "crafting", "pro", "ultimate"]),
+    ]
+
+    for categoria, palavras in regras:
+        if any(p in texto for p in palavras):
+            return categoria
+
+    return "Outros"
+
+
+async def organizar_arquivos_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /organizar_arquivos — Categoriza automaticamente todos os arquivos indexados.
+    Não altera a fila de envio, apenas adiciona metadado de categoria no banco.
+    """
+    if not (update.effective_user and is_admin(update.effective_user.id)):
+        return await update.effective_message.reply_text("⛔ Apenas admins.")
+
+    msg = update.effective_message
+
+    # Garantir que coluna category existe (migration segura)
+    try:
+        engine = SessionLocal.kw.get("bind") or SessionLocal().bind
+        with engine.connect() as conn:
+            conn.execute(text("ALTER TABLE source_files ADD COLUMN category VARCHAR"))
+            conn.commit()
+        logging.info("[ORGANIZAR] Coluna 'category' criada na tabela source_files")
+    except Exception:
+        pass  # Coluna já existe — ok
+
+    status_msg = await msg.reply_text(
+        "⏳ <b>Organizando arquivos por categoria...</b>\n\nIsso pode levar alguns segundos.",
+        parse_mode="HTML"
+    )
+
+    try:
+        with SessionLocal() as session:
+            arquivos = session.query(SourceFile).filter(SourceFile.active == True).all()
+            total = len(arquivos)
+
+            contagem: dict = {}
+            atualizados = 0
+
+            for arq in arquivos:
+                nova_cat = _detectar_categoria(arq.file_name, arq.caption)
+                if arq.category != nova_cat:
+                    arq.category = nova_cat
+                    atualizados += 1
+                contagem[nova_cat] = contagem.get(nova_cat, 0) + 1
+
+            session.commit()
+
+        # Montar relatório
+        linhas = [
+            f"✅ <b>Arquivos organizados por categoria!</b>\n",
+            f"📦 Total: {total} arquivos | {atualizados} atualizados\n",
+            "─────────────────────────",
+        ]
+        for cat, qtd in sorted(contagem.items(), key=lambda x: -x[1]):
+            linhas.append(f"  <b>{cat}</b>: {qtd} arquivo(s)")
+
+        linhas += [
+            "─────────────────────────",
+            "💡 Use /listar_categorias para ver detalhes.",
+            "⚠️ A fila de envio não foi alterada.",
+        ]
+
+        await status_msg.edit_text("\n".join(linhas), parse_mode="HTML")
+
+    except Exception as e:
+        logging.error(f"[ORGANIZAR] Erro: {e}")
+        import traceback; logging.error(traceback.format_exc())
+        await status_msg.edit_text(f"❌ Erro ao organizar: <code>{e}</code>", parse_mode="HTML")
+
+
+async def organizar_canal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /organizar_canal — Reenvia os arquivos do grupo fonte para o mesmo grupo,
+    organizados por categoria (com cabeçalho separador) e partes agrupadas.
+
+    Uso:
+      /organizar_canal            <- reenvia no próprio grupo fonte
+      /organizar_canal preview    <- mostra o plano sem enviar nada
+      /organizar_canal -1001xxx   <- reenvia em outro canal
+
+    Nao interfere na fila de envio automatico.
+    """
+    if not (update.effective_user and is_admin(update.effective_user.id)):
+        return await update.effective_message.reply_text("⛔ Apenas admins.")
+
+    msg = update.effective_message
+
+    # Sem argumento = usa o próprio grupo fonte (SOURCE_CHAT_ID)
+    if not context.args or context.args[0].lower() == "preview":
+        canal_destino = SOURCE_CHAT_ID
+        apenas_preview = bool(context.args) and context.args[0].lower() == "preview"
+    else:
+        try:
+            canal_destino = int(context.args[0])
+        except ValueError:
+            return await msg.reply_text(
+                "❌ ID inválido. Use um número como <code>-1001234567890</code>, ou sem argumento para usar o próprio grupo fonte.",
+                parse_mode="HTML"
+            )
+        apenas_preview = len(context.args) > 1 and context.args[1].lower() == "preview"
+
+    # Verificar se os arquivos foram categorizados
+    with SessionLocal() as session:
+        sem_categoria = session.query(SourceFile).filter(
+            SourceFile.active == True,
+            SourceFile.category == None
+        ).count()
+
+    if sem_categoria > 0:
+        return await msg.reply_text(
+            f"⚠️ {sem_categoria} arquivo(s) ainda sem categoria.\n"
+            "Execute primeiro: /organizar_arquivos",
+        )
+
+    # Montar plano de envio
+    with SessionLocal() as session:
+        todos = session.query(SourceFile).filter(
+            SourceFile.active == True
+        ).order_by(SourceFile.category, SourceFile.file_name).all()
+
+        por_categoria: dict = {}
+        for arq in todos:
+            cat = arq.category or "Outros"
+            por_categoria.setdefault(cat, []).append(arq)
+
+        plano = []
+        for cat in sorted(por_categoria.keys()):
+            grupos = _agrupar_partes(por_categoria[cat])
+            plano.append((cat, grupos))
+
+    total_packs = sum(len(grupos) for _, grupos in plano)
+    total_arqs  = len(todos)
+
+    # Preview — só mostra o que seria feito
+    if apenas_preview:
+        linhas = [
+            f"👁 <b>Preview — Organizar Canal</b>\n",
+            f"📡 Destino: <code>{canal_destino}</code>",
+            f"📦 {total_packs} pack(s) · {total_arqs} arquivo(s)\n",
+            "─────────────────────────",
+        ]
+        for cat, grupos in plano:
+            linhas.append(f"\n📂 <b>{cat}</b> ({len(grupos)} pack(s))")
+            for g in grupos[:8]:
+                n = len(g["partes"])
+                nome = g["base_name"]
+                size = f"{g['total_size']/(1024*1024):.0f}MB" if g["total_size"] else "?"
+                sufixo = f" [{n} partes · {size}]" if n > 1 else f" [{size}]"
+                linhas.append(f"  • <code>{nome}</code>{sufixo}")
+            if len(grupos) > 8:
+                linhas.append(f"  ... e mais {len(grupos)-8} pack(s)")
+        linhas.append("\n─────────────────────────")
+        linhas.append("Para executar: /organizar_canal " + str(canal_destino))
+        return await msg.reply_text("\n".join(linhas), parse_mode="HTML")
+
+    # Iniciar envio
+    status_msg = await msg.reply_text(
+        f"⏳ <b>Iniciando organização do canal...</b>\n\n"
+        f"📡 Destino: <code>{canal_destino}</code>\n"
+        f"📦 {total_packs} pack(s) · {total_arqs} arquivo(s)\n\n"
+        "Isso pode demorar alguns minutos. Aguarde...",
+        parse_mode="HTML"
+    )
+
+    bot = context.bot
+    enviados = 0
+    erros = 0
+
+    try:
+        for cat_idx, (cat, grupos) in enumerate(plano, 1):
+            # Cabeçalho da categoria
+            header = (
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"📂  {cat.upper()}\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"📦 {len(grupos)} pack(s)"
+            )
+            try:
+                await bot.send_message(chat_id=canal_destino, text=header)
+                await asyncio.sleep(0.6)
+            except Exception as e:
+                logging.warning(f"[ORG_CANAL] Erro cabeçalho '{cat}': {e}")
+
+            # Arquivos da categoria
+            for g in grupos:
+                partes = g["partes"]
+                for i, arq in enumerate(partes, 1):
+                    if i == 1 and len(partes) > 1:
+                        caption = f"📂 {cat}\n📦 {g['base_name']}\n\n🗂 Parte {i} de {len(partes)}"
+                    elif i == 1:
+                        caption = f"📂 {cat}"
+                    else:
+                        caption = f"📦 Parte {i} de {len(partes)}"
+
+                    try:
+                        await bot.copy_message(
+                            chat_id=canal_destino,
+                            from_chat_id=arq.source_chat_id,
+                            message_id=arq.message_id,
+                            caption=caption
+                        )
+                        enviados += 1
+                    except Exception as e:
+                        logging.error(f"[ORG_CANAL] Erro msg {arq.message_id}: {e}")
+                        erros += 1
+
+                    await asyncio.sleep(0.8)
+
+            # Progresso a cada categoria
+            try:
+                await status_msg.edit_text(
+                    f"⏳ <b>Organizando...</b>\n\n"
+                    f"✅ {cat_idx}/{len(plano)}: <b>{cat}</b>\n"
+                    f"📤 {enviados} enviados  ❌ {erros} erros",
+                    parse_mode="HTML"
+                )
+            except Exception:
+                pass
+
+        # Mensagem de encerramento no canal destino
+        await bot.send_message(
+            chat_id=canal_destino,
+            text=(
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "✅  ORGANIZAÇÃO CONCLUÍDA\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"📦 {total_packs} pack(s) · {total_arqs} arquivo(s)\n"
+                f"📂 {len(plano)} categorias"
+            )
+        )
+
+        await status_msg.edit_text(
+            f"✅ <b>Canal organizado!</b>\n\n"
+            f"📡 Canal: <code>{canal_destino}</code>\n"
+            f"📂 {len(plano)} categorias · 📦 {total_packs} pack(s)\n"
+            f"📤 {enviados} arquivo(s) enviados  ❌ {erros} erros",
+            parse_mode="HTML"
+        )
+
+    except Exception as e:
+        logging.error(f"[ORG_CANAL] Erro geral: {e}")
+        import traceback; logging.error(traceback.format_exc())
+        await status_msg.edit_text(
+            f"❌ <b>Erro durante a organização:</b>\n<code>{e}</code>\n\n"
+            f"📤 {enviados} arquivo(s) foram enviados antes do erro.",
+            parse_mode="HTML"
+        )
+
+
+def _agrupar_partes(arquivos: list) -> list:
+    """
+    Agrupa arquivos que são partes do mesmo pacote (ex: .001, .002, .003).
+    Retorna lista de dicts com: base_name, partes (lista), total_size, all_sent (bool).
+    Arquivos sem partes ficam como grupos de 1 elemento.
+    """
+    from auto_sender import extract_base_name, is_part_file
+
+    grupos: dict = {}   # base_name -> lista de SourceFile
+    ordem: list = []    # mantém ordem de inserção
+
+    for arq in arquivos:
+        if is_part_file(arq.file_name, arq.caption):
+            base = extract_base_name(arq.file_name) or arq.file_name or "?"
+        else:
+            # Arquivo único: usa o próprio nome como chave (sem extensão para agrupar variantes)
+            base = arq.file_name or f"[{arq.file_type}_{arq.id}]"
+
+        if base not in grupos:
+            grupos[base] = []
+            ordem.append(base)
+        grupos[base].append(arq)
+
+    resultado = []
+    for base in ordem:
+        partes = sorted(grupos[base], key=lambda f: f.file_name or "")
+        total_size = sum(p.file_size or 0 for p in partes)
+        resultado.append({
+            "base_name": base,
+            "partes": partes,
+            "total_size": total_size,
+        })
+
+    return resultado
+
+
+async def listar_categorias_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /listar_categorias [categoria] — Lista arquivos agrupados por categoria e partes.
+    Sem argumento: mostra resumo. Com argumento: lista packs daquela categoria.
+    Ex: /listar_categorias Foliage
+    """
+    if not (update.effective_user and is_admin(update.effective_user.id)):
+        return await update.effective_message.reply_text("⛔ Apenas admins.")
+
+    filtro_cat = " ".join(context.args).strip() if context.args else None
+
+    try:
+        with SessionLocal() as session:
+            # IDs já enviados (qualquer tier)
+            sent_ids = {
+                r.file_unique_id for r in session.query(SentFile.file_unique_id).filter(
+                    SentFile.source_chat_id == SOURCE_CHAT_ID
+                ).all()
+            }
+
+            if filtro_cat:
+                # Listar packs de uma categoria específica
+                arquivos = session.query(SourceFile).filter(
+                    SourceFile.active == True,
+                    SourceFile.category.ilike(f"%{filtro_cat}%")
+                ).order_by(SourceFile.file_name).all()
+
+                if not arquivos:
+                    return await update.effective_message.reply_text(
+                        f"❌ Nenhum arquivo encontrado na categoria <b>{filtro_cat}</b>.\n"
+                        "Use /organizar_arquivos primeiro.",
+                        parse_mode="HTML"
+                    )
+
+                grupos = _agrupar_partes(arquivos)
+                cat_nome = arquivos[0].category or filtro_cat
+                linhas = [f"📂 <b>{cat_nome}</b> — {len(grupos)} pack(s)\n"]
+
+                for g in grupos[:40]:  # máx 40 packs por mensagem
+                    partes = g["partes"]
+                    # Pack é enviado se TODAS as partes foram enviadas
+                    enviado = all(p.file_unique_id in sent_ids for p in partes)
+                    icone = "✅" if enviado else "⏳"
+                    size_mb = f"{g['total_size'] / (1024*1024):.0f}MB" if g["total_size"] else "?"
+
+                    if len(partes) > 1:
+                        linhas.append(
+                            f"{icone} <code>{g['base_name']}</code>\n"
+                            f"   └ {len(partes)} partes · {size_mb} total"
+                        )
+                    else:
+                        nome = partes[0].file_name or f"[{partes[0].file_type}]"
+                        linhas.append(f"{icone} <code>{nome}</code> ({size_mb})")
+
+                if len(grupos) > 40:
+                    linhas.append(f"\n... e mais {len(grupos) - 40} pack(s)")
+
+                await update.effective_message.reply_text("\n".join(linhas), parse_mode="HTML")
+
+            else:
+                # Resumo geral por categoria contando packs (não arquivos individuais)
+                from sqlalchemy import func
+
+                resultado = session.query(
+                    SourceFile.category,
+                    func.count(SourceFile.id).label("total_arqs")
+                ).filter(
+                    SourceFile.active == True
+                ).group_by(SourceFile.category).order_by(func.count(SourceFile.id).desc()).all()
+
+                if not resultado:
+                    return await update.effective_message.reply_text(
+                        "⚠️ Nenhum arquivo categorizado ainda.\nUse /organizar_arquivos primeiro."
+                    )
+
+                # Para contar packs (grupos de partes) por categoria precisamos iterar
+                todos = session.query(SourceFile).filter(SourceFile.active == True).all()
+                por_cat: dict = {}
+                for arq in todos:
+                    cat = arq.category or "Outros"
+                    por_cat.setdefault(cat, []).append(arq)
+
+                total_arqs_geral = sum(r.total_arqs for r in resultado)
+                linhas = [
+                    f"📂 <b>Categorias de Arquivos</b> ({total_arqs_geral} arquivos)\n",
+                    "─────────────────────────",
+                ]
+
+                for row in sorted(resultado, key=lambda r: -r.total_arqs):
+                    cat = row.category or "Outros"
+                    arqs_cat = por_cat.get(cat, [])
+                    grupos = _agrupar_partes(arqs_cat)
+                    n_packs = len(grupos)
+                    n_enviados = sum(
+                        1 for g in grupos
+                        if all(p.file_unique_id in sent_ids for p in g["partes"])
+                    )
+                    n_pendentes = n_packs - n_enviados
+                    linhas.append(
+                        f"<b>{cat}</b>\n"
+                        f"   📦 {n_packs} pack(s) ({row.total_arqs} arq)  "
+                        f"✅ {n_enviados}  ⏳ {n_pendentes}"
+                    )
+
+                linhas += [
+                    "─────────────────────────",
+                    "💡 /listar_categorias &lt;nome&gt; para detalhar uma categoria",
+                ]
+                await update.effective_message.reply_text("\n".join(linhas), parse_mode="HTML")
+
+    except Exception as e:
+        logging.error(f"[CATEGORIAS] Erro: {e}")
+        import traceback; logging.error(traceback.format_exc())
+        await update.effective_message.reply_text(f"❌ Erro: <code>{e}</code>", parse_mode="HTML")
+
+
 async def comandos_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Somente admin pode usar /comandos
     if not (update.effective_user and is_admin(update.effective_user.id)):
@@ -3331,7 +3844,11 @@ async def comandos_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     base = [
         "📋 <b>Comandos</b>",
         "• /start — mensagem inicial",
-        "• /index_files — indexar arquivos do grupo fonte (NOVO!)",
+        "• /index_files — indexar arquivos do grupo fonte",
+        "• /organizar_arquivos — categoriza todos os arquivos indexados por tipo",
+        "• /organizar_canal — reenvia os arquivos no mesmo grupo, organizados por categoria",
+        "• /organizar_canal preview — mostra o plano sem enviar nada",
+        "• /listar_categorias [nome] — resumo ou lista de uma categoria específica",
         "• /comandos — esta lista",
         "• /listar_comandos — (alias)",
         "• /getid — mostra seus IDs",
@@ -4955,33 +5472,62 @@ def _to_wei(amount_native: float, decimals: int = 18) -> int:
 
 PRICE_TOLERANCE = float(os.getenv("PRICE_TOLERANCE", "0.01"))  # 1%
 
+# Preços centralizados — altere SOMENTE em config.py
+from config import VIP_PRICES as _vp
 PLAN_PRICE_USD = {
-    VipPlan.MENSAL: 30.00,      # 30 dias
-    VipPlan.TRIMESTRAL: 70.00,  # 90 dias
-    VipPlan.SEMESTRAL: 110.00,  # 180 dias
-    VipPlan.ANUAL: 179.00,      # 365 dias
+    VipPlan.MENSAL: _vp[30],
+    VipPlan.TRIMESTRAL: _vp[90],
+    VipPlan.SEMESTRAL: _vp[180],
+    VipPlan.ANUAL: _vp[365],
 }
 
 def plan_from_amount(amount_usd: float) -> Optional[VipPlan]:
     """
-    Determina o plano VIP baseado no valor pago usando ranges.
+    Determina o plano VIP baseado no valor pago usando ranges ao invés de valores exatos.
 
+    ====== VALORES DE PRODUÇÃO ======
     Ranges de PRODUÇÃO:
     - $30.00 - $69.99: VIP 30 dias (MENSAL)
     - $70.00 - $109.99: VIP 90 dias (TRIMESTRAL)
     - $110.00 - $178.99: VIP 180 dias (SEMESTRAL)
     - $179.00+: VIP 365 dias (ANUAL)
     """
-    if amount_usd < 30.00:
-         return None  # Valor muito baixo
-    elif amount_usd < 70.00:
-         return VipPlan.MENSAL      # 30 dias
-    elif amount_usd < 110.00:
-         return VipPlan.TRIMESTRAL  # 90 dias
-    elif amount_usd < 179.00:
-         return VipPlan.SEMESTRAL   # 180 dias
+    # ====== MODO TESTE - VALORES REDUZIDOS ======
+    # Descomente abaixo para usar valores de teste
+    # if amount_usd < 1.00:
+    #     return None  # Valor muito baixo
+    # elif amount_usd < 2.00:
+    #     return VipPlan.MENSAL      # 30 dias
+    # elif amount_usd < 3.00:
+    #     return VipPlan.TRIMESTRAL  # 90 dias
+    # elif amount_usd < 4.00:
+    #     return VipPlan.SEMESTRAL   # 180 dias
+    # else:
+    #     return VipPlan.ANUAL       # 365 dias
+
+    # Preços centralizados — altere SOMENTE em config.py
+    from config import VIP_PRICES as _p
+    if amount_usd < _p[30]:
+        return None
+    elif amount_usd < _p[90]:
+        return VipPlan.MENSAL
+    elif amount_usd < _p[180]:
+        return VipPlan.TRIMESTRAL
+    elif amount_usd < _p[365]:
+        return VipPlan.SEMESTRAL
     else:
-         return VipPlan.ANUAL       # 365 dias
+        return VipPlan.ANUAL
+    #
+    # if amount_usd < 30.00:
+    #     return None  # Valor muito baixo
+    # elif amount_usd < 70.00:
+    #     return VipPlan.MENSAL      # 30 dias
+    # elif amount_usd < 110.00:
+    #     return VipPlan.TRIMESTRAL  # 90 dias
+    # elif amount_usd < 179.00:
+    #     return VipPlan.SEMESTRAL   # 180 dias
+    # else:
+    #     return VipPlan.ANUAL       # 365 dias
 
 async def fetch_price_usd() -> Optional[float]:
     try:
@@ -5911,10 +6457,7 @@ async def pagar_vip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🔒 Pague com qualquer criptomoeda\n"
         "⚡ Ativação automática\n\n"
         "💰 <b>Planos:</b>\n"
-        "• 30 dias: $30.00 USD (Mensal)\n"
-        "• 90 dias: $70.00 USD (Trimestral)\n"
-        "• 180 dias: $110.00 USD (Semestral)\n"
-        "• 365 dias: $179.00 USD (Anual)"
+        f"{vip_plans_text_usd()}"
     )
 
     await update.effective_message.reply_text(
@@ -6156,6 +6699,21 @@ async def confirmar_reset_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE
     )
 
 
+async def catalogo_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Força atualização do catálogo VIP (admin)"""
+    if not is_admin(update.effective_user.id):
+        return
+
+    await update.effective_message.reply_text("🔄 Atualizando catálogo VIP...")
+
+    with SessionLocal() as session:
+        try:
+            await send_or_update_vip_catalog(context.bot, session)
+            await update.effective_message.reply_text("✅ Catálogo VIP atualizado com sucesso!")
+        except Exception as e:
+            await update.effective_message.reply_text(f"❌ Erro ao atualizar catálogo: {e}")
+
+
 async def test_send_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Testa envio manual (admin) com debug detalhado"""
     if not is_admin(update.effective_user.id):
@@ -6242,76 +6800,6 @@ async def test_send_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"⚠️ Erro: {str(e)}\n\n"
                 f"📋 Detalhes:\n<code>{error_details[:500]}</code>"
             )
-
-
-async def enviar_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    Comando /enviar - Envia próximo arquivo da fila imediatamente.
-    Uso: /enviar [vip|free] [quantidade]
-    Exemplos:
-        /enviar        -> envia 1 arquivo VIP
-        /enviar free   -> envia 1 arquivo FREE
-        /enviar vip 3  -> envia 3 arquivos VIP
-    """
-    if not is_admin(update.effective_user.id):
-        return
-
-    # Parse argumentos
-    args = context.args or []
-    tier = 'vip'
-    quantidade = 1
-
-    for arg in args:
-        if arg.lower() in ['vip', 'free']:
-            tier = arg.lower()
-        elif arg.isdigit():
-            quantidade = min(int(arg), 10)  # máximo 10 por vez
-
-    msg = await update.effective_message.reply_text(
-        f"📤 Enviando {quantidade} arquivo(s) {tier.upper()}...\n⏳ Aguarde..."
-    )
-
-    enviados = 0
-    erros = 0
-
-    with SessionLocal() as session:
-        for i in range(quantidade):
-            try:
-                if tier == 'vip':
-                    await send_daily_vip_file(context.bot, session)
-                else:
-                    await send_weekly_free_file(context.bot, session)
-                enviados += 1
-
-                # Atualizar mensagem de progresso a cada envio
-                if quantidade > 1:
-                    await msg.edit_text(
-                        f"📤 Enviando {tier.upper()}...\n"
-                        f"✅ {enviados}/{quantidade} enviado(s)"
-                    )
-
-            except Exception as e:
-                erros += 1
-                logging.error(f"[ENVIAR] Erro no arquivo {i+1}: {e}")
-
-    # Resultado final
-    if enviados > 0:
-        resultado = (
-            f"✅ <b>Envio concluído!</b>\n\n"
-            f"📤 Enviados: {enviados}\n"
-            f"🎯 Tier: {tier.upper()}"
-        )
-        if erros > 0:
-            resultado += f"\n⚠️ Erros: {erros}"
-    else:
-        resultado = (
-            f"❌ <b>Nenhum arquivo enviado</b>\n\n"
-            f"Possíveis causas:\n"
-            f"• Fila vazia (use /stats_auto)\n"
-            f"• Erro de permissão no canal"
-        )
-
-    await msg.edit_text(resultado, parse_mode='HTML')
 
 
 async def debug_version_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -6963,33 +7451,57 @@ async def send_promo_message_to_free(bot: Bot):
     """
     Envia mensagem promocional para o canal FREE incentivando assinatura VIP.
     """
+    # Obter username do bot para criar deep link
+    bot_info = await bot.get_me()
+    bot_username = bot_info.username
+
+
     promo_msg = (
         "💎 <b>QUER TER ACESSO AO CONTEÚDO COMPLETO?</b>\n\n"
-        "🔥 Assine o canal VIP e receba:\n"
-        "  ✅ Conteúdos diários exclusivos\n"
-        "  ✅ Arquivos completos (sem limites)\n"
-        "  ✅ Sem anúncios\n"
-        "  ✅ Suporte prioritário\n\n"
-        "💰 <b>Planos Disponíveis:</b>\n"
-        "  • 30 dias: $30.00 USD (Mensal)\n"
-        "  • 90 dias: $70.00 USD (Trimestral) 💰\n"
-        "  • 180 dias: $110.00 USD (Semestral)\n"
-        "  • 365 dias: $179.00 USD (Anual) 🔥\n\n"
-        "🔒 <b>Pagamento 100% Seguro</b>\n"
-        "  • Aceita qualquer criptomoeda\n"
-        "  • Ativação automática e instantânea\n"
-        "  • Acesso vitalício ao grupo VIP\n\n"
-        "👇 Clique no botão abaixo para assinar!"
+         "🔥 Assine o canal VIP e receba:\n"
+         "  ✅ Conteúdos diários exclusivos\n"
+         "  ✅ Arquivos completos (sem limites)\n"
+         "  ✅ Sem anúncios\n"
+         "  ✅ Suporte prioritário\n\n"
+         "💰 <b>Planos Disponíveis:</b>\n"
+         f"{vip_plans_text_usd()}\n\n"
+         "🔒 <b>Pagamento 100% Seguro</b>\n"
+         "  • Aceita qualquer criptomoeda\n"
+         "  • Ativação automática e instantânea\n"
+         "  • Comprovante e convite enviados no privado\n\n"
+         "👇 Clique no botão abaixo para assinar!"
+
     )
 
-    # Criar botão inline com link de pagamento
+    # ====== VALORES ORIGINAIS (PRODUÇÃO) ======
+    # Descomente abaixo e comente o bloco acima quando voltar para produção
+    # promo_msg = (
+    #     "💎 <b>QUER TER ACESSO AO CONTEÚDO COMPLETO?</b>\n\n"
+    #     "🔥 Assine o canal VIP e receba:\n"
+    #     "  ✅ Conteúdos diários exclusivos\n"
+    #     "  ✅ Arquivos completos (sem limites)\n"
+    #     "  ✅ Sem anúncios\n"
+    #     "  ✅ Suporte prioritário\n\n"
+    #     "💰 <b>Planos Disponíveis:</b>\n"
+    #     "  • 30 dias: $30.00 USD (Mensal)\n"
+    #     "  • 90 dias: $70.00 USD (Trimestral) 💰\n"
+    #     "  • 180 dias: $110.00 USD (Semestral)\n"
+    #     "  • 365 dias: $179.00 USD (Anual) 🔥\n\n"
+    #     "🔒 <b>Pagamento 100% Seguro</b>\n"
+    #     "  • Aceita qualquer criptomoeda\n"
+    #     "  • Ativação automática e instantânea\n"
+    #     "  • Comprovante e convite enviados no privado\n\n"
+    #     "👇 Clique no botão abaixo para assinar!"
+    # )
+
+    # Criar botão inline com deep link para conversa privada
     from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
-    # Gerar link de pagamento
-    payment_url = f"{WEBAPP_URL}?ref=weekly_promo_free"
+    # Gerar deep link para conversa privada (captura ID automaticamente)
+    deep_link = f"https://t.me/{bot_username}?start=vip"
 
     keyboard = [[
-        InlineKeyboardButton("💳 ASSINAR VIP AGORA", url=payment_url)
+        InlineKeyboardButton("💳 ASSINAR VIP AGORA", url=deep_link)
     ]]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
@@ -7344,10 +7856,10 @@ async def get_vip_pricing():
     return {
         "wallet_address": WALLET_ADDRESS,
         "value_tiers": {
-            "$30.00": "30 dias (Mensal)",
-            "$70.00": "90 dias (Trimestral)",
-            "$110.00": "180 dias (Semestral)",
-            "$179.00": "365 dias (Anual)"
+            f"${VIP_PRICES[30]:.2f}": "30 dias (Mensal)",
+            f"${VIP_PRICES[90]:.2f}": "90 dias (Trimestral)",
+            f"${VIP_PRICES[180]:.2f}": "180 dias (Semestral)",
+            f"${VIP_PRICES[365]:.2f}": "365 dias (Anual)"
         },
         "min_confirmations": 3
     }
@@ -7403,12 +7915,9 @@ async def api_config(uid: str = None, ts: str = None, sig: str = None):
             expected_sig = make_link_sig(BOT_SECRET or "default", uid_int, ts_int)
             if sig != expected_sig:
                 raise HTTPException(status_code=403, detail="Assinatura inválida")
-            value_tiers = {
-             "30": 30.00,   # Preço para 1 mês
-             "90": 70.00,   # Preço para 3 meses
-             "180": 110.00, # Preço para 6 meses
-             "365": 179.00  # Preço para 1 ano
-         }
+        
+        # Preços centralizados — altere SOMENTE em config.py
+        value_tiers = {str(k): v for k, v in VIP_PRICES.items()}
         
         return {
             "wallet": WALLET_ADDRESS,
@@ -7659,12 +8168,12 @@ async def renew_vip_callback_handler(update: Update, context: ContextTypes.DEFAU
             # Criar botões para planos
             keyboard = InlineKeyboardMarkup([
                 [
-                    InlineKeyboardButton("💎 1 MÊS - $30.00", callback_data="renew_plan_30"),
-                    InlineKeyboardButton("💎 3 MESES - $70.00", callback_data="renew_plan_90")
+                    InlineKeyboardButton(f"💎 1 MÊS - ${VIP_PRICES[30]:.2f}", callback_data="renew_plan_30"),
+                    InlineKeyboardButton(f"💎 3 MESES - ${VIP_PRICES[90]:.2f}", callback_data="renew_plan_90")
                 ],
                 [
-                    InlineKeyboardButton("💎 6 MESES - $110.00", callback_data="renew_plan_180"),
-                    InlineKeyboardButton("💎 1 ANO - $179.00", callback_data="renew_plan_365")
+                    InlineKeyboardButton(f"💎 6 MESES - ${VIP_PRICES[180]:.2f}", callback_data="renew_plan_180"),
+                    InlineKeyboardButton(f"💎 1 ANO - ${VIP_PRICES[365]:.2f}", callback_data="renew_plan_365")
                 ],
                 [InlineKeyboardButton("❌ Cancelar", callback_data="cancel_renewal")]
             ])
@@ -7714,10 +8223,10 @@ async def renew_plan_callback_handler(update: Update, context: ContextTypes.DEFA
     
     # Mapeamento de dias para preços e descrições
     plan_info = {
-        30: {"price": 30.00, "name": "1 Mês"},
-        90: {"price": 70.00, "name": "3 Meses"},
-        180: {"price": 110.00, "name": "6 Meses"},
-        365: {"price": 179.00, "name": "1 Ano"}
+        30: {"price": VIP_PRICES[30], "name": "1 Mês"},
+        90: {"price": VIP_PRICES[90], "name": "3 Meses"},
+        180: {"price": VIP_PRICES[180], "name": "6 Meses"},
+        365: {"price": VIP_PRICES[365], "name": "1 Ano"}
     }
     
     if days not in plan_info:
@@ -8066,238 +8575,6 @@ async def on_startup():
         )
         application.add_handler(excluir_todos_conv, group=-50)
 
-        # ===== Sistema de Suporte (usuário → grupo de logs → admin responde)
-
-        async def support_start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-            """Callback quando o usuário clica no botão Suporte"""
-            query = update.callback_query
-            if not query:
-                return
-            await query.answer()
-
-            context.user_data["awaiting_support"] = True
-            context.user_data["support_active"] = True
-
-            from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-            cancel_kb = InlineKeyboardMarkup([
-                [InlineKeyboardButton("❌ Cancelar", callback_data="support_close_user")]
-            ])
-
-            support_msg = (
-                "📞 <b>Suporte</b>\n\n"
-                "Descreva sua dúvida ou problema abaixo.\n"
-                "Um atendente responderá em breve.\n\n"
-                "💡 <i>Envie sua mensagem agora:</i>"
-            )
-            await query.message.reply_text(support_msg, parse_mode="HTML", reply_markup=cancel_kb)
-
-        async def support_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-            """Captura mensagem de suporte do usuário e encaminha para o grupo de logs"""
-            if not context.user_data.get("awaiting_support"):
-                return  # Não está em modo suporte, ignorar
-
-            msg = update.effective_message
-            user = update.effective_user
-            if not msg or not user:
-                return
-
-            context.user_data["awaiting_support"] = False
-
-            user_text = msg.text or "(sem texto)"
-            username_str = f"@{user.username}" if user.username else "sem username"
-
-            # Encaminhar para grupo de logs
-            from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-            reply_kb = InlineKeyboardMarkup([
-                [InlineKeyboardButton("💬 Responder", callback_data=f"support_reply_{user.id}")],
-                [InlineKeyboardButton("✅ Encerrar atendimento", callback_data=f"support_close_admin_{user.id}")]
-            ])
-
-            log_msg = (
-                f"📞 <b>SUPORTE</b>\n"
-                f"━━━━━━━━━━━━━━━\n"
-                f"👤 <b>{user.first_name}</b> ({username_str})\n"
-                f"🆔 <code>{user.id}</code>\n\n"
-                f"💬 <b>Mensagem:</b>\n"
-                f"{user_text}"
-            )
-
-            try:
-                await application.bot.send_message(
-                    chat_id=LOGS_GROUP_ID,
-                    text=log_msg,
-                    parse_mode="HTML",
-                    reply_markup=reply_kb,
-                )
-            except Exception as e:
-                logging.warning(f"[SUPORTE] Erro ao encaminhar para logs: {e}")
-
-            from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-            user_kb = InlineKeyboardMarkup([
-                [InlineKeyboardButton("❌ Encerrar conversa", callback_data="support_close_user")]
-            ])
-
-            await msg.reply_text(
-                "✅ <b>Mensagem enviada!</b>\n\n"
-                "Aguarde, um atendente responderá em breve.\n"
-                "Você receberá a resposta aqui mesmo nesta conversa.",
-                parse_mode="HTML",
-                reply_markup=user_kb,
-            )
-
-        async def support_reply_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-            """Quando admin clica em 'Responder' no grupo de logs"""
-            query = update.callback_query
-            if not query or not query.data:
-                return
-            await query.answer()
-
-            target_uid = query.data.replace("support_reply_", "")
-            await query.message.reply_text(
-                f"📝 Para responder, use o comando:\n\n"
-                f"<code>/r {target_uid} sua resposta aqui</code>",
-                parse_mode="HTML",
-            )
-
-        async def support_close_user_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-            """Usuário encerra a conversa de suporte"""
-            query = update.callback_query
-            if not query:
-                return
-            await query.answer()
-
-            context.user_data["awaiting_support"] = False
-            context.user_data["support_active"] = False
-
-            from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-            restart_kb = InlineKeyboardMarkup([
-                [InlineKeyboardButton("📞 Novo Suporte", callback_data="support_start")]
-            ])
-
-            await query.message.edit_text(
-                "📞 <b>Suporte encerrado</b>\n\n"
-                "Obrigado pelo contato! Se precisar de ajuda novamente, "
-                "clique no botão abaixo.",
-                parse_mode="HTML",
-                reply_markup=restart_kb,
-            )
-
-            # Notificar admin no grupo de logs
-            user = update.effective_user
-            try:
-                await application.bot.send_message(
-                    chat_id=LOGS_GROUP_ID,
-                    text=(
-                        f"📞 <b>SUPORTE ENCERRADO</b> (pelo usuário)\n"
-                        f"━━━━━━━━━━━━━━━\n"
-                        f"👤 <b>{user.first_name}</b> (<code>{user.id}</code>)"
-                    ),
-                    parse_mode="HTML",
-                )
-            except Exception:
-                pass
-
-        async def support_close_admin_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-            """Admin encerra o atendimento de suporte"""
-            query = update.callback_query
-            if not query or not query.data:
-                return
-            await query.answer()
-
-            target_uid = query.data.replace("support_close_admin_", "")
-
-            try:
-                target_uid_int = int(target_uid)
-            except ValueError:
-                return
-
-            # Atualizar mensagem no grupo de logs
-            await query.message.edit_text(
-                query.message.text + "\n\n✅ <b>Atendimento encerrado pelo admin.</b>",
-                parse_mode="HTML",
-            )
-
-            # Notificar o usuário
-            from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-            restart_kb = InlineKeyboardMarkup([
-                [InlineKeyboardButton("📞 Novo Suporte", callback_data="support_start")]
-            ])
-
-            try:
-                await application.bot.send_message(
-                    chat_id=target_uid_int,
-                    text=(
-                        "📞 <b>Atendimento encerrado</b>\n\n"
-                        "Seu chamado de suporte foi finalizado.\n"
-                        "Se precisar de mais ajuda, clique no botão abaixo."
-                    ),
-                    parse_mode="HTML",
-                    reply_markup=restart_kb,
-                )
-            except Exception as e:
-                logging.warning(f"[SUPORTE] Erro ao notificar encerramento para {target_uid}: {e}")
-
-        async def support_respond_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-            """/r <user_id> <mensagem> — admin responde ao usuário via bot"""
-            msg = update.effective_message
-            user = update.effective_user
-            chat = update.effective_chat
-
-            if not user or not is_admin(user.id):
-                return
-
-            # Aceitar de qualquer chat (grupo de logs ou privado do admin)
-            if not context.args or len(context.args) < 2:
-                return await msg.reply_text(
-                    "Uso: <code>/r &lt;user_id&gt; mensagem</code>",
-                    parse_mode="HTML",
-                )
-
-            target_uid = context.args[0]
-            reply_text = " ".join(context.args[1:])
-
-            try:
-                target_uid_int = int(target_uid)
-            except ValueError:
-                return await msg.reply_text("❌ user_id deve ser numérico.")
-
-            # Enviar resposta ao usuário como se fosse o bot
-            from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-            support_kb = InlineKeyboardMarkup([
-                [InlineKeyboardButton("📞 Novo Suporte", callback_data="support_start"),
-                 InlineKeyboardButton("❌ Encerrar", callback_data="support_close_user")]
-            ])
-
-            response_msg = (
-                f"📞 <b>Resposta do Suporte</b>\n"
-                f"━━━━━━━━━━━━━━━\n\n"
-                f"{reply_text}\n\n"
-                f"<i>Se precisar de mais ajuda, clique em \"Novo Suporte\".</i>"
-            )
-
-            try:
-                await application.bot.send_message(
-                    chat_id=target_uid_int,
-                    text=response_msg,
-                    parse_mode="HTML",
-                    reply_markup=support_kb,
-                )
-                await msg.reply_text(f"✅ Resposta enviada para <code>{target_uid}</code>", parse_mode="HTML")
-            except Exception as e:
-                await msg.reply_text(f"❌ Erro ao enviar: {e}")
-
-        # Registrar handlers de suporte
-        application.add_handler(CallbackQueryHandler(support_start_handler, pattern="support_start"), group=1)
-        application.add_handler(CallbackQueryHandler(support_reply_callback, pattern="^support_reply_"), group=1)
-        application.add_handler(CallbackQueryHandler(support_close_user_handler, pattern="support_close_user"), group=1)
-        application.add_handler(CallbackQueryHandler(support_close_admin_handler, pattern="^support_close_admin_"), group=1)
-        application.add_handler(CommandHandler("r", support_respond_cmd), group=1)
-        application.add_handler(
-            MessageHandler(filters.ChatType.PRIVATE & filters.TEXT & ~filters.COMMAND, support_message_handler),
-            group=5,  # group alto para não conflitar com outros handlers
-        )
-        logging.info("✅ Sistema de suporte ativado")
-
         # ===== Handlers de storage
         application.add_handler(
             MessageHandler(
@@ -8315,6 +8592,9 @@ async def on_startup():
         # ===== Comandos gerais (group=1)
         application.add_handler(CommandHandler("start", start_cmd), group=1)
         application.add_handler(CommandHandler("index_files", index_files_cmd), group=1)  # Indexação automática
+        application.add_handler(CommandHandler("organizar_arquivos", organizar_arquivos_cmd), group=1)
+        application.add_handler(CommandHandler("organizar_canal", organizar_canal_cmd), group=1)
+        application.add_handler(CommandHandler("listar_categorias", listar_categorias_cmd), group=1)
         application.add_handler(CommandHandler("comandos", comandos_cmd), group=5)
         application.add_handler(CommandHandler("listar_comandos", comandos_cmd), group=5)
 
@@ -8409,7 +8689,7 @@ async def on_startup():
         application.add_handler(CommandHandler("reset_history", reset_history_cmd), group=1)
         application.add_handler(CommandHandler("confirmar_reset", confirmar_reset_cmd), group=1)
         application.add_handler(CommandHandler("test_send", test_send_cmd), group=1)
-        application.add_handler(CommandHandler("enviar", enviar_cmd), group=1)
+        application.add_handler(CommandHandler("catalogo", catalogo_cmd), group=1)
         application.add_handler(CommandHandler("debug_version", debug_version_cmd), group=1)
         application.add_handler(CommandHandler("check_files", check_files_cmd), group=1)
         application.add_handler(CommandHandler("get_chat_id", get_chat_id_cmd), group=1)
@@ -8462,6 +8742,26 @@ async def on_startup():
         application.add_handler(CallbackQueryHandler(renew_plan_callback_handler, pattern="renew_plan_"), group=1)
         application.add_handler(CallbackQueryHandler(cancel_renewal_callback_handler, pattern="cancel_renewal"), group=1)
 
+        # ===== Sistema de Suporte =====
+        from support import (
+            support_start_callback, support_text_handler, support_cancel_cmd,
+            tickets_cmd, reply_cmd, close_ticket_cmd, msg_cmd,
+        )
+        # Callback do botão "Suporte"
+        application.add_handler(CallbackQueryHandler(support_start_callback, pattern="^support_start$"), group=1)
+        # Captura texto do usuário quando aguardando descrição (antes de outros handlers de texto)
+        application.add_handler(MessageHandler(
+            filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE,
+            support_text_handler
+        ), group=-3)
+        application.add_handler(CommandHandler("cancelar_suporte", support_cancel_cmd), group=1)
+        # Comandos admin
+        application.add_handler(CommandHandler("tickets", tickets_cmd), group=1)
+        application.add_handler(CommandHandler("reply", reply_cmd), group=1)
+        application.add_handler(CommandHandler("close_ticket", close_ticket_cmd), group=1)
+        application.add_handler(CommandHandler("msg", msg_cmd), group=1)
+        logging.info("✅ Sistema de suporte registrado (/tickets, /reply, /close_ticket, /msg)")
+
         # Jobs
         await _reschedule_daily_packs()
         _register_all_scheduled_messages(application.job_queue)
@@ -8510,7 +8810,7 @@ async def on_startup():
         async def weekly_free_promo_job(context: ContextTypes.DEFAULT_TYPE):
             """Job semanal para mensagem promocional FREE (quartas 15:30)"""
             # Verificar se é quarta-feira
-            if dt.datetime.now().weekday() != 2:  # 0=segunda, 2=quarta
+            if datetime.now().weekday() != 2:  # 0=segunda, 2=quarta
                 logging.info(f"[PROMO] Hoje não é quarta-feira, pulando mensagem promocional")
                 return
 
@@ -8531,6 +8831,24 @@ async def on_startup():
             name='daily_vip_send'
         )
         logging.info("✅ Job VIP diário configurado (15h)")
+
+        # CATÁLOGO VIP: Atualiza lista de arquivos às 15:05 (após envio do arquivo)
+        async def daily_vip_catalog_job(context: ContextTypes.DEFAULT_TYPE):
+            """Job diário para atualizar catálogo de arquivos VIP"""
+            with SessionLocal() as session:
+                try:
+                    await send_or_update_vip_catalog(context.bot, session)
+                    await log_to_group("✅ <b>Catálogo VIP atualizado</b>")
+                except Exception as e:
+                    await log_to_group(f"❌ <b>Erro ao atualizar catálogo VIP</b>\n⚠️ {str(e)}")
+                    logging.error(f"Erro no job catálogo VIP: {e}")
+
+        application.job_queue.run_daily(
+            daily_vip_catalog_job,
+            time=dt.time(hour=15, minute=5, second=0, tzinfo=BR_TZ),
+            name='daily_vip_catalog'
+        )
+        logging.info("✅ Job catálogo VIP configurado (15:05)")
 
         # FREE: Arquivo semanal às 15h (quartas)
         application.job_queue.run_daily(

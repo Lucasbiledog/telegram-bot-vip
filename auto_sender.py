@@ -228,9 +228,23 @@ def get_all_parts(session: Session, source_file: SourceFile) -> list:
         SourceFile.file_name.like(f"{base_name}%")
     ).order_by(SourceFile.file_name).all()
 
-    if len(all_files) > 1:
-        LOG.info(f"[AUTO-SEND] Encontradas {len(all_files)} partes para enviar juntas")
-        return all_files
+    # Desduplicar por file_name: manter apenas uma entrada por nome de arquivo
+    seen_names = set()
+    unique_files = []
+    for f in all_files:
+        if f.file_name not in seen_names:
+            seen_names.add(f.file_name)
+            unique_files.append(f)
+
+    if len(unique_files) != len(all_files):
+        LOG.warning(
+            f"[AUTO-SEND] Removidas {len(all_files) - len(unique_files)} entradas duplicadas "
+            f"(mesmo arquivo indexado mais de uma vez)"
+        )
+
+    if len(unique_files) > 1:
+        LOG.info(f"[AUTO-SEND] Encontradas {len(unique_files)} partes para enviar juntas")
+        return unique_files
     else:
         return [source_file]
 
@@ -315,17 +329,12 @@ async def get_random_file_from_source(
 
             return None
 
-        # Ordenar por tamanho (maiores primeiro) - arquivos maiores tendem a ser de melhor qualidade
-        # Arquivos sem tamanho (None) vão para o final
-        available_files.sort(key=lambda f: f.file_size or 0, reverse=True)
+        # Selecionar arquivo aleatório
+        selected_file = random.choice(available_files)
 
-        # Selecionar o maior arquivo disponível
-        selected_file = available_files[0]
-
-        size_mb = (selected_file.file_size or 0) / (1024 * 1024)
         LOG.info(
             f"[AUTO-SEND] ✅ Arquivo selecionado: {selected_file.file_type} "
-            f"({size_mb:.1f}MB, ID: {selected_file.message_id}, {len(available_files)} disponíveis)"
+            f"(ID: {selected_file.message_id}, {len(available_files)} disponíveis)"
         )
 
         return selected_file
@@ -516,15 +525,7 @@ async def send_teaser_to_free(bot: Bot, all_parts: list):
 
 """
 
-        # Obter username do bot para o link
-        try:
-            bot_info = await bot.get_me()
-            bot_username = bot_info.username
-            bot_link = f"https://t.me/{bot_username}?start=vip"
-        except Exception:
-            bot_link = ""
-
-        content += f"""════════════════════════════════════════
+        content += """════════════════════════════════════════
 
 💎 QUER TER ACESSO A ESTE E OUTROS CONTEÚDOS?
 
@@ -534,7 +535,7 @@ async def send_teaser_to_free(bot: Bot, all_parts: list):
    • Acesso vitalício
    • Suporte prioritário
 
-🔗 Clique aqui para assinar: {bot_link}
+🔗 Para assinar, clique no link do canal!
 
 ════════════════════════════════════════
 """
@@ -545,23 +546,17 @@ async def send_teaser_to_free(bot: Bot, all_parts: list):
             temp_path = f.name
 
         try:
-            # Obter link para a caption também
-            caption_text = (
-                f"👀 <b>Preview do conteúdo VIP de hoje!</b>\n\n"
-                f"💎 Quer ter acesso completo? Assine o VIP!\n"
-                f"👉 <a href='{bot_link}'>Clique aqui para assinar</a>"
-            ) if bot_link else (
-                f"👀 <b>Preview do conteúdo VIP de hoje!</b>\n\n"
-                f"💎 Quer ter acesso completo? Assine o VIP!"
-            )
-
             # Enviar arquivo .txt para o canal FREE
             with open(temp_path, 'rb') as f:
                 await bot.send_document(
                     chat_id=FREE_CHANNEL_ID,
                     document=f,
                     filename=txt_name,
-                    caption=caption_text,
+                    caption=(
+                        f"👀 <b>Preview do conteúdo VIP de hoje!</b>\n\n"
+                        f"💎 Quer ter acesso completo? Assine o VIP!\n\n"
+                        f'👉 <a href="https://t.me/UnrealPack5_bot?start=vip">Clique aqui para assinar</a>'
+                    ),
                     parse_mode='HTML'
                 )
 
@@ -851,6 +846,83 @@ async def send_weekly_free_file(bot: Bot, session: Session):
 
         if success_count == len(all_parts):
             LOG.info(f"[AUTO-SEND] ✅ Envio FREE semanal concluído: {success_count} parte(s)")
+
+            # === REPLICAR NO VIP (mesmo arquivo nos 2 grupos) ===
+            if VIP_CHANNEL_ID:
+                LOG.info("[AUTO-SEND] 📤 Replicando arquivo FREE no canal VIP...")
+
+                # Verificar quais partes já foram enviadas ao VIP
+                sent_vip_ids = {
+                    r.file_unique_id for r in session.query(SentFile.file_unique_id).filter(
+                        SentFile.sent_to_tier == 'vip',
+                        SentFile.source_chat_id == SOURCE_CHAT_ID
+                    ).all()
+                }
+
+                parts_to_send_vip = [p for p in all_parts if p.file_unique_id not in sent_vip_ids]
+
+                if not parts_to_send_vip:
+                    LOG.info("[AUTO-SEND] Arquivo já existe no VIP, pulando replicação")
+                else:
+                    vip_success = 0
+                    for i, part in enumerate(parts_to_send_vip, 1):
+                        if i == 1:
+                            vip_caption = f"🔥 Conteúdo VIP Exclusivo\n📅 {datetime.now().strftime('%d/%m/%Y')}"
+                            if part.caption:
+                                vip_caption += f"\n\n{part.caption}"
+                            if len(parts_to_send_vip) > 1:
+                                vip_caption += f"\n\n📦 Arquivo com {len(parts_to_send_vip)} partes"
+                        else:
+                            vip_caption = f"📦 Parte {i} de {len(parts_to_send_vip)}"
+                            if part.caption:
+                                vip_caption += f"\n{part.caption}"
+
+                        msg_vip = await send_file_to_channel(bot, part, VIP_CHANNEL_ID, vip_caption)
+                        if msg_vip:
+                            await mark_file_as_sent(session, part, 'vip')
+                            vip_success += 1
+
+                        if i < len(parts_to_send_vip):
+                            await asyncio.sleep(0.5)
+
+                    LOG.info(f"[AUTO-SEND] ✅ Replicado no VIP: {vip_success}/{len(parts_to_send_vip)} parte(s)")
+
+                # === BÔNUS VIP: enviar +1 arquivo extra para não interromper o fluxo diário ===
+                LOG.info("[AUTO-SEND] 🎁 Buscando arquivo bônus para o VIP...")
+                bonus_file = await get_random_file_from_source(session, 'vip')
+
+                if bonus_file:
+                    bonus_parts = get_all_parts(session, bonus_file)
+                    LOG.info(f"[AUTO-SEND] 🎁 Enviando bônus VIP: {len(bonus_parts)} parte(s)")
+
+                    bonus_success = 0
+                    for i, part in enumerate(bonus_parts, 1):
+                        if i == 1:
+                            bonus_caption = f"🎁 Bônus VIP Exclusivo\n📅 {datetime.now().strftime('%d/%m/%Y')}"
+                            if part.caption:
+                                bonus_caption += f"\n\n{part.caption}"
+                            if len(bonus_parts) > 1:
+                                bonus_caption += f"\n\n📦 Arquivo com {len(bonus_parts)} partes"
+                        else:
+                            bonus_caption = f"📦 Parte {i} de {len(bonus_parts)}"
+                            if part.caption:
+                                bonus_caption += f"\n{part.caption}"
+
+                        msg_bonus = await send_file_to_channel(bot, part, VIP_CHANNEL_ID, bonus_caption)
+                        if msg_bonus:
+                            await mark_file_as_sent(session, part, 'vip')
+                            bonus_success += 1
+
+                        if i < len(bonus_parts):
+                            await asyncio.sleep(0.5)
+
+                    LOG.info(f"[AUTO-SEND] 🎁 Bônus VIP enviado: {bonus_success}/{len(bonus_parts)} parte(s)")
+
+                    # Enviar teaser do bônus para o FREE
+                    await send_teaser_to_free(bot, bonus_parts)
+                else:
+                    LOG.warning("[AUTO-SEND] ⚠️ Nenhum arquivo disponível para bônus VIP")
+
         elif success_count > 0:
             LOG.warning(f"[AUTO-SEND] ⚠️ Envio parcial: {success_count}/{len(all_parts)} partes")
         else:
@@ -1055,3 +1127,245 @@ async def reactivate_file(session: Session, file_unique_id: str) -> bool:
         LOG.error(f"[ADMIN] ❌ Erro ao reativar arquivo: {e}")
         session.rollback()
         return False
+
+
+# ===== CATÁLOGO VIP (Lista de arquivos disponíveis) =====
+
+# Referências para cfg_get/cfg_set — serão injetadas via setup_catalog()
+_cfg_get = None
+_cfg_set = None
+
+
+def setup_catalog(cfg_get_func, cfg_set_func):
+    """Injeta funções cfg_get/cfg_set do main.py para persistir message_id do catálogo."""
+    global _cfg_get, _cfg_set
+    _cfg_get = cfg_get_func
+    _cfg_set = cfg_set_func
+    LOG.info("[CATALOG] Funções de config injetadas com sucesso")
+
+
+def _build_catalog_content(session: Session) -> str:
+    """
+    Gera o conteúdo do catálogo .txt com:
+    1. Todos os arquivos já enviados ao VIP (com data)
+    2. Arquivos futuros que ainda serão enviados (sem data)
+    Sem limite de tamanho — será enviado como arquivo.
+    """
+    from config import SOURCE_CHAT_ID as src_id
+
+    # === ARQUIVOS JÁ ENVIADOS ===
+    sent_records = session.query(SentFile).filter(
+        SentFile.sent_to_tier == 'vip',
+        SentFile.source_chat_id == src_id
+    ).order_by(SentFile.sent_at.desc()).all()
+
+    sent_unique_ids = {r.file_unique_id for r in sent_records}
+
+    # === ARQUIVOS FUTUROS (indexados mas não enviados) ===
+    future_query = session.query(SourceFile).filter(
+        SourceFile.source_chat_id == src_id,
+        SourceFile.active == True,
+        SourceFile.file_type.in_(['document', 'video', 'audio', 'animation'])
+    )
+    if sent_unique_ids:
+        future_query = future_query.filter(~SourceFile.file_unique_id.in_(sent_unique_ids))
+    future_files = future_query.order_by(SourceFile.file_name).all()
+
+    total_geral = len(sent_records) + len(future_files)
+
+    header = (
+        "╔════════════════════════════════════════╗\n"
+        "║     CATÁLOGO VIP — ARQUIVOS            ║\n"
+        "╚════════════════════════════════════════╝\n\n"
+        f"Atualizado em: {datetime.now().strftime('%d/%m/%Y %H:%M')}\n"
+        f"Arquivos já enviados: {len(sent_records)}\n"
+        f"Arquivos a caminho: {len(future_files)}\n"
+        f"Total geral: {total_geral}\n\n"
+        "Use Ctrl+F para pesquisar pelo nome do arquivo.\n"
+        "════════════════════════════════════════\n\n"
+    )
+
+    # --- Seção: Arquivos já enviados ---
+    lines = []
+    lines.append("┌────────────────────────────────────────┐")
+    lines.append("│  ARQUIVOS JÁ ENVIADOS                  │")
+    lines.append("└────────────────────────────────────────┘\n")
+
+    if not sent_records:
+        lines.append("  Nenhum arquivo enviado ainda.\n")
+    else:
+        # Buscar detalhes dos arquivos enviados
+        source_map = {}
+        if sent_unique_ids:
+            sources = session.query(SourceFile).filter(
+                SourceFile.file_unique_id.in_(sent_unique_ids)
+            ).all()
+            source_map = {s.file_unique_id: s for s in sources}
+
+        # Agrupar por mês de envio
+        months = {}
+        for rec in sent_records:
+            src = source_map.get(rec.file_unique_id)
+            name = src.file_name if src and src.file_name else rec.caption or "Arquivo sem nome"
+            size_str = ""
+            if src and src.file_size:
+                size_mb = src.file_size / (1024 * 1024)
+                size_str = f" [{size_mb:.1f} MB]" if size_mb >= 1 else f" [{src.file_size / 1024:.0f} KB]"
+
+            month_key = rec.sent_at.strftime('%m/%Y') if rec.sent_at else "Desconhecido"
+            day_str = rec.sent_at.strftime('%d/%m') if rec.sent_at else "??"
+
+            if month_key not in months:
+                months[month_key] = []
+            months[month_key].append(f"  [{day_str}] {name}{size_str}")
+
+        for month, items in months.items():
+            lines.append(f"--- {month} ({len(items)} arquivo(s)) ---")
+            lines.extend(items)
+            lines.append("")
+
+    # --- Seção: Arquivos futuros ---
+    lines.append("")
+    lines.append("┌────────────────────────────────────────┐")
+    lines.append("│  EM BREVE — PRÓXIMOS ARQUIVOS          │")
+    lines.append("└────────────────────────────────────────┘\n")
+
+    if not future_files:
+        lines.append("  Todos os arquivos já foram enviados!\n")
+    else:
+        for f in future_files:
+            name = f.file_name or f.caption or "Arquivo sem nome"
+            size_str = ""
+            if f.file_size:
+                size_mb = f.file_size / (1024 * 1024)
+                size_str = f" [{size_mb:.1f} MB]" if size_mb >= 1 else f" [{f.file_size / 1024:.0f} KB]"
+            lines.append(f"  - {name}{size_str}")
+
+    lines.append("")
+
+    footer = (
+        "════════════════════════════════════════\n"
+        "Esta lista é atualizada diariamente.\n"
+        "Novos arquivos são adicionados todo dia às 15h.\n"
+    )
+
+    return header + "\n".join(lines) + "\n" + footer
+
+
+async def _send_catalog_to_channel(bot: Bot, channel_id: int, config_key: str, catalog_content: str, caption: str):
+    """
+    Envia o catálogo .txt para um canal específico.
+    Deleta o anterior, envia o novo e fixa no topo.
+    """
+    import tempfile
+    import os
+
+    # Deletar catálogo anterior (se existir)
+    saved_msg_id = _cfg_get(config_key)
+    if saved_msg_id:
+        try:
+            await bot.delete_message(
+                chat_id=channel_id,
+                message_id=int(saved_msg_id)
+            )
+            LOG.info(f"[CATALOG] Catálogo anterior deletado de {channel_id} (message_id={saved_msg_id})")
+        except TelegramError as e:
+            LOG.warning(f"[CATALOG] Não foi possível deletar catálogo anterior de {channel_id}: {e}")
+
+    # Criar arquivo .txt temporário e enviar
+    temp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8') as f:
+            f.write(catalog_content)
+            temp_path = f.name
+
+        with open(temp_path, 'rb') as f:
+            msg = await bot.send_document(
+                chat_id=channel_id,
+                document=f,
+                filename=f"Catalogo_VIP_{datetime.now().strftime('%d_%m_%Y')}.txt",
+                caption=caption,
+                parse_mode='HTML'
+            )
+
+        if msg:
+            _cfg_set(config_key, str(msg.message_id))
+            LOG.info(f"[CATALOG] ✅ Catálogo enviado para {channel_id} (message_id={msg.message_id})")
+
+            # Fixar no topo do grupo
+            try:
+                await bot.pin_chat_message(
+                    chat_id=channel_id,
+                    message_id=msg.message_id,
+                    disable_notification=True
+                )
+                LOG.info(f"[CATALOG] 📌 Catálogo fixado no topo de {channel_id}")
+
+                # Apagar a mensagem de serviço "X fixou uma mensagem"
+                # O Telegram cria automaticamente uma notificação no grupo ao fixar.
+                # Geralmente tem message_id = msg.message_id + 1
+                await asyncio.sleep(1)
+                try:
+                    await bot.delete_message(
+                        chat_id=channel_id,
+                        message_id=msg.message_id + 1
+                    )
+                    LOG.info(f"[CATALOG] 🗑️ Mensagem de serviço 'fixado' removida de {channel_id}")
+                except TelegramError:
+                    pass  # Mensagem de serviço pode não existir ou ter outro ID
+
+            except TelegramError as pin_err:
+                LOG.warning(f"[CATALOG] Não foi possível fixar catálogo em {channel_id}: {pin_err}")
+
+    except TelegramError as e:
+        LOG.error(f"[CATALOG] ❌ Erro ao enviar catálogo para {channel_id}: {e}")
+    finally:
+        if temp_path and os.path.exists(temp_path):
+            os.unlink(temp_path)
+
+
+async def send_or_update_vip_catalog(bot: Bot, session: Session):
+    """
+    Envia o catálogo de arquivos VIP como .txt para os grupos VIP e FREE.
+    - Deleta os catálogos anteriores
+    - Envia novo .txt atualizado em ambos os grupos
+    - Fixa (pin) no topo de cada grupo
+    """
+    if not _cfg_get or not _cfg_set:
+        LOG.error("[CATALOG] Funções cfg_get/cfg_set não configuradas! Chame setup_catalog() primeiro.")
+        return
+
+    catalog_content = _build_catalog_content(session)
+
+    # Enviar para o grupo VIP
+    if VIP_CHANNEL_ID:
+        await _send_catalog_to_channel(
+            bot, VIP_CHANNEL_ID,
+            "vip_catalog_message_id",
+            catalog_content,
+            caption=(
+                "📋 <b>CATÁLOGO VIP — LISTA DE ARQUIVOS</b>\n\n"
+                f"📦 Atualizado em {datetime.now().strftime('%d/%m/%Y às %H:%M')}\n"
+                "🔍 Baixe o arquivo e use Ctrl+F para pesquisar!\n"
+                "📌 Esta lista é atualizada diariamente."
+            )
+        )
+    else:
+        LOG.error("[CATALOG] VIP_CHANNEL_ID não configurado!")
+
+    # Enviar para o grupo FREE
+    if FREE_CHANNEL_ID:
+        await _send_catalog_to_channel(
+            bot, FREE_CHANNEL_ID,
+            "free_catalog_message_id",
+            catalog_content,
+            caption=(
+                "📋 <b>CATÁLOGO — TODOS OS ARQUIVOS DISPONÍVEIS</b>\n\n"
+                f"📦 Atualizado em {datetime.now().strftime('%d/%m/%Y às %H:%M')}\n"
+                "🔍 Baixe o arquivo e use Ctrl+F para pesquisar!\n\n"
+                "💎 <b>Quer acesso VIP?</b>\n"
+                f'👉 <a href="https://t.me/UnrealPack5_bot?start=vip">Clique aqui para assinar</a>'
+            )
+        )
+    else:
+        LOG.warning("[CATALOG] FREE_CHANNEL_ID não configurado, catálogo FREE não enviado")
