@@ -3506,17 +3506,20 @@ async def organizar_arquivos_cmd(update: Update, context: ContextTypes.DEFAULT_T
         await status_msg.edit_text(f"❌ Erro ao organizar: <code>{e}</code>", parse_mode="HTML")
 
 
-# Flag global de cancelamento do /organizar_canal
+# Flags globais do /organizar_canal
 _organizar_canal_cancelar: bool = False
+_organizar_canal_em_andamento: bool = False
 
 
 async def parar_canal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     /parar_canal — Cancela um /organizar_canal em andamento.
     """
-    global _organizar_canal_cancelar
+    global _organizar_canal_cancelar, _organizar_canal_em_andamento
     if not (update.effective_user and is_admin(update.effective_user.id)):
         return await update.effective_message.reply_text("⛔ Apenas admins.")
+    if not _organizar_canal_em_andamento:
+        return await update.effective_message.reply_text("ℹ️ Nenhum /organizar_canal em andamento.")
     _organizar_canal_cancelar = True
     await update.effective_message.reply_text("🛑 Sinal de parada enviado. O envio será interrompido no próximo arquivo.")
 
@@ -3533,8 +3536,16 @@ async def organizar_canal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     Nao interfere na fila de envio automatico.
     """
+    global _organizar_canal_em_andamento, _organizar_canal_cancelar
+
     if not (update.effective_user and is_admin(update.effective_user.id)):
         return await update.effective_message.reply_text("⛔ Apenas admins.")
+
+    if _organizar_canal_em_andamento:
+        return await update.effective_message.reply_text(
+            "⚠️ Já existe um /organizar_canal em andamento.\n"
+            "Use /parar_canal para interrompê-lo antes de iniciar outro."
+        )
 
     msg = update.effective_message
 
@@ -3615,8 +3626,8 @@ async def organizar_canal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE
         parse_mode="HTML"
     )
 
-    global _organizar_canal_cancelar
     _organizar_canal_cancelar = False  # reset ao iniciar
+    _organizar_canal_em_andamento = True
 
     bot = context.bot
     enviados = 0
@@ -3726,6 +3737,8 @@ async def organizar_canal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE
             f"📤 {enviados} arquivo(s) foram enviados antes do erro.",
             parse_mode="HTML"
         )
+    finally:
+        _organizar_canal_em_andamento = False
 
 
 def _agrupar_partes(arquivos: list) -> list:
