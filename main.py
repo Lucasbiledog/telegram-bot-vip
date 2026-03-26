@@ -8911,6 +8911,17 @@ async def on_startup():
         logging.info("✅ Job FREE promoção configurado (15:30 quartas)")
 
         logging.info("Handlers e jobs registrados.")
+
+        # Notificar canal de logs que o bot está online
+        try:
+            from datetime import datetime as _dt
+            import pytz as _pytz
+            _br = _pytz.timezone("America/Sao_Paulo")
+            _now = _dt.now(_br).strftime("%d/%m/%Y %H:%M:%S")
+            await log_to_group(f"🟢 <b>Bot online</b>\n🕐 {_now} (Brasília)")
+        except Exception as _e:
+            logging.warning(f"[STARTUP] Não foi possível notificar o canal de logs: {_e}")
+
     else:
         logging.error("Bot não foi inicializado - funcionalidades do Telegram não estarão disponíveis.")
 
