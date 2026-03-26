@@ -3659,19 +3659,33 @@ async def organizar_canal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE
                     else:
                         caption = f"📦 Parte {i} de {len(partes)}"
 
-                    try:
-                        await bot.copy_message(
-                            chat_id=canal_destino,
-                            from_chat_id=arq.source_chat_id,
-                            message_id=arq.message_id,
-                            caption=caption
-                        )
-                        enviados += 1
-                    except Exception as e:
-                        logging.error(f"[ORG_CANAL] Erro msg {arq.message_id}: {e}")
-                        erros += 1
+                    # Tenta enviar, respeitando flood control do Telegram
+                    for _tentativa in range(5):
+                        try:
+                            await bot.copy_message(
+                                chat_id=canal_destino,
+                                from_chat_id=arq.source_chat_id,
+                                message_id=arq.message_id,
+                                caption=caption
+                            )
+                            enviados += 1
+                            break
+                        except Exception as e:
+                            err_str = str(e)
+                            # Extrai retry_after do erro 429
+                            import re as _re
+                            m = _re.search(r"[Rr]etry in (\d+)", err_str)
+                            if m:
+                                wait_sec = int(m.group(1)) + 2
+                                logging.warning(f"[ORG_CANAL] Flood control msg {arq.message_id}: aguardando {wait_sec}s")
+                                await asyncio.sleep(wait_sec)
+                                continue  # retry
+                            else:
+                                logging.error(f"[ORG_CANAL] Erro msg {arq.message_id}: {e}")
+                                erros += 1
+                                break
 
-                    await asyncio.sleep(0.8)
+                    await asyncio.sleep(1.5)
 
             # Progresso a cada categoria
             try:
