@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git push:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(python -c:*)",
+      "Bash(pkill:*)",
+      "Bash(netstat:*)",
+      "Bash(findstr:*)",
+      "Bash(taskkill:*)",
+      "Bash(py \"F:\\telegram_bot\\bot-oficial\\teste_simples.py\")",
+      "Bash(del /Q test_payment.py check_config.py testar_hash.py diagnostico_bot.py reativar_bot.py parar_bot.py descobrir_id_grupo.py listar_grupos_admin.py gerenciar_hashes.py listar_canais_bot.py verificar_config_canais.py testar_convite_canal.py testar_fluxo_completo.py teste_simples.py listar_grupos.py listar_meus_grupos.py vip_payment_stress_test.py)",
+      "Bash(rm:*)",
+      "Bash(python ler_e_indexar_grupo.py:*)",
+      "Bash(git remote add:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
