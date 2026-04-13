@@ -94,6 +94,14 @@ from sqlalchemy.engine import make_url
 # Pack e Payment já estão definidos no main.py com mais campos
 from models import User, PendingNotification, MemberLog, SupportTicket, Base as ModelsBase
 
+# Fab.com image scraper
+try:
+    from fab_scraper import fetch_fab_images, to_input_media as fab_to_input_media
+    FAB_SCRAPER_AVAILABLE = True
+except ImportError:
+    FAB_SCRAPER_AVAILABLE = False
+    logging.warning("fab_scraper não disponível")
+
 # === Funções de Retry Automático ===
 async def send_with_retry(func, *args, max_retries=3, **kwargs):
     """Executa função com retry automático para rate limits e erros de rede"""
@@ -2756,6 +2764,22 @@ async def enviar_pack_job(context: ContextTypes.DEFAULT_TYPE, tier: str, target_
         if tier == "free":
             # GRUPO FREE: Pack completo como bonificação semanal
 
+            # --- Buscar e enviar imagens do Fab.com antes da mensagem ---
+            if FAB_SCRAPER_AVAILABLE:
+                try:
+                    fab_imgs = await fetch_fab_images(p.title, count=3)
+                    if fab_imgs:
+                        fab_media = [fab_to_input_media(b) for b in fab_imgs]
+                        await context.application.bot.send_media_group(
+                            chat_id=target_chat_id,
+                            media=fab_media,
+                        )
+                        logging.info(f"[fab] {len(fab_imgs)} imagem(ns) enviada(s) para pack '{p.title}'")
+                    else:
+                        logging.info(f"[fab] Nenhuma imagem encontrada para '{p.title}'")
+                except Exception as fab_err:
+                    logging.warning(f"[fab] Falha ao enviar imagens do Fab para '{p.title}': {fab_err}")
+
             # Enviar mensagem personalizada
             now = datetime.now()
             data_formatada = now.strftime("%d/%m")
@@ -3455,6 +3479,9 @@ async def comandos_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🛠 <b>Admin</b>",
         "• /simularvip — envia o próximo pack VIP pendente",
         "• /simularfree — envia o próximo pack FREE pendente",
+        "• /fab_teasers — envia previews Fab.com de todos os packs FREE pendentes",
+        "• /fab_teasers <id> — preview Fab.com de um pack específico",
+        "• /fab_teasers test <titulo> — testa busca no Fab.com sem enviar ao grupo",
         "• /listar_packs — lista todos os packs (VIP e FREE)",
         "• /pack_info <id> — detalhes do pack",
         "• /excluir_item <id_item> — remove item do pack",
@@ -4711,7 +4738,96 @@ async def listar_packsfree_cmd(update: Update, context: ContextTypes.DEFAULT_TYP
                 f"[{p.id}] {esc(p.title)} — {status} — previews:{previews} arquivos:{docs} — {p.created_at.strftime('%d/%m %H:%M')}{ag}"
             )
         await update.effective_message.reply_text("\n".join(lines))
-   
+
+
+async def fab_teasers_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /fab_teasers — busca imagens no Fab.com para todos os packs FREE pendentes
+    e envia como teaser no grupo free.
+    Uso: /fab_teasers          → processa todos os packs FREE pendentes
+         /fab_teasers <id>     → processa somente o pack com esse ID
+         /fab_teasers test <titulo> → testa busca sem enviar ao grupo
+    """
+    if not (update.effective_user and is_admin(update.effective_user.id)):
+        return await update.effective_message.reply_text("Apenas admins.")
+
+    if not FAB_SCRAPER_AVAILABLE:
+        return await update.effective_message.reply_text("❌ fab_scraper não está disponível.")
+
+    args = context.args or []
+
+    # Modo teste: /fab_teasers test <titulo>
+    if args and args[0].lower() == "test":
+        titulo = " ".join(args[1:]) or "test"
+        await update.effective_message.reply_text(f"🔍 Buscando imagens para: <b>{html.escape(titulo)}</b>...", parse_mode="HTML")
+        imgs = await fetch_fab_images(titulo, count=3)
+        if not imgs:
+            return await update.effective_message.reply_text("❌ Nenhuma imagem encontrada no Fab.com.")
+        fab_media = [fab_to_input_media(b) for b in imgs]
+        await update.effective_message.reply_media_group(media=fab_media)
+        return await update.effective_message.reply_text(f"✅ {len(imgs)} imagem(ns) encontrada(s) para <b>{html.escape(titulo)}</b>.", parse_mode="HTML")
+
+    # Modo pack específico: /fab_teasers <id>
+    if args and args[0].isdigit():
+        pack_id = int(args[0])
+        with SessionLocal() as s:
+            pack = s.query(Pack).filter(Pack.id == pack_id).first()
+        if not pack:
+            return await update.effective_message.reply_text(f"Pack #{pack_id} não encontrado.")
+        packs_to_process = [pack]
+    else:
+        # Todos os packs FREE pendentes
+        with SessionLocal() as s:
+            packs_to_process = (
+                s.query(Pack)
+                .filter(Pack.tier == "free", Pack.sent == False)
+                .order_by(Pack.created_at.asc())
+                .all()
+            )
+
+    if not packs_to_process:
+        return await update.effective_message.reply_text("Nenhum pack FREE pendente.")
+
+    status_msg = await update.effective_message.reply_text(
+        f"🔍 Processando {len(packs_to_process)} pack(s) no Fab.com...\nAguarde."
+    )
+
+    enviados = 0
+    sem_imagem = 0
+    for pack in packs_to_process:
+        try:
+            imgs = await fetch_fab_images(pack.title, count=3)
+            if not imgs:
+                sem_imagem += 1
+                logging.info(f"[fab_teasers] Sem imagem para '{pack.title}'")
+                continue
+
+            fab_media = [fab_to_input_media(b) for b in imgs]
+            # Primeira imagem recebe legenda com o título
+            import io as _io
+            from telegram import InputMediaPhoto as _IMP
+            fab_media[0] = _IMP(
+                media=_io.BytesIO(imgs[0]),
+                caption=f"👀 <b>Preview: {html.escape(pack.title)}</b>",
+                parse_mode="HTML",
+            )
+            await context.application.bot.send_media_group(
+                chat_id=FREE_CHANNEL_ID,
+                media=fab_media,
+            )
+            enviados += 1
+            await asyncio.sleep(1.5)  # evita flood
+        except Exception as exc:
+            logging.warning(f"[fab_teasers] Erro no pack '{pack.title}': {exc}")
+
+    await status_msg.edit_text(
+        f"✅ <b>Fab Teasers concluído</b>\n"
+        f"📤 Enviados: {enviados}\n"
+        f"❌ Sem imagem: {sem_imagem}\n"
+        f"📦 Total processados: {len(packs_to_process)}",
+        parse_mode="HTML",
+    )
+
 
 async def pack_info_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not (update.effective_user and is_admin(update.effective_user.id)): return await update.effective_message.reply_text("Apenas admins.")
@@ -8241,6 +8357,7 @@ async def on_startup():
 
         application.add_handler(CommandHandler("set_pack_horario_vip", set_pack_horario_vip_cmd), group=1)
         application.add_handler(CommandHandler("set_pack_horario_free", set_pack_horario_free_cmd), group=1)
+        application.add_handler(CommandHandler("fab_teasers", fab_teasers_cmd), group=1)
         application.add_handler(CommandHandler("listar_jobs", listar_jobs_cmd), group=1)
         application.add_handler(CommandHandler("enviar_pack_agora", enviar_pack_agora_cmd), group=1)
         application.add_handler(CommandHandler("debug_convite", debug_convite_cmd), group=1)
