@@ -2828,12 +2828,6 @@ async def enviar_pack_job(context: ContextTypes.DEFAULT_TYPE, tier: str, target_
                             )
 
                     if fab_fids:
-                        # Separador
-                        await context.application.bot.send_message(
-                            chat_id=target_chat_id,
-                            text="<b>--------Imagens--------</b>",
-                            parse_mode="HTML",
-                        )
                         # Cada imagem com legenda "Imagem N"
                         media = [
                             InputMediaPhoto(media=fid, caption=f"Imagem {i}")
@@ -4954,7 +4948,6 @@ async def fab_teasers_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not imgs:
             return await update.effective_message.reply_text("❌ Nenhuma imagem encontrada no Fab.com.")
 
-        await update.effective_message.reply_text("<b>--------Imagens--------</b>", parse_mode="HTML")
         media = [
             InputMediaPhoto(media=fab_to_input_media(b).media, caption=f"Imagem {i}")
             for i, b in enumerate(imgs, 1)

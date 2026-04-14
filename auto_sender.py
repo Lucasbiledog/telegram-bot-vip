@@ -686,11 +686,6 @@ async def _send_fab_images_for_caption(bot: Bot, channel_id: int, caption: str) 
             return False
 
         # ── 3) Envia ────────────────────────────────────────────────────────
-        await bot.send_message(
-            chat_id=channel_id,
-            text="<b>--------Imagens--------</b>",
-            parse_mode="HTML",
-        )
         media = [
             InputMediaPhoto(media=fid, caption=f"Imagem {i}")
             for i, fid in enumerate(file_ids, 1)
