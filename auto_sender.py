@@ -534,6 +534,10 @@ async def send_teaser_to_free(bot: Bot, all_parts: list):
             temp_path = f.name
 
         try:
+            # Enviar imagens Fab.com antes do teaser (usa file_name como título)
+            _fab_title_teaser = (first_part.caption or first_part.file_name or "").strip()
+            await _send_fab_images_for_caption(bot, FREE_CHANNEL_ID, _fab_title_teaser)
+
             # Enviar arquivo .txt para o canal FREE
             with open(temp_path, 'rb') as f:
                 await bot.send_document(
