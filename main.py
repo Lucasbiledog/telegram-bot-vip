@@ -6100,9 +6100,10 @@ async def send_free_extra_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE
             if not source_file:
                 return await msg.edit_text("⚠️ Nenhum arquivo novo disponível para FREE.")
 
-            # Envia imagens Fab.com se houver cache
+            # Envia imagens Fab.com (usa caption ou file_name como título)
+            _fab_title = (source_file.caption or source_file.file_name or "").strip()
             await _send_fab_images_for_caption(
-                context.application.bot, free_ch, source_file.caption or ""
+                context.application.bot, free_ch, _fab_title
             )
 
             all_parts = get_all_parts(session, source_file)
@@ -6137,7 +6138,7 @@ async def send_free_extra_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE
                         await asyncio.sleep(0.5)
 
         if success_count > 0:
-            cap_title = (source_file.caption or "")[:60]
+            cap_title = (source_file.caption or source_file.file_name or "")[:60]
             await msg.edit_text(
                 f"✅ Pack FREE extra enviado!\n"
                 f"📄 {html.escape(cap_title)}\n"

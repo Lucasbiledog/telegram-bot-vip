@@ -722,8 +722,9 @@ async def send_daily_vip_file(bot: Bot, session: Session):
             LOG.warning("[AUTO-SEND] ⚠️ Nenhum arquivo novo disponível para VIP")
             return
 
-        # Enviar imagens Fab.com antes do pack (se houver cache)
-        await _send_fab_images_for_caption(bot, VIP_CHANNEL_ID, source_file.caption or "")
+        # Enviar imagens Fab.com antes do pack (caption ou nome do arquivo)
+        _fab_title_vip = (source_file.caption or source_file.file_name or "").strip()
+        await _send_fab_images_for_caption(bot, VIP_CHANNEL_ID, _fab_title_vip)
 
         # Buscar todas as partes relacionadas (se houver)
         all_parts = get_all_parts(session, source_file)
@@ -830,8 +831,9 @@ async def send_weekly_free_file(bot: Bot, session: Session):
             LOG.warning("[AUTO-SEND] ⚠️ Nenhum arquivo novo disponível para FREE")
             return
 
-        # Enviar imagens Fab.com antes do pack (se houver cache)
-        await _send_fab_images_for_caption(bot, FREE_CHANNEL_ID, source_file.caption or "")
+        # Enviar imagens Fab.com antes do pack (caption ou nome do arquivo)
+        _fab_title_free = (source_file.caption or source_file.file_name or "").strip()
+        await _send_fab_images_for_caption(bot, FREE_CHANNEL_ID, _fab_title_free)
 
         # Buscar todas as partes relacionadas (se houver)
         all_parts = get_all_parts(session, source_file)
