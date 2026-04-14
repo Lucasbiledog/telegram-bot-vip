@@ -648,24 +648,44 @@ async def send_as_media_group(
 
 async def _send_fab_images_for_caption(bot: Bot, channel_id: int, caption: str) -> bool:
     """
-    Busca no FabImageCache as imagens pré-baixadas para a caption/título do pack
-    e as envia ao canal com separador '--------Imagens--------'.
+    Busca imagens do Fab.com para a caption/título e envia ao canal.
+    1º tenta o FabImageCache (pré-baixado pelo /fab_teasers).
+    Se não houver cache, busca on-the-fly no Bing/Fab e salva no cache.
     Retorna True se enviou pelo menos 1 imagem.
     """
     if not caption:
         return False
     try:
         from models import FabImageCache
-        from main import SessionLocal, _normalize_fab_query
+        from main import SessionLocal, _normalize_fab_query, _fab_cache_save
         norm = _normalize_fab_query(caption)
-        with SessionLocal() as s:
-            cache = s.query(FabImageCache).filter(FabImageCache.query == norm).first()
-            if not cache:
-                return False
-            file_ids = _json.loads(cache.file_ids_json or "[]")
-        if not file_ids:
+        if not norm:
             return False
 
+        # ── 1) Tenta cache ──────────────────────────────────────────────────
+        file_ids: list[str] = []
+        with SessionLocal() as s:
+            cache = s.query(FabImageCache).filter(FabImageCache.query == norm).first()
+            if cache:
+                file_ids = _json.loads(cache.file_ids_json or "[]")
+
+        # ── 2) Fallback on-the-fly ──────────────────────────────────────────
+        if not file_ids:
+            LOG.info(f"[AUTO-SEND] Cache miss — buscando Fab on-the-fly para '{norm[:60]}'")
+            try:
+                from fab_scraper import fetch_fab_images
+                raw_imgs = await fetch_fab_images(norm, count=3)
+                if raw_imgs:
+                    file_ids = await _fab_cache_save(bot, norm, raw_imgs)
+                    LOG.info(f"[AUTO-SEND] {len(file_ids)} imagem(ns) salvas no cache para '{norm[:60]}'")
+            except Exception as fetch_exc:
+                LOG.warning(f"[AUTO-SEND] Falha ao buscar Fab on-the-fly para '{norm[:60]}': {fetch_exc}")
+
+        if not file_ids:
+            LOG.info(f"[AUTO-SEND] Nenhuma imagem Fab disponível para '{norm[:60]}'")
+            return False
+
+        # ── 3) Envia ────────────────────────────────────────────────────────
         await bot.send_message(
             chat_id=channel_id,
             text="<b>--------Imagens--------</b>",
