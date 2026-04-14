@@ -6206,6 +6206,32 @@ async def agendar_vip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+async def cancelar_vip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /cancelar_vip — cancela o envio VIP agendado com /agendar_vip.
+    Remove qualquer job cujo nome comece com 'vip_agendado_'.
+    """
+    if not (update.effective_user and is_admin(update.effective_user.id)):
+        return await update.effective_message.reply_text("Apenas admins.")
+
+    if not application or not application.job_queue:
+        return await update.effective_message.reply_text("❌ Job queue não disponível.")
+
+    removed = []
+    for job in list(application.job_queue.jobs()):
+        if job.name and job.name.startswith("vip_agendado_"):
+            job.schedule_removal()
+            removed.append(job.name)
+
+    if removed:
+        nomes = ", ".join(removed)
+        await update.effective_message.reply_text(
+            f"✅ Agendamento(s) cancelado(s): <b>{nomes}</b>", parse_mode="HTML"
+        )
+    else:
+        await update.effective_message.reply_text("ℹ️ Nenhum envio VIP agendado encontrado.")
+
+
 async def listar_packs_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Comando unificado para listar todos os packs (VIP e FREE)"""
     if not (update.effective_user and is_admin(update.effective_user.id)):
@@ -8689,6 +8715,7 @@ async def on_startup():
         application.add_handler(CommandHandler("fab_teasers", fab_teasers_cmd), group=1)
         application.add_handler(CommandHandler("send_free_extra", send_free_extra_cmd), group=1)
         application.add_handler(CommandHandler("agendar_vip", agendar_vip_cmd), group=1)
+        application.add_handler(CommandHandler("cancelar_vip", cancelar_vip_cmd), group=1)
         application.add_handler(CommandHandler("listar_jobs", listar_jobs_cmd), group=1)
         application.add_handler(CommandHandler("enviar_pack_agora", enviar_pack_agora_cmd), group=1)
         application.add_handler(CommandHandler("debug_convite", debug_convite_cmd), group=1)
