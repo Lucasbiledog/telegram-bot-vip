@@ -4812,23 +4812,27 @@ async def listar_packsfree_cmd(update: Update, context: ContextTypes.DEFAULT_TYP
 def _normalize_fab_query(raw: str) -> str:
     """
     Limpa o nome de arquivo/caption para usar como query no Fab.com.
-    Remove: extensões, '- Part N', versões numéricas, 'Unreal Engine', emojis, etc.
+    Remove: extensões, underscores, versões, 'Unreal Engine', emojis, Part N.
     """
     import re
     q = raw.strip()
-    # Remove emoji 📦 e similares no início
+    # Remove emoji e similares no início
     q = re.sub(r'^[\U00010000-\U0010ffff\U0001F300-\U0001FAFF\U00002700-\U000027BF\s📦📁🗂️]+', '', q)
-    # Remove extensões de arquivo
-    q = re.sub(r'\.(zip|rar|7z|tar\.gz|gz|pak|uasset|umap|fbx|obj)\b', '', q, flags=re.IGNORECASE)
-    # Remove "- Part N" ou "- Part" no final (com ou sem número)
-    q = re.sub(r'\s*[-–]\s*Part\s*\d*\s*$', '', q, flags=re.IGNORECASE)
-    # Remove versões tipo "5.6", "4.26", "4.27", "5.1", "5.3"
+    # Remove extensões de arquivo (incluindo .zip.txt)
+    q = re.sub(r'\.(zip|rar|7z|tar\.gz|gz|pak|uasset|umap|fbx|obj|txt)(\.[a-z]{1,4})?', '', q, flags=re.IGNORECASE)
+    # Troca underscores por espaços (nomes de arquivo como medieval_harbor_kit)
+    q = q.replace('_', ' ')
+    # Remove versões com underscores tipo "4 26", "5 5", "4 27" após substituição
+    q = re.sub(r'\b(\d)\s(\d{1,2})\b', '', q)
+    # Remove versões com ponto tipo "5.6", "4.26"
     q = re.sub(r'\b\d+\.\d+\b', '', q)
     # Remove "Unreal Engine" / "UE5" / "UE4"
     q = re.sub(r'\b(Unreal\s*Engine|UE\d+)\b', '', q, flags=re.IGNORECASE)
-    # Remove "[nanite]", "(Nanite & Low Poly)", "(Nanite)", etc. — pode confundir
+    # Remove "- Part N" ou "- Part" no final
+    q = re.sub(r'\s*[-–]\s*[Pp]art\s*\d*\s*$', '', q)
+    # Remove colchetes e parênteses
     q = re.sub(r'\[.*?\]|\(.*?\)', '', q)
-    # Limpa pontuação residual no início/fim e espaços duplos
+    # Limpa pontuação residual e espaços duplos
     q = re.sub(r'\s+', ' ', q).strip(' -–_.,')
     return q
 
