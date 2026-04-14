@@ -8512,15 +8512,20 @@ async def on_startup():
 
         # ===== Sistema de Suporte =====
         from support import (
-            support_start_callback, support_text_handler, support_cancel_cmd,
-            tickets_cmd, reply_cmd, close_ticket_cmd, msg_cmd,
+            support_start_callback, support_text_handler, support_photo_handler,
+            support_cancel_cmd, tickets_cmd, reply_cmd, close_ticket_cmd, msg_cmd,
         )
         # Callback do botão "Suporte"
         application.add_handler(CallbackQueryHandler(support_start_callback, pattern="^support_start$"), group=1)
-        # Captura texto do usuário quando aguardando descrição (antes de outros handlers de texto)
+        # Captura texto do usuário (antes de outros handlers de texto)
         application.add_handler(MessageHandler(
             filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE,
             support_text_handler
+        ), group=-3)
+        # Captura fotos do usuário (novo ticket ou follow-up com imagem)
+        application.add_handler(MessageHandler(
+            filters.PHOTO & filters.ChatType.PRIVATE,
+            support_photo_handler
         ), group=-3)
         application.add_handler(CommandHandler("cancelar_suporte", support_cancel_cmd), group=1)
         # Comandos admin
