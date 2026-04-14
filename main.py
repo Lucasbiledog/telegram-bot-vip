@@ -4867,14 +4867,67 @@ async def _fab_cache_save(bot, query: str, imgs: list) -> list:
     return file_ids
 
 
+# Lock para /fab_teasers: impede execução simultânea
+_FAB_TEASERS_LOCK = asyncio.Lock()
+
+
+def _get_fab_pending_titles() -> list[str]:
+    """Retorna títulos normalizados ainda não salvos no FabImageCache."""
+    queries: dict[str, str] = {}
+
+    # 1) SourceFile pendentes (fila automática)
+    try:
+        with SessionLocal() as s:
+            sent_ids = {
+                row[0] for row in
+                s.query(SentFile.file_unique_id).filter(SentFile.sent_to_tier == "vip").all()
+            }
+            source_files = (
+                s.query(SourceFile)
+                .filter(SourceFile.active == True, ~SourceFile.file_unique_id.in_(sent_ids))
+                .all()
+            )
+            for sf in source_files:
+                cap = (sf.caption or "").strip()
+                if not cap:
+                    continue
+                norm = _normalize_fab_query(cap)
+                if norm and norm not in queries:
+                    queries[norm] = norm
+    except Exception as exc:
+        logging.warning(f"[fab_teasers] Erro ao ler SourceFile: {exc}")
+
+    # 2) Pack pendentes (sistema Pack/PackFile)
+    try:
+        with SessionLocal() as s:
+            packs = s.query(Pack).filter(Pack.sent == False).order_by(Pack.created_at.asc()).all()
+            for p in packs:
+                title = (p.title or "").strip()
+                if not title:
+                    continue
+                norm = _normalize_fab_query(title)
+                if norm and norm not in queries:
+                    queries[norm] = norm
+    except Exception as exc:
+        logging.warning(f"[fab_teasers] Erro ao ler Pack: {exc}")
+
+    # Remove títulos que já estão no cache
+    try:
+        with SessionLocal() as s:
+            cached = {row[0] for row in s.query(FabImageCache.query).all()}
+        return [t for t in queries if t not in cached]
+    except Exception as exc:
+        logging.warning(f"[fab_teasers] Erro ao ler FabImageCache: {exc}")
+        return list(queries.keys())
+
+
 async def fab_teasers_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
-    /fab_teasers — baixa 3 imagens do Fab.com para cada pack da fila automática
-    (SourceFile pendentes) e packs Pack pendentes, e armazena no FabImageCache.
-    As imagens são enviadas automaticamente junto com o pack no dia do envio.
+    /fab_teasers — baixa imagens do Fab.com para packs pendentes (1 por vez).
+    Cada chamada processa 1 título; rode novamente para o próximo.
 
     Uso:
-      /fab_teasers              → processa toda a fila automática + packs pendentes
+      /fab_teasers              → processa o próximo título pendente
       /fab_teasers test <titulo>→ testa busca sem salvar (mostra aqui)
     """
     if not (update.effective_user and is_admin(update.effective_user.id)):
@@ -4907,93 +4960,63 @@ async def fab_teasers_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="HTML",
         )
 
-    # ── Coletar e normalizar títulos únicos pendentes de AMBOS os sistemas ───
-    # query_normalizada → caption_original (para salvar no cache com a key certa)
-    queries: dict[str, str] = {}
-
-    # 1) SourceFile pendentes (fila automática)
-    try:
-        with SessionLocal() as s:
-            sent_ids = {
-                row[0] for row in
-                s.query(SentFile.file_unique_id).filter(SentFile.sent_to_tier == "vip").all()
-            }
-            source_files = (
-                s.query(SourceFile)
-                .filter(SourceFile.active == True, ~SourceFile.file_unique_id.in_(sent_ids))
-                .all()
-            )
-            for sf in source_files:
-                cap = (sf.caption or "").strip()
-                if not cap:
-                    continue
-                norm = _normalize_fab_query(cap)
-                if norm and norm not in queries:
-                    queries[norm] = norm  # usa versão normalizada como chave E valor
-    except Exception as exc:
-        logging.warning(f"[fab_teasers] Erro ao ler SourceFile: {exc}")
-
-    # 2) Pack pendentes (sistema Pack/PackFile)
-    try:
-        with SessionLocal() as s:
-            packs = s.query(Pack).filter(Pack.sent == False).order_by(Pack.created_at.asc()).all()
-            for p in packs:
-                title = (p.title or "").strip()
-                if not title:
-                    continue
-                norm = _normalize_fab_query(title)
-                if norm and norm not in queries:
-                    queries[norm] = norm
-    except Exception as exc:
-        logging.warning(f"[fab_teasers] Erro ao ler Pack: {exc}")
-
-    if not queries:
+    # ── Impede execução simultânea ────────────────────────────────────────────
+    if _FAB_TEASERS_LOCK.locked():
         return await update.effective_message.reply_text(
-            "Nenhum pack pendente encontrado na fila automática nem na tabela Pack."
+            "⏳ Já existe um /fab_teasers em execução. Aguarde terminar antes de enviar outro."
         )
 
-    titulos = list(queries.keys())
+    async with _FAB_TEASERS_LOCK:
+        # ── Busca próximo título pendente ──────────────────────────────────────
+        pendentes = _get_fab_pending_titles()
 
-    status_msg = await update.effective_message.reply_text(
-        f"⏳ Processando <b>{len(titulos)}</b> título(s) único(s) no Fab.com...\n"
-        f"As imagens serão enviadas junto com o pack no dia do envio.",
-        parse_mode="HTML",
-    )
+        if not pendentes:
+            return await update.effective_message.reply_text(
+                "✅ Todos os packs pendentes já têm imagens no cache. Nada a processar."
+            )
 
-    salvos = 0
-    sem_imagem = 0
-    detalhes: list[str] = []
+        titulo = pendentes[0]
+        restantes = len(pendentes) - 1
 
-    for titulo in titulos:
+        status_msg = await update.effective_message.reply_text(
+            f"⏳ Buscando imagens para:\n<b>{html.escape(titulo)}</b>\n\n"
+            f"({restantes} título(s) restante(s) na fila)",
+            parse_mode="HTML",
+        )
+
         try:
             imgs = await fetch_fab_images(titulo, count=3)
             if not imgs:
-                sem_imagem += 1
-                detalhes.append(f"❌ {html.escape(titulo[:60])} — sem imagem")
-                continue
+                await status_msg.edit_text(
+                    f"❌ <b>Sem imagem:</b> {html.escape(titulo)}\n\n"
+                    f"({restantes} restante(s)) — rode /fab_teasers para o próximo",
+                    parse_mode="HTML",
+                )
+                return
 
             file_ids = await _fab_cache_save(context.application.bot, titulo, imgs)
             if file_ids:
-                salvos += 1
-                detalhes.append(f"✅ {html.escape(titulo[:60])} — {len(file_ids)} img(s)")
+                await status_msg.edit_text(
+                    f"✅ <b>Salvo:</b> {html.escape(titulo)}\n"
+                    f"💾 {len(file_ids)} imagem(ns) no cache\n\n"
+                    + (f"📋 {restantes} título(s) restante(s) — rode /fab_teasers para o próximo"
+                       if restantes > 0 else "🏁 Fila concluída!"),
+                    parse_mode="HTML",
+                )
             else:
-                sem_imagem += 1
-                detalhes.append(f"⚠️ {html.escape(titulo[:60])} — falha no upload")
-
-            await asyncio.sleep(1.5)
+                await status_msg.edit_text(
+                    f"⚠️ <b>Falha no upload:</b> {html.escape(titulo)}\n\n"
+                    f"({restantes} restante(s)) — rode /fab_teasers para o próximo",
+                    parse_mode="HTML",
+                )
         except Exception as exc:
-            sem_imagem += 1
-            detalhes.append(f"❌ {html.escape(titulo[:60])} — erro: {html.escape(str(exc)[:60])}")
             logging.warning(f"[fab_teasers] '{titulo}': {exc}")
-
-    resumo = (
-        f"✅ <b>Fab — Download concluído</b>\n\n"
-        f"🔍 Títulos encontrados: {len(titulos)}\n"
-        f"💾 Com imagens salvas: {salvos}\n"
-        f"❌ Sem imagem: {sem_imagem}\n\n"
-        + "\n".join(detalhes[:20])
-    )
-    await status_msg.edit_text(resumo, parse_mode="HTML")
+            await status_msg.edit_text(
+                f"❌ <b>Erro:</b> {html.escape(titulo)}\n"
+                f"{html.escape(str(exc)[:120])}\n\n"
+                f"({restantes} restante(s)) — rode /fab_teasers para o próximo",
+                parse_mode="HTML",
+            )
 
 
 async def pack_info_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -6043,6 +6066,91 @@ async def enviar_pack_agora_cmd(update: Update, context: ContextTypes.DEFAULT_TY
     except Exception as e:
         await update.effective_message.reply_text(f"❌ Erro no envio manual: {e}")
         logging.error(f"Erro no envio manual de pack {tier}: {e}")
+
+async def send_free_extra_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /send_free_extra — força envio imediato de 1 pack FREE da fila automática
+    (SourceFile/SentFile), independente do dia da semana.
+    Usado para testar o fluxo completo sem esperar quarta-feira às 15h.
+    """
+    if not (update.effective_user and is_admin(update.effective_user.id)):
+        return await update.effective_message.reply_text("Apenas admins.")
+
+    msg = await update.effective_message.reply_text(
+        "🚀 Enviando pack FREE extra da fila automática..."
+    )
+
+    try:
+        import auto_sender as _as
+        from auto_sender import (
+            get_random_file_from_source,
+            get_all_parts,
+            send_file_to_channel,
+            send_as_media_group,
+            mark_file_as_sent,
+            _send_fab_images_for_caption,
+        )
+
+        free_ch = _as.FREE_CHANNEL_ID
+        if not free_ch:
+            return await msg.edit_text("❌ FREE_CHANNEL_ID não configurado.")
+
+        with SessionLocal() as session:
+            source_file = await get_random_file_from_source(session, "free")
+            if not source_file:
+                return await msg.edit_text("⚠️ Nenhum arquivo novo disponível para FREE.")
+
+            # Envia imagens Fab.com se houver cache
+            await _send_fab_images_for_caption(
+                context.application.bot, free_ch, source_file.caption or ""
+            )
+
+            all_parts = get_all_parts(session, source_file)
+            can_media_group = (
+                1 < len(all_parts) <= 10
+                and all(p.file_type in ["video", "photo"] for p in all_parts)
+            )
+
+            success_count = 0
+            if can_media_group:
+                ok = await send_as_media_group(
+                    context.application.bot, all_parts, free_ch, tier="free"
+                )
+                if ok:
+                    for part in all_parts:
+                        await mark_file_as_sent(session, part, "free")
+                    success_count = len(all_parts)
+            else:
+                for i, part in enumerate(all_parts, 1):
+                    caption = (
+                        f"🆓 Pack FREE Extra\n📅 {dt.datetime.now().strftime('%d/%m/%Y')}"
+                        + (f"\n\n{part.caption}" if part.caption else "")
+                        + (f"\n\n📦 Parte {i} de {len(all_parts)}" if len(all_parts) > 1 else "")
+                    )
+                    sent_msg = await send_file_to_channel(
+                        context.application.bot, part, free_ch, caption
+                    )
+                    if sent_msg:
+                        await mark_file_as_sent(session, part, "free")
+                        success_count += 1
+                    if i < len(all_parts):
+                        await asyncio.sleep(0.5)
+
+        if success_count > 0:
+            cap_title = (source_file.caption or "")[:60]
+            await msg.edit_text(
+                f"✅ Pack FREE extra enviado!\n"
+                f"📄 {html.escape(cap_title)}\n"
+                f"📦 {success_count} parte(s) enviada(s)"
+            )
+            logging.info(f"[send_free_extra] Enviado por {update.effective_user.id}: {cap_title}")
+        else:
+            await msg.edit_text("❌ Falha ao enviar o pack FREE.")
+
+    except Exception as exc:
+        logging.exception(f"[send_free_extra] Erro: {exc}")
+        await msg.edit_text(f"❌ Erro: {html.escape(str(exc)[:200])}")
+
 
 async def listar_packs_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Comando unificado para listar todos os packs (VIP e FREE)"""
@@ -8525,6 +8633,7 @@ async def on_startup():
         application.add_handler(CommandHandler("set_pack_horario_vip", set_pack_horario_vip_cmd), group=1)
         application.add_handler(CommandHandler("set_pack_horario_free", set_pack_horario_free_cmd), group=1)
         application.add_handler(CommandHandler("fab_teasers", fab_teasers_cmd), group=1)
+        application.add_handler(CommandHandler("send_free_extra", send_free_extra_cmd), group=1)
         application.add_handler(CommandHandler("listar_jobs", listar_jobs_cmd), group=1)
         application.add_handler(CommandHandler("enviar_pack_agora", enviar_pack_agora_cmd), group=1)
         application.add_handler(CommandHandler("debug_convite", debug_convite_cmd), group=1)
