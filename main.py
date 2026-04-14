@@ -6208,8 +6208,8 @@ async def agendar_vip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def cancelar_vip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
-    /cancelar_vip — cancela o envio VIP agendado com /agendar_vip.
-    Remove qualquer job cujo nome comece com 'vip_agendado_'.
+    /cancelar_vip HH:MM — cancela o envio VIP agendado para aquele horário.
+    Sem argumento: lista os agendamentos ativos para escolher.
     """
     if not (update.effective_user and is_admin(update.effective_user.id)):
         return await update.effective_message.reply_text("Apenas admins.")
@@ -6217,19 +6217,47 @@ async def cancelar_vip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not application or not application.job_queue:
         return await update.effective_message.reply_text("❌ Job queue não disponível.")
 
-    removed = []
-    for job in list(application.job_queue.jobs()):
-        if job.name and job.name.startswith("vip_agendado_"):
-            job.schedule_removal()
-            removed.append(job.name)
+    agendados = [j for j in application.job_queue.jobs() if j.name and j.name.startswith("vip_agendado_")]
 
-    if removed:
-        nomes = ", ".join(removed)
-        await update.effective_message.reply_text(
-            f"✅ Agendamento(s) cancelado(s): <b>{nomes}</b>", parse_mode="HTML"
+    # Sem argumento: listar os agendamentos ativos
+    if not context.args:
+        if not agendados:
+            return await update.effective_message.reply_text("ℹ️ Nenhum envio VIP agendado.")
+        tz = pytz.timezone("America/Sao_Paulo")
+        linhas = ["📋 <b>Envios VIP agendados:</b>"]
+        for j in agendados:
+            hhmm = j.name.replace("vip_agendado_", "")
+            hora = f"{hhmm[:2]}:{hhmm[2:]}"
+            if hasattr(j, "next_t") and j.next_t:
+                hora_fmt = j.next_t.astimezone(tz).strftime("%H:%M")
+                linhas.append(f"• <code>/cancelar_vip {hora_fmt}</code>")
+            else:
+                linhas.append(f"• <code>/cancelar_vip {hora}</code>")
+        linhas.append("\nUse o comando acima para cancelar o desejado.")
+        return await update.effective_message.reply_text("\n".join(linhas), parse_mode="HTML")
+
+    # Com argumento HH:MM: cancelar o específico
+    try:
+        hh, mm = map(int, context.args[0].split(":"))
+        if not (0 <= hh <= 23 and 0 <= mm <= 59):
+            raise ValueError
+    except ValueError:
+        return await update.effective_message.reply_text("Horário inválido. Use HH:MM, ex: /cancelar_vip 15:08")
+
+    job_name = f"vip_agendado_{hh:02d}{mm:02d}"
+    alvo = [j for j in agendados if j.name == job_name]
+
+    if not alvo:
+        return await update.effective_message.reply_text(
+            f"ℹ️ Nenhum agendamento encontrado para <b>{hh:02d}:{mm:02d}</b>.", parse_mode="HTML"
         )
-    else:
-        await update.effective_message.reply_text("ℹ️ Nenhum envio VIP agendado encontrado.")
+
+    for j in alvo:
+        j.schedule_removal()
+
+    await update.effective_message.reply_text(
+        f"✅ Agendamento das <b>{hh:02d}:{mm:02d}</b> cancelado.", parse_mode="HTML"
+    )
 
 
 async def listar_packs_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
