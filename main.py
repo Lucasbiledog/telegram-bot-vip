@@ -4808,9 +4808,10 @@ async def fab_teasers_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     /fab_teasers — baixa imagens do Fab.com e armazena nos arquivos do pack.
     As imagens serão enviadas automaticamente junto com o pack no dia do envio.
+    Processa todos os packs pendentes da fila (VIP + FREE).
 
     Uso:
-      /fab_teasers              → processa todos os packs FREE pendentes
+      /fab_teasers              → processa todos os packs pendentes (VIP + FREE)
       /fab_teasers <id>         → processa somente o pack com esse ID
       /fab_teasers test <titulo>→ testa busca sem salvar (responde aqui)
     """
@@ -4857,17 +4858,17 @@ async def fab_teasers_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return await update.effective_message.reply_text(f"Pack #{pack_id} não encontrado.")
         packs_to_process = [pack]
     else:
-        # Todos os packs FREE pendentes
+        # Todos os packs pendentes (VIP + FREE) — VIP também vai para o grupo FREE via crosspost
         with SessionLocal() as s:
             packs_to_process = (
                 s.query(Pack)
-                .filter(Pack.tier == "free", Pack.sent == False)
+                .filter(Pack.sent == False)
                 .order_by(Pack.created_at.asc())
                 .all()
             )
 
     if not packs_to_process:
-        return await update.effective_message.reply_text("Nenhum pack FREE pendente.")
+        return await update.effective_message.reply_text("Nenhum pack pendente na fila.")
 
     status_msg = await update.effective_message.reply_text(
         f"⏳ Baixando imagens do Fab.com para {len(packs_to_process)} pack(s)...\n"
