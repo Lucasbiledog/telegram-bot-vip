@@ -4809,6 +4809,30 @@ async def listar_packsfree_cmd(update: Update, context: ContextTypes.DEFAULT_TYP
         await update.effective_message.reply_text("\n".join(lines))
 
 
+def _normalize_fab_query(raw: str) -> str:
+    """
+    Limpa o nome de arquivo/caption para usar como query no Fab.com.
+    Remove: extensões, '- Part N', versões numéricas, 'Unreal Engine', emojis, etc.
+    """
+    import re
+    q = raw.strip()
+    # Remove emoji 📦 e similares no início
+    q = re.sub(r'^[\U00010000-\U0010ffff\U0001F300-\U0001FAFF\U00002700-\U000027BF\s📦📁🗂️]+', '', q)
+    # Remove extensões de arquivo
+    q = re.sub(r'\.(zip|rar|7z|tar\.gz|gz|pak|uasset|umap|fbx|obj)\b', '', q, flags=re.IGNORECASE)
+    # Remove "- Part N" ou "- Part" no final (com ou sem número)
+    q = re.sub(r'\s*[-–]\s*Part\s*\d*\s*$', '', q, flags=re.IGNORECASE)
+    # Remove versões tipo "5.6", "4.26", "4.27", "5.1", "5.3"
+    q = re.sub(r'\b\d+\.\d+\b', '', q)
+    # Remove "Unreal Engine" / "UE5" / "UE4"
+    q = re.sub(r'\b(Unreal\s*Engine|UE\d+)\b', '', q, flags=re.IGNORECASE)
+    # Remove "[nanite]", "(Nanite & Low Poly)", "(Nanite)", etc. — pode confundir
+    q = re.sub(r'\[.*?\]|\(.*?\)', '', q)
+    # Limpa pontuação residual no início/fim e espaços duplos
+    q = re.sub(r'\s+', ' ', q).strip(' -–_.,')
+    return q
+
+
 async def _fab_cache_save(bot, query: str, imgs: list) -> list:
     """
     Faz upload das imagens para o Telegram (via LOGS_GROUP_ID), obtém file_ids
@@ -4883,8 +4907,9 @@ async def fab_teasers_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="HTML",
         )
 
-    # ── Coletar títulos únicos pendentes de AMBOS os sistemas ────────────────
-    titulos: list[str] = []
+    # ── Coletar e normalizar títulos únicos pendentes de AMBOS os sistemas ───
+    # query_normalizada → caption_original (para salvar no cache com a key certa)
+    queries: dict[str, str] = {}
 
     # 1) SourceFile pendentes (fila automática)
     try:
@@ -4900,8 +4925,11 @@ async def fab_teasers_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             for sf in source_files:
                 cap = (sf.caption or "").strip()
-                if cap and cap not in titulos:
-                    titulos.append(cap)
+                if not cap:
+                    continue
+                norm = _normalize_fab_query(cap)
+                if norm and norm not in queries:
+                    queries[norm] = norm  # usa versão normalizada como chave E valor
     except Exception as exc:
         logging.warning(f"[fab_teasers] Erro ao ler SourceFile: {exc}")
 
@@ -4911,15 +4939,20 @@ async def fab_teasers_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             packs = s.query(Pack).filter(Pack.sent == False).order_by(Pack.created_at.asc()).all()
             for p in packs:
                 title = (p.title or "").strip()
-                if title and title not in titulos:
-                    titulos.append(title)
+                if not title:
+                    continue
+                norm = _normalize_fab_query(title)
+                if norm and norm not in queries:
+                    queries[norm] = norm
     except Exception as exc:
         logging.warning(f"[fab_teasers] Erro ao ler Pack: {exc}")
 
-    if not titulos:
+    if not queries:
         return await update.effective_message.reply_text(
             "Nenhum pack pendente encontrado na fila automática nem na tabela Pack."
         )
+
+    titulos = list(queries.keys())
 
     status_msg = await update.effective_message.reply_text(
         f"⏳ Processando <b>{len(titulos)}</b> título(s) único(s) no Fab.com...\n"

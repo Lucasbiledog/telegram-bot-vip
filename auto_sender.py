@@ -656,10 +656,10 @@ async def _send_fab_images_for_caption(bot: Bot, channel_id: int, caption: str) 
         return False
     try:
         from models import FabImageCache
-        # Importa SessionLocal dinamicamente para evitar import circular
-        from main import SessionLocal
+        from main import SessionLocal, _normalize_fab_query
+        norm = _normalize_fab_query(caption)
         with SessionLocal() as s:
-            cache = s.query(FabImageCache).filter(FabImageCache.query == caption.strip()).first()
+            cache = s.query(FabImageCache).filter(FabImageCache.query == norm).first()
             if not cache:
                 return False
             file_ids = _json.loads(cache.file_ids_json or "[]")
