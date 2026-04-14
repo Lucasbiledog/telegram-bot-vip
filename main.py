@@ -396,28 +396,24 @@ else:
     connect_args = {}
     if url.drivername.startswith("postgresql"):
         connect_args = {
-            "application_name": "telegram_bot",
-            "connect_timeout": 30,  # Aumentado para 30s
-            "sslmode": "prefer",  # prefer é mais tolerante que require
+            # Sem application_name — pgbouncer (Supabase port 6543) não suporta SET em transaction mode
+            "connect_timeout": 30,
             "keepalives": 1,
             "keepalives_idle": 30,
             "keepalives_interval": 10,
-            "keepalives_count": 5
+            "keepalives_count": 5,
         }
 
     engine = create_engine(
         url,
-        pool_pre_ping=True,  # Testa conexão antes de usar
+        pool_pre_ping=True,       # Testa conexão antes de usar (detecta drops silenciosos)
         future=True,
-        pool_size=20,  # Reduzido de 50 para 20
-        max_overflow=40,  # Reduzido de 100 para 40
-        pool_timeout=30,  # Aumentado de 5 para 30s
-        pool_recycle=3600,  # 1 hora (aumentado de 30min)
+        pool_size=5,              # Supabase free: máx 15 conexões diretas; pooler aguenta mais
+        max_overflow=10,
+        pool_timeout=30,
+        pool_recycle=300,         # 5 min — compatível com pgbouncer transaction mode (Supabase)
         echo=False,
         connect_args=connect_args,
-        execution_options={
-            "isolation_level": "READ COMMITTED"
-        }
     )
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 # Usar a Base do models.py para que todas as tabelas sejam criadas juntas
@@ -731,28 +727,23 @@ def ensure_schema():
                 connect_args = {}
                 if url.drivername.startswith("postgresql"):
                     connect_args = {
-                        "application_name": "telegram_bot",
-                        "connect_timeout": 30,  # Aumentado para 30s
-                        "sslmode": "prefer",  # prefer é mais tolerante que require
+                        "connect_timeout": 30,
                         "keepalives": 1,
                         "keepalives_idle": 30,
                         "keepalives_interval": 10,
-                        "keepalives_count": 5
+                        "keepalives_count": 5,
                     }
 
                 engine = create_engine(
                     url,
-                    pool_pre_ping=True,  # Testa conexão antes de usar
+                    pool_pre_ping=True,
                     future=True,
-                    pool_size=20,  # Reduzido de 50 para 20
-                    max_overflow=40,  # Reduzido de 100 para 40
-                    pool_timeout=30,  # Aumentado de 5 para 30s
-                    pool_recycle=3600,  # 1 hora (aumentado de 30min)
+                    pool_size=5,
+                    max_overflow=10,
+                    pool_timeout=30,
+                    pool_recycle=300,   # 5 min — compatível com Supabase pgbouncer
                     echo=False,
                     connect_args=connect_args,
-                    execution_options={
-                        "isolation_level": "READ COMMITTED"
-                    }
                 )
             SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 

@@ -46,11 +46,11 @@ async def support_start_callback(update: Update, context: ContextTypes.DEFAULT_T
 
 
 async def support_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Captura texto do usuário se estiver aguardando descrição do ticket."""
-    # Só processa se estamos esperando descrição
-    if not context.user_data.get(_SUPPORT_WAITING):
-        return  # Não estamos esperando, deixar outros handlers processar
-
+    """
+    Captura texto do usuário em chat privado:
+    - Se _SUPPORT_WAITING=True → cria novo ticket
+    - Se já existe ticket aberto/respondido → adiciona follow-up e notifica admin
+    """
     # Só funciona em chat privado
     if update.effective_chat.type != "private":
         return
@@ -59,41 +59,79 @@ async def support_text_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     from models import SupportTicket
 
     user = update.effective_user
-    description = (update.message.text or "").strip()
+    text = (update.message.text or "").strip()
 
-    if not description:
-        await update.message.reply_text("Por favor, descreva seu problema.")
+    if not text:
         return
 
-    # Limpar estado ANTES de processar (evita reprocessamento)
-    context.user_data.pop(_SUPPORT_WAITING, None)
+    # ── Caso 1: aguardando abertura de novo ticket ────────────────────────────
+    if context.user_data.get(_SUPPORT_WAITING):
+        context.user_data.pop(_SUPPORT_WAITING, None)
 
-    # Criar ticket no banco
-    with SessionLocal() as s:
-        ticket = SupportTicket(
-            user_id=user.id,
-            username=user.username or "",
-            first_name=user.first_name or "",
-            description=description,
-            status="open",
+        with SessionLocal() as s:
+            ticket = SupportTicket(
+                user_id=user.id,
+                username=user.username or "",
+                first_name=user.first_name or "",
+                description=text,
+                status="open",
+            )
+            s.add(ticket)
+            s.commit()
+            ticket_id = ticket.id
+
+        await update.message.reply_text(
+            f"✅ <b>Ticket #{ticket_id} criado com sucesso!</b>\n\n"
+            f"Sua solicitação foi registrada. Você receberá uma resposta em breve.\n"
+            f"Para cancelar/fechar, envie /cancelar_suporte",
+            parse_mode="HTML",
         )
-        s.add(ticket)
-        s.commit()
+
+        user_display = f"@{user.username}" if user.username else user.first_name
+        await log_to_group(
+            f"🎫 <b>Novo Ticket #{ticket_id}</b>\n"
+            f"👤 Usuário: {user_display} (ID: <code>{user.id}</code>)\n"
+            f"📝 {text[:300]}\n\n"
+            f"Responder: <code>/reply {ticket_id} sua resposta aqui</code>\n"
+            f"Fechar: <code>/close_ticket {ticket_id}</code>"
+        )
+        return
+
+    # ── Caso 2: follow-up em ticket já aberto/respondido ─────────────────────
+    with SessionLocal() as s:
+        ticket = (
+            s.query(SupportTicket)
+            .filter(
+                SupportTicket.user_id == user.id,
+                SupportTicket.status.in_(["open", "answered"]),
+            )
+            .order_by(SupportTicket.created_at.desc())
+            .first()
+        )
+        if not ticket:
+            return  # Sem ticket ativo — deixa outros handlers processar
+
+        from datetime import datetime, timezone
+        now_str = datetime.now(timezone.utc).strftime("%d/%m %H:%M")
+        ticket.description = ticket.description + f"\n\n[{now_str} UTC] {text}"
+        ticket.status = "open"  # Reabre se estava em "answered"
+        ticket.updated_at = datetime.now(timezone.utc)
         ticket_id = ticket.id
+        s.commit()
 
     await update.message.reply_text(
-        f"✅ <b>Ticket #{ticket_id} criado com sucesso!</b>\n\n"
-        f"Sua solicitação foi registrada. Você receberá uma resposta em breve.",
+        f"💬 <b>Mensagem enviada ao Ticket #{ticket_id}</b>\n"
+        f"Nossa equipe responderá em breve.",
         parse_mode="HTML",
     )
 
-    # Notificar admins no grupo de logs
     user_display = f"@{user.username}" if user.username else user.first_name
     await log_to_group(
-        f"🎫 <b>Novo Ticket #{ticket_id}</b>\n"
+        f"💬 <b>Follow-up Ticket #{ticket_id}</b>\n"
         f"👤 Usuário: {user_display} (ID: <code>{user.id}</code>)\n"
-        f"📝 {description[:300]}\n\n"
-        f"Responder: <code>/reply {ticket_id} sua resposta aqui</code>"
+        f"📝 {text[:300]}\n\n"
+        f"Responder: <code>/reply {ticket_id} sua resposta aqui</code>\n"
+        f"Fechar: <code>/close_ticket {ticket_id}</code>"
     )
 
 
