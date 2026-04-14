@@ -6151,6 +6151,61 @@ async def send_free_extra_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE
         await msg.edit_text(f"❌ Erro: {html.escape(str(exc)[:200])}")
 
 
+async def agendar_vip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /agendar_vip HH:MM — agenda envio VIP único para hoje no horário dado.
+    Usa send_daily_vip_file (fila SourceFile) com imagens Fab.com.
+    Exemplo: /agendar_vip 15:08
+    """
+    if not (update.effective_user and is_admin(update.effective_user.id)):
+        return await update.effective_message.reply_text("Apenas admins.")
+
+    args = context.args or []
+    if not args:
+        return await update.effective_message.reply_text(
+            "Uso: /agendar_vip HH:MM\nExemplo: /agendar_vip 15:08"
+        )
+
+    try:
+        hh, mm = map(int, args[0].split(":"))
+        if not (0 <= hh <= 23 and 0 <= mm <= 59):
+            raise ValueError
+    except ValueError:
+        return await update.effective_message.reply_text("Horário inválido. Use o formato HH:MM, ex: 15:08")
+
+    tz = pytz.timezone("America/Sao_Paulo")
+    now = dt.datetime.now(tz)
+    target = now.replace(hour=hh, minute=mm, second=0, microsecond=0)
+
+    if target <= now:
+        return await update.effective_message.reply_text(
+            f"⚠️ {hh:02d}:{mm:02d} já passou hoje. Escolha um horário futuro."
+        )
+
+    delay = (target - now).total_seconds()
+
+    async def _one_time_vip_job(ctx):
+        with SessionLocal() as session:
+            try:
+                await send_daily_vip_file(ctx.bot, session)
+                await log_to_group("✅ <b>Envio VIP agendado concluído</b>")
+            except Exception as e:
+                await log_to_group(f"❌ <b>Erro no envio VIP agendado</b>\n{e}")
+                logging.error(f"[agendar_vip] Erro: {e}")
+
+    context.application.job_queue.run_once(
+        _one_time_vip_job,
+        when=dt.timedelta(seconds=delay),
+        name=f"vip_agendado_{hh:02d}{mm:02d}",
+    )
+
+    await update.effective_message.reply_text(
+        f"✅ Envio VIP agendado para hoje às <b>{hh:02d}:{mm:02d}</b> (Brasília).\n"
+        f"Faltam {int(delay // 60)} min e {int(delay % 60)} seg.",
+        parse_mode="HTML",
+    )
+
+
 async def listar_packs_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Comando unificado para listar todos os packs (VIP e FREE)"""
     if not (update.effective_user and is_admin(update.effective_user.id)):
@@ -8633,6 +8688,7 @@ async def on_startup():
         application.add_handler(CommandHandler("set_pack_horario_free", set_pack_horario_free_cmd), group=1)
         application.add_handler(CommandHandler("fab_teasers", fab_teasers_cmd), group=1)
         application.add_handler(CommandHandler("send_free_extra", send_free_extra_cmd), group=1)
+        application.add_handler(CommandHandler("agendar_vip", agendar_vip_cmd), group=1)
         application.add_handler(CommandHandler("listar_jobs", listar_jobs_cmd), group=1)
         application.add_handler(CommandHandler("enviar_pack_agora", enviar_pack_agora_cmd), group=1)
         application.add_handler(CommandHandler("debug_convite", debug_convite_cmd), group=1)
