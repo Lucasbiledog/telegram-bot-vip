@@ -92,7 +92,7 @@ from sqlalchemy.engine import make_url
 
 # Importar apenas User, PendingNotification e MemberLog do models.py
 # Pack e Payment já estão definidos no main.py com mais campos
-from models import User, PendingNotification, MemberLog, SupportTicket, Base as ModelsBase
+from models import User, PendingNotification, MemberLog, SupportTicket, FabImageCache, Base as ModelsBase
 
 # Fab.com image scraper
 try:
@@ -679,6 +679,11 @@ def ensure_schema():
         ensure_vip_plan_column()
         ensure_payment_fields()
         ensure_critical_indexes()  # Criar índices para alta performance
+        # Garante tabela de cache de imagens Fab.com
+        try:
+            FabImageCache.__table__.create(bind=engine, checkfirst=True)
+        except Exception:
+            pass
         
         # Show appropriate success message based on database type
         db_type = "PostgreSQL" if url.get_backend_name() == "postgresql" else "SQLite"
@@ -4804,16 +4809,49 @@ async def listar_packsfree_cmd(update: Update, context: ContextTypes.DEFAULT_TYP
         await update.effective_message.reply_text("\n".join(lines))
 
 
+async def _fab_cache_save(bot, query: str, imgs: list) -> list:
+    """
+    Faz upload das imagens para o Telegram (via LOGS_GROUP_ID), obtém file_ids
+    e salva/atualiza o FabImageCache para a query dada.
+    Retorna lista de file_ids.
+    """
+    import io as _io, json as _json
+    file_ids = []
+    for i, img_bytes in enumerate(imgs, 1):
+        try:
+            sent = await bot.send_photo(
+                chat_id=LOGS_GROUP_ID,
+                photo=_io.BytesIO(img_bytes),
+                caption=f"[fab-cache] {query[:80]} img{i}",
+            )
+            file_ids.append(sent.photo[-1].file_id)
+        except Exception as exc:
+            logging.warning(f"[fab_cache] Upload img{i} falhou para '{query}': {exc}")
+
+    if not file_ids:
+        return []
+
+    now = datetime.now(timezone.utc)
+    with SessionLocal() as s:
+        existing = s.query(FabImageCache).filter(FabImageCache.query == query).first()
+        if existing:
+            existing.file_ids_json = _json.dumps(file_ids)
+            existing.updated_at = now
+        else:
+            s.add(FabImageCache(query=query, file_ids_json=_json.dumps(file_ids), created_at=now))
+        s.commit()
+    return file_ids
+
+
 async def fab_teasers_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
-    /fab_teasers — baixa imagens do Fab.com e armazena nos arquivos do pack.
-    As imagens serão enviadas automaticamente junto com o pack no dia do envio.
-    Processa todos os packs pendentes da fila (VIP + FREE).
+    /fab_teasers — baixa 3 imagens do Fab.com para cada pack da fila automática
+    (SourceFile pendentes) e packs Pack pendentes, e armazena no FabImageCache.
+    As imagens são enviadas automaticamente junto com o pack no dia do envio.
 
     Uso:
-      /fab_teasers              → processa todos os packs pendentes (VIP + FREE)
-      /fab_teasers <id>         → processa somente o pack com esse ID
-      /fab_teasers test <titulo>→ testa busca sem salvar (responde aqui)
+      /fab_teasers              → processa toda a fila automática + packs pendentes
+      /fab_teasers test <titulo>→ testa busca sem salvar (mostra aqui)
     """
     if not (update.effective_user and is_admin(update.effective_user.id)):
         return await update.effective_message.reply_text("Apenas admins.")
@@ -4834,81 +4872,93 @@ async def fab_teasers_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not imgs:
             return await update.effective_message.reply_text("❌ Nenhuma imagem encontrada no Fab.com.")
 
-        # Mostra como ficará no grupo (com separador e legendas)
-        await update.effective_message.reply_text(
-            "<b>--------Imagens--------</b>", parse_mode="HTML"
-        )
+        await update.effective_message.reply_text("<b>--------Imagens--------</b>", parse_mode="HTML")
         media = [
             InputMediaPhoto(media=fab_to_input_media(b).media, caption=f"Imagem {i}")
             for i, b in enumerate(imgs, 1)
         ]
         await update.effective_message.reply_media_group(media=media)
         return await update.effective_message.reply_text(
-            f"✅ {len(imgs)} imagem(ns) encontrada(s) para <b>{html.escape(titulo)}</b>.\n"
-            f"<i>(Modo teste — nada foi salvo)</i>",
+            f"✅ {len(imgs)} imagem(ns) encontrada(s) — <i>(modo teste, nada salvo)</i>",
             parse_mode="HTML",
         )
 
-    # ── Pack específico ───────────────────────────────────────────────────────
-    if args and args[0].isdigit():
-        pack_id = int(args[0])
+    # ── Coletar títulos únicos pendentes de AMBOS os sistemas ────────────────
+    titulos: list[str] = []
+
+    # 1) SourceFile pendentes (fila automática)
+    try:
         with SessionLocal() as s:
-            pack = s.query(Pack).filter(Pack.id == pack_id).first()
-        if not pack:
-            return await update.effective_message.reply_text(f"Pack #{pack_id} não encontrado.")
-        packs_to_process = [pack]
-    else:
-        # Todos os packs pendentes (VIP + FREE) — VIP também vai para o grupo FREE via crosspost
-        with SessionLocal() as s:
-            packs_to_process = (
-                s.query(Pack)
-                .filter(Pack.sent == False)
-                .order_by(Pack.created_at.asc())
+            sent_ids = {
+                row[0] for row in
+                s.query(SentFile.file_unique_id).filter(SentFile.sent_to_tier == "vip").all()
+            }
+            source_files = (
+                s.query(SourceFile)
+                .filter(SourceFile.active == True, ~SourceFile.file_unique_id.in_(sent_ids))
                 .all()
             )
+            for sf in source_files:
+                cap = (sf.caption or "").strip()
+                if cap and cap not in titulos:
+                    titulos.append(cap)
+    except Exception as exc:
+        logging.warning(f"[fab_teasers] Erro ao ler SourceFile: {exc}")
 
-    if not packs_to_process:
-        return await update.effective_message.reply_text("Nenhum pack pendente na fila.")
+    # 2) Pack pendentes (sistema Pack/PackFile)
+    try:
+        with SessionLocal() as s:
+            packs = s.query(Pack).filter(Pack.sent == False).order_by(Pack.created_at.asc()).all()
+            for p in packs:
+                title = (p.title or "").strip()
+                if title and title not in titulos:
+                    titulos.append(title)
+    except Exception as exc:
+        logging.warning(f"[fab_teasers] Erro ao ler Pack: {exc}")
+
+    if not titulos:
+        return await update.effective_message.reply_text(
+            "Nenhum pack pendente encontrado na fila automática nem na tabela Pack."
+        )
 
     status_msg = await update.effective_message.reply_text(
-        f"⏳ Baixando imagens do Fab.com para {len(packs_to_process)} pack(s)...\n"
-        f"As imagens serão armazenadas e enviadas junto com o pack no dia do envio."
+        f"⏳ Processando <b>{len(titulos)}</b> título(s) único(s) no Fab.com...\n"
+        f"As imagens serão enviadas junto com o pack no dia do envio.",
+        parse_mode="HTML",
     )
 
     salvos = 0
     sem_imagem = 0
     detalhes: list[str] = []
 
-    for pack in packs_to_process:
+    for titulo in titulos:
         try:
-            imgs = await fetch_fab_images(pack.title, count=3)
+            imgs = await fetch_fab_images(titulo, count=3)
             if not imgs:
                 sem_imagem += 1
-                detalhes.append(f"❌ <b>#{pack.id}</b> {html.escape(pack.title)} — sem imagem")
+                detalhes.append(f"❌ {html.escape(titulo[:60])} — sem imagem")
                 continue
 
-            file_ids = await _store_fab_images(context.application.bot, pack.id, imgs)
+            file_ids = await _fab_cache_save(context.application.bot, titulo, imgs)
             if file_ids:
                 salvos += 1
-                detalhes.append(
-                    f"✅ <b>#{pack.id}</b> {html.escape(pack.title)} — {len(file_ids)} imagem(ns) salva(s)"
-                )
+                detalhes.append(f"✅ {html.escape(titulo[:60])} — {len(file_ids)} img(s)")
             else:
                 sem_imagem += 1
-                detalhes.append(f"⚠️ <b>#{pack.id}</b> {html.escape(pack.title)} — falha no upload")
+                detalhes.append(f"⚠️ {html.escape(titulo[:60])} — falha no upload")
 
-            await asyncio.sleep(1.2)  # evita rate limit
+            await asyncio.sleep(1.5)
         except Exception as exc:
             sem_imagem += 1
-            detalhes.append(f"❌ <b>#{pack.id}</b> {html.escape(pack.title)} — erro: {exc}")
-            logging.warning(f"[fab_teasers] Erro no pack '{pack.title}': {exc}")
+            detalhes.append(f"❌ {html.escape(titulo[:60])} — erro: {html.escape(str(exc)[:60])}")
+            logging.warning(f"[fab_teasers] '{titulo}': {exc}")
 
     resumo = (
         f"✅ <b>Fab — Download concluído</b>\n\n"
-        f"📦 Packs processados: {len(packs_to_process)}\n"
+        f"🔍 Títulos encontrados: {len(titulos)}\n"
         f"💾 Com imagens salvas: {salvos}\n"
         f"❌ Sem imagem: {sem_imagem}\n\n"
-        + "\n".join(detalhes[:20])  # limita para não estourar o limite do Telegram
+        + "\n".join(detalhes[:20])
     )
     await status_msg.edit_text(resumo, parse_mode="HTML")
 

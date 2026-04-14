@@ -54,6 +54,18 @@ class SupportTicket(Base):
     admin_reply: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     replied_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
+class FabImageCache(Base):
+    """Cache de imagens baixadas do Fab.com por título de pack."""
+    __tablename__ = "fab_image_cache"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    query: Mapped[str] = mapped_column(String(500), nullable=False, unique=True, index=True)
+    file_ids_json: Mapped[str] = mapped_column(Text, nullable=False)  # JSON list de file_ids
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+    updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class MemberLog(Base):
     """Log de entrada/saída de membros no grupo VIP"""
     __tablename__ = "member_logs"

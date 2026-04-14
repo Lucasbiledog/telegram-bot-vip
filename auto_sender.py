@@ -21,6 +21,8 @@ from typing import Optional, List, Dict, Any
 __version__ = "2.0.2"
 __updated__ = "2025-11-11 11:00:00"
 
+import json as _json
+
 from telegram import Bot, Message, Update, InputMediaVideo, InputMediaPhoto, InputMediaDocument
 from telegram.error import TelegramError
 from sqlalchemy.orm import Session
@@ -644,6 +646,43 @@ async def send_as_media_group(
         return False
 
 
+async def _send_fab_images_for_caption(bot: Bot, channel_id: int, caption: str) -> bool:
+    """
+    Busca no FabImageCache as imagens pré-baixadas para a caption/título do pack
+    e as envia ao canal com separador '--------Imagens--------'.
+    Retorna True se enviou pelo menos 1 imagem.
+    """
+    if not caption:
+        return False
+    try:
+        from models import FabImageCache
+        # Importa SessionLocal dinamicamente para evitar import circular
+        from main import SessionLocal
+        with SessionLocal() as s:
+            cache = s.query(FabImageCache).filter(FabImageCache.query == caption.strip()).first()
+            if not cache:
+                return False
+            file_ids = _json.loads(cache.file_ids_json or "[]")
+        if not file_ids:
+            return False
+
+        await bot.send_message(
+            chat_id=channel_id,
+            text="<b>--------Imagens--------</b>",
+            parse_mode="HTML",
+        )
+        media = [
+            InputMediaPhoto(media=fid, caption=f"Imagem {i}")
+            for i, fid in enumerate(file_ids, 1)
+        ]
+        await bot.send_media_group(chat_id=channel_id, media=media)
+        LOG.info(f"[AUTO-SEND] {len(file_ids)} imagem(ns) Fab enviada(s) para '{caption[:60]}'")
+        return True
+    except Exception as exc:
+        LOG.warning(f"[AUTO-SEND] Falha ao enviar imagens Fab para '{caption[:60]}': {exc}")
+        return False
+
+
 async def send_daily_vip_file(bot: Bot, session: Session):
     """
     Envia arquivo diário para o canal VIP (executa às 15h).
@@ -661,8 +700,10 @@ async def send_daily_vip_file(bot: Bot, session: Session):
 
         if not source_file:
             LOG.warning("[AUTO-SEND] ⚠️ Nenhum arquivo novo disponível para VIP")
-            # Enviar notificação ao admin se necessário
             return
+
+        # Enviar imagens Fab.com antes do pack (se houver cache)
+        await _send_fab_images_for_caption(bot, VIP_CHANNEL_ID, source_file.caption or "")
 
         # Buscar todas as partes relacionadas (se houver)
         all_parts = get_all_parts(session, source_file)
@@ -768,6 +809,9 @@ async def send_weekly_free_file(bot: Bot, session: Session):
         if not source_file:
             LOG.warning("[AUTO-SEND] ⚠️ Nenhum arquivo novo disponível para FREE")
             return
+
+        # Enviar imagens Fab.com antes do pack (se houver cache)
+        await _send_fab_images_for_caption(bot, FREE_CHANNEL_ID, source_file.caption or "")
 
         # Buscar todas as partes relacionadas (se houver)
         all_parts = get_all_parts(session, source_file)
