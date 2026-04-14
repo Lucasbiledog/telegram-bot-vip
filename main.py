@@ -4844,6 +4844,7 @@ async def _fab_cache_save(bot, query: str, imgs: list) -> list:
     Retorna lista de file_ids.
     """
     import io as _io, json as _json
+    from datetime import datetime as _dt, timezone as _tz
     file_ids = []
     for i, img_bytes in enumerate(imgs, 1):
         try:
@@ -4859,7 +4860,7 @@ async def _fab_cache_save(bot, query: str, imgs: list) -> list:
     if not file_ids:
         return []
 
-    now = datetime.now(timezone.utc)
+    now = _dt.now(_tz.utc)
     with SessionLocal() as s:
         existing = s.query(FabImageCache).filter(FabImageCache.query == query).first()
         if existing:
