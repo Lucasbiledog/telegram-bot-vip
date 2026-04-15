@@ -34,6 +34,10 @@ LOG = logging.getLogger(__name__)
 VIP_CHANNEL_ID = None  # Será configurado via variável de ambiente
 FREE_CHANNEL_ID = None  # Será configurado via variável de ambiente
 
+# Lock para garantir que mensagens do canal FREE nunca se intercalem
+# (send_weekly_free_file e send_teaser_to_free rodam ao mesmo horário)
+_FREE_CHANNEL_LOCK = asyncio.Lock()
+
 # Tipos de arquivo suportados
 SUPPORTED_TYPES = ['photo', 'video', 'document', 'animation', 'audio']
 
@@ -468,6 +472,11 @@ async def send_teaser_to_free(bot: Bot, all_parts: list):
         LOG.warning("[AUTO-SEND] FREE_CHANNEL_ID não configurado, pulando teaser")
         return
 
+    async with _FREE_CHANNEL_LOCK:
+        await _send_teaser_to_free_inner(bot, all_parts)
+
+
+async def _send_teaser_to_free_inner(bot: Bot, all_parts: list):
     try:
         import tempfile
         import os
@@ -822,6 +831,7 @@ async def send_weekly_free_file(bot: Bot, session: Session):
         LOG.error("[AUTO-SEND] ❌ FREE_CHANNEL_ID não configurado!")
         return
 
+    await _FREE_CHANNEL_LOCK.acquire()
     try:
         # Buscar arquivo aleatório não enviado
         source_file = await get_random_file_from_source(session, 'free')
@@ -983,6 +993,8 @@ async def send_weekly_free_file(bot: Bot, session: Session):
         LOG.error(f"[AUTO-SEND] ❌ Erro no envio FREE semanal: {e}")
         import traceback
         LOG.error(traceback.format_exc())
+    finally:
+        _FREE_CHANNEL_LOCK.release()
 
 
 def setup_auto_sender(vip_channel: int, free_channel: int, source_file_class=None, sent_file_class=None):
