@@ -14,6 +14,7 @@ VERSION: 2.0.1 - Fixed SQL query bug with empty sets (2025-11-04 02:45)
 import asyncio
 import logging
 import random
+import re
 from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
 
@@ -37,6 +38,25 @@ FREE_CHANNEL_ID = None  # Será configurado via variável de ambiente
 # Lock para garantir que mensagens do canal FREE nunca se intercalem
 # (send_weekly_free_file e send_teaser_to_free rodam ao mesmo horário)
 _FREE_CHANNEL_LOCK = asyncio.Lock()
+
+# Regex para detectar versão Unreal Engine no nome do arquivo
+# Captura padrões como: 4.27, 5.5, 5.4, 5_3, 4_26, etc.
+_UE_VERSION_RE = re.compile(
+    r'(?:^|[\s._\-,])([4-9])[\._](\d{1,2})(?:[\s._\-,]|$|\.(zip|rar|7z|pak))',
+    re.IGNORECASE,
+)
+
+
+def _ue_major_version(name: str) -> Optional[int]:
+    """Retorna a versão major da Unreal Engine detectada no nome, ou None."""
+    if not name:
+        return None
+    m = _UE_VERSION_RE.search(name)
+    if m:
+        major = int(m.group(1))
+        if 4 <= major <= 9:
+            return major
+    return None
 
 # Tipos de arquivo suportados
 SUPPORTED_TYPES = ['photo', 'video', 'document', 'animation', 'audio']
@@ -303,6 +323,25 @@ async def get_random_file_from_source(
                 f for f in available_files
                 if not is_part_file(f.file_name, f.caption)
             ]
+
+        # Filtro de versão UE para FREE: nunca enviar UE4, priorizar UE5+
+        if tier == 'free':
+            def _ver(f):
+                return _ue_major_version(f.file_name or "") or _ue_major_version(f.caption or "")
+
+            ue5_plus  = [f for f in available_files if (_ver(f) or 0) >= 5]
+            ue_none   = [f for f in available_files if _ver(f) is None]
+            # UE4 descartado completamente
+
+            if ue5_plus:
+                available_files = ue5_plus
+                LOG.info(f"[AUTO-SEND] 🎯 FREE: {len(ue5_plus)} arquivo(s) UE5+ disponíveis")
+            elif ue_none:
+                available_files = ue_none
+                LOG.info(f"[AUTO-SEND] 🎯 FREE: sem UE5+, usando {len(ue_none)} arquivo(s) sem versão detectada")
+            else:
+                LOG.warning("[AUTO-SEND] ⚠️ FREE: apenas arquivos UE4 disponíveis, pulando envio")
+                return None
 
         if not available_files:
             LOG.warning(f"[AUTO-SEND] ⚠️ Nenhum arquivo novo disponível para {tier}")
