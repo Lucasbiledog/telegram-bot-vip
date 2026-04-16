@@ -6260,6 +6260,112 @@ async def cancelar_vip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+async def agendar_free_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /agendar_free HH:MM — agenda envio FREE único para hoje no horário dado.
+    Usa send_weekly_free_file (fila SourceFile) com imagens Fab.com.
+    Exemplo: /agendar_free 16:00
+    """
+    if not (update.effective_user and is_admin(update.effective_user.id)):
+        return await update.effective_message.reply_text("Apenas admins.")
+
+    args = context.args or []
+    if not args:
+        return await update.effective_message.reply_text(
+            "Uso: /agendar_free HH:MM\nExemplo: /agendar_free 16:00"
+        )
+
+    try:
+        hh, mm = map(int, args[0].split(":"))
+        if not (0 <= hh <= 23 and 0 <= mm <= 59):
+            raise ValueError
+    except ValueError:
+        return await update.effective_message.reply_text("Horário inválido. Use o formato HH:MM, ex: 16:00")
+
+    tz = pytz.timezone("America/Sao_Paulo")
+    now = dt.datetime.now(tz)
+    target = now.replace(hour=hh, minute=mm, second=0, microsecond=0)
+
+    if target <= now:
+        return await update.effective_message.reply_text(
+            f"⚠️ {hh:02d}:{mm:02d} já passou hoje. Escolha um horário futuro."
+        )
+
+    delay = (target - now).total_seconds()
+
+    async def _one_time_free_job(ctx):
+        with SessionLocal() as session:
+            try:
+                await send_weekly_free_file(ctx.bot, session)
+                await log_to_group("✅ <b>Envio FREE agendado concluído</b>")
+            except Exception as e:
+                await log_to_group(f"❌ <b>Erro no envio FREE agendado</b>\n{e}")
+                logging.error(f"[agendar_free] Erro: {e}")
+
+    context.application.job_queue.run_once(
+        _one_time_free_job,
+        when=dt.timedelta(seconds=delay),
+        name=f"free_agendado_{hh:02d}{mm:02d}",
+    )
+
+    await update.effective_message.reply_text(
+        f"✅ Envio FREE agendado para hoje às <b>{hh:02d}:{mm:02d}</b> (Brasília).\n"
+        f"Faltam {int(delay // 60)} min e {int(delay % 60)} seg.",
+        parse_mode="HTML",
+    )
+
+
+async def cancelar_free_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /cancelar_free HH:MM — cancela o envio FREE agendado para aquele horário.
+    Sem argumento: lista os agendamentos ativos para escolher.
+    """
+    if not (update.effective_user and is_admin(update.effective_user.id)):
+        return await update.effective_message.reply_text("Apenas admins.")
+
+    if not application or not application.job_queue:
+        return await update.effective_message.reply_text("❌ Job queue não disponível.")
+
+    agendados = [j for j in application.job_queue.jobs() if j.name and j.name.startswith("free_agendado_")]
+
+    if not context.args:
+        if not agendados:
+            return await update.effective_message.reply_text("ℹ️ Nenhum envio FREE agendado.")
+        tz = pytz.timezone("America/Sao_Paulo")
+        linhas = ["📋 <b>Envios FREE agendados:</b>"]
+        for j in agendados:
+            if hasattr(j, "next_t") and j.next_t:
+                hora_fmt = j.next_t.astimezone(tz).strftime("%H:%M")
+                linhas.append(f"• <code>/cancelar_free {hora_fmt}</code>")
+            else:
+                hhmm = j.name.replace("free_agendado_", "")
+                linhas.append(f"• <code>/cancelar_free {hhmm[:2]}:{hhmm[2:]}</code>")
+        linhas.append("\nUse o comando acima para cancelar o desejado.")
+        return await update.effective_message.reply_text("\n".join(linhas), parse_mode="HTML")
+
+    try:
+        hh, mm = map(int, context.args[0].split(":"))
+        if not (0 <= hh <= 23 and 0 <= mm <= 59):
+            raise ValueError
+    except ValueError:
+        return await update.effective_message.reply_text("Horário inválido. Use HH:MM, ex: /cancelar_free 16:00")
+
+    job_name = f"free_agendado_{hh:02d}{mm:02d}"
+    alvo = [j for j in agendados if j.name == job_name]
+
+    if not alvo:
+        return await update.effective_message.reply_text(
+            f"ℹ️ Nenhum agendamento encontrado para <b>{hh:02d}:{mm:02d}</b>.", parse_mode="HTML"
+        )
+
+    for j in alvo:
+        j.schedule_removal()
+
+    await update.effective_message.reply_text(
+        f"✅ Agendamento FREE das <b>{hh:02d}:{mm:02d}</b> cancelado.", parse_mode="HTML"
+    )
+
+
 async def listar_packs_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Comando unificado para listar todos os packs (VIP e FREE)"""
     if not (update.effective_user and is_admin(update.effective_user.id)):
@@ -8744,6 +8850,8 @@ async def on_startup():
         application.add_handler(CommandHandler("send_free_extra", send_free_extra_cmd), group=1)
         application.add_handler(CommandHandler("agendar_vip", agendar_vip_cmd), group=1)
         application.add_handler(CommandHandler("cancelar_vip", cancelar_vip_cmd), group=1)
+        application.add_handler(CommandHandler("agendar_free", agendar_free_cmd), group=1)
+        application.add_handler(CommandHandler("cancelar_free", cancelar_free_cmd), group=1)
         application.add_handler(CommandHandler("listar_jobs", listar_jobs_cmd), group=1)
         application.add_handler(CommandHandler("enviar_pack_agora", enviar_pack_agora_cmd), group=1)
         application.add_handler(CommandHandler("debug_convite", debug_convite_cmd), group=1)
