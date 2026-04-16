@@ -6296,7 +6296,7 @@ async def agendar_free_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     async def _one_time_free_job(ctx):
         with SessionLocal() as session:
             try:
-                await send_weekly_free_file(ctx.bot, session)
+                await send_weekly_free_file(ctx.bot, session, force=True)
                 await log_to_group("✅ <b>Envio FREE agendado concluído</b>")
             except Exception as e:
                 await log_to_group(f"❌ <b>Erro no envio FREE agendado</b>\n{e}")

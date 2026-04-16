@@ -809,19 +809,20 @@ async def send_daily_vip_file(bot: Bot, session: Session):
         LOG.error(traceback.format_exc())
 
 
-async def send_weekly_free_file(bot: Bot, session: Session):
+async def send_weekly_free_file(bot: Bot, session: Session, force: bool = False):
     """
     Envia arquivo semanal para o canal FREE (quartas às 15h).
     Se o arquivo tiver partes (001, 002, etc), envia todas as partes juntas.
+    force=True ignora a verificação de quarta-feira (usado pelo /agendar_free).
     """
     LOG.info("[AUTO-SEND] 🎯 Verificando envio semanal FREE")
 
-    # Verificar se é quarta-feira
-    if datetime.now().weekday() != 2:  # 0=segunda, 2=quarta
+    # Verificar se é quarta-feira (ignorar se force=True)
+    if not force and datetime.now().weekday() != 2:  # 0=segunda, 2=quarta
         LOG.info(f"[AUTO-SEND] Hoje não é quarta-feira (dia: {datetime.now().strftime('%A')}), pulando envio FREE")
         return
 
-    LOG.info("[AUTO-SEND] ✅ É quarta-feira! Iniciando envio FREE")
+    LOG.info("[AUTO-SEND] ✅ Iniciando envio FREE")
 
     if not FREE_CHANNEL_ID:
         LOG.error("[AUTO-SEND] ❌ FREE_CHANNEL_ID não configurado!")
