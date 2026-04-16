@@ -905,8 +905,8 @@ async def send_weekly_free_file(bot: Bot, session: Session, force: bool = False)
         if success_count == len(all_parts):
             LOG.info(f"[AUTO-SEND] ✅ Envio FREE semanal concluído: {success_count} parte(s)")
 
-            # === REPLICAR NO VIP (mesmo arquivo nos 2 grupos) ===
-            if VIP_CHANNEL_ID:
+            # === REPLICAR NO VIP (apenas no envio automático, não no /agendar_free) ===
+            if VIP_CHANNEL_ID and not force:
                 LOG.info("[AUTO-SEND] 📤 Replicando arquivo FREE no canal VIP...")
 
                 # Verificar quais partes já foram enviadas ao VIP
@@ -976,8 +976,8 @@ async def send_weekly_free_file(bot: Bot, session: Session, force: bool = False)
 
                     LOG.info(f"[AUTO-SEND] 🎁 Bônus VIP enviado: {bonus_success}/{len(bonus_parts)} parte(s)")
 
-                    # Enviar teaser do bônus para o FREE
-                    await send_teaser_to_free(bot, bonus_parts)
+                    # Enviar teaser do bônus para o FREE (sem re-adquirir o lock)
+                    await _send_teaser_to_free_inner(bot, bonus_parts)
                 else:
                     LOG.warning("[AUTO-SEND] ⚠️ Nenhum arquivo disponível para bônus VIP")
 
