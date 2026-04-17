@@ -1246,109 +1246,109 @@ def setup_catalog(cfg_get_func, cfg_set_func):
 def _build_catalog_content(session: Session) -> str:
     """
     Gera o conteúdo do catálogo .txt com:
-    1. Todos os arquivos já enviados ao VIP (com data)
-    2. Arquivos futuros que ainda serão enviados (sem data)
-    Sem limite de tamanho — será enviado como arquivo.
+    1. Arquivos já enviados ao VIP (com data)
+    2. Arquivos já enviados ao FREE (com data)
+    3. Arquivos pendentes (não enviados em nenhum canal)
     """
     from config import SOURCE_CHAT_ID as src_id
 
-    # === ARQUIVOS JÁ ENVIADOS ===
-    sent_records = session.query(SentFile).filter(
-        SentFile.sent_to_tier == 'vip',
-        SentFile.source_chat_id == src_id
-    ).order_by(SentFile.sent_at.desc()).all()
+    def _size_str(file_size):
+        if not file_size:
+            return ""
+        size_mb = file_size / (1024 * 1024)
+        return f" [{size_mb:.1f} MB]" if size_mb >= 1 else f" [{file_size / 1024:.0f} KB]"
 
-    sent_unique_ids = {r.file_unique_id for r in sent_records}
+    def _sent_section(tier_label: str, tier: str) -> tuple[list[str], set]:
+        """Retorna (linhas formatadas, set de file_unique_ids enviados)."""
+        records = session.query(SentFile).filter(
+            SentFile.sent_to_tier == tier,
+            SentFile.source_chat_id == src_id
+        ).order_by(SentFile.sent_at.desc()).all()
 
-    # === ARQUIVOS FUTUROS (indexados mas não enviados) ===
-    future_query = session.query(SourceFile).filter(
+        unique_ids = {r.file_unique_id for r in records}
+
+        source_map = {}
+        if unique_ids:
+            sources = session.query(SourceFile).filter(
+                SourceFile.file_unique_id.in_(unique_ids)
+            ).all()
+            source_map = {s.file_unique_id: s for s in sources}
+
+        sec = []
+        sec.append(f"┌────────────────────────────────────────┐")
+        sec.append(f"│  ENVIADOS NO {tier_label:<27}│")
+        sec.append(f"└────────────────────────────────────────┘\n")
+
+        if not records:
+            sec.append("  Nenhum arquivo enviado ainda.\n")
+            return sec, unique_ids
+
+        months: dict = {}
+        for rec in records:
+            src = source_map.get(rec.file_unique_id)
+            name = (src.file_name if src and src.file_name else None) or rec.caption or "Arquivo sem nome"
+            sz = _size_str(src.file_size if src else None)
+            month_key = rec.sent_at.strftime('%m/%Y') if rec.sent_at else "Desconhecido"
+            day_str = rec.sent_at.strftime('%d/%m') if rec.sent_at else "??"
+            months.setdefault(month_key, []).append(f"  [{day_str}] {name}{sz}")
+
+        for month, items in months.items():
+            sec.append(f"--- {month} ({len(items)} arquivo(s)) ---")
+            sec.extend(items)
+            sec.append("")
+
+        return sec, unique_ids
+
+    vip_lines, vip_ids   = _sent_section("VIP", "vip")
+    free_lines, free_ids = _sent_section("FREE", "free")
+
+    # --- Arquivos pendentes: não enviados nem para VIP nem para FREE ---
+    sent_all_ids = vip_ids | free_ids
+    pending_query = session.query(SourceFile).filter(
         SourceFile.source_chat_id == src_id,
         SourceFile.active == True,
         SourceFile.file_type.in_(['document', 'video', 'audio', 'animation'])
     )
-    if sent_unique_ids:
-        future_query = future_query.filter(~SourceFile.file_unique_id.in_(sent_unique_ids))
-    future_files = future_query.order_by(SourceFile.file_name).all()
+    if sent_all_ids:
+        pending_query = pending_query.filter(~SourceFile.file_unique_id.in_(sent_all_ids))
+    pending_files = pending_query.order_by(SourceFile.file_name).all()
 
-    total_geral = len(sent_records) + len(future_files)
+    pending_lines = []
+    pending_lines.append("┌────────────────────────────────────────┐")
+    pending_lines.append("│  PENDENTES — PRÓXIMOS A ENVIAR         │")
+    pending_lines.append("└────────────────────────────────────────┘\n")
 
+    if not pending_files:
+        pending_lines.append("  Todos os arquivos já foram enviados!\n")
+    else:
+        for f in pending_files:
+            name = f.file_name or f.caption or "Arquivo sem nome"
+            pending_lines.append(f"  - {name}{_size_str(f.file_size)}")
+
+    pending_lines.append("")
+
+    # --- Cabeçalho ---
+    total = len(vip_ids) + len(free_ids) + len(pending_files)
     header = (
         "╔════════════════════════════════════════╗\n"
-        "║     CATÁLOGO VIP — ARQUIVOS            ║\n"
+        "║     CATÁLOGO — TODOS OS ARQUIVOS       ║\n"
         "╚════════════════════════════════════════╝\n\n"
         f"Atualizado em: {datetime.now().strftime('%d/%m/%Y %H:%M')}\n"
-        f"Arquivos já enviados: {len(sent_records)}\n"
-        f"Arquivos a caminho: {len(future_files)}\n"
-        f"Total geral: {total_geral}\n\n"
+        f"Enviados no VIP : {len(vip_ids)}\n"
+        f"Enviados no FREE: {len(free_ids)}\n"
+        f"Pendentes       : {len(pending_files)}\n"
+        f"Total geral     : {total}\n\n"
         "Use Ctrl+F para pesquisar pelo nome do arquivo.\n"
         "════════════════════════════════════════\n\n"
     )
 
-    # --- Seção: Arquivos já enviados ---
-    lines = []
-    lines.append("┌────────────────────────────────────────┐")
-    lines.append("│  ARQUIVOS JÁ ENVIADOS                  │")
-    lines.append("└────────────────────────────────────────┘\n")
-
-    if not sent_records:
-        lines.append("  Nenhum arquivo enviado ainda.\n")
-    else:
-        # Buscar detalhes dos arquivos enviados
-        source_map = {}
-        if sent_unique_ids:
-            sources = session.query(SourceFile).filter(
-                SourceFile.file_unique_id.in_(sent_unique_ids)
-            ).all()
-            source_map = {s.file_unique_id: s for s in sources}
-
-        # Agrupar por mês de envio
-        months = {}
-        for rec in sent_records:
-            src = source_map.get(rec.file_unique_id)
-            name = src.file_name if src and src.file_name else rec.caption or "Arquivo sem nome"
-            size_str = ""
-            if src and src.file_size:
-                size_mb = src.file_size / (1024 * 1024)
-                size_str = f" [{size_mb:.1f} MB]" if size_mb >= 1 else f" [{src.file_size / 1024:.0f} KB]"
-
-            month_key = rec.sent_at.strftime('%m/%Y') if rec.sent_at else "Desconhecido"
-            day_str = rec.sent_at.strftime('%d/%m') if rec.sent_at else "??"
-
-            if month_key not in months:
-                months[month_key] = []
-            months[month_key].append(f"  [{day_str}] {name}{size_str}")
-
-        for month, items in months.items():
-            lines.append(f"--- {month} ({len(items)} arquivo(s)) ---")
-            lines.extend(items)
-            lines.append("")
-
-    # --- Seção: Arquivos futuros ---
-    lines.append("")
-    lines.append("┌────────────────────────────────────────┐")
-    lines.append("│  EM BREVE — PRÓXIMOS ARQUIVOS          │")
-    lines.append("└────────────────────────────────────────┘\n")
-
-    if not future_files:
-        lines.append("  Todos os arquivos já foram enviados!\n")
-    else:
-        for f in future_files:
-            name = f.file_name or f.caption or "Arquivo sem nome"
-            size_str = ""
-            if f.file_size:
-                size_mb = f.file_size / (1024 * 1024)
-                size_str = f" [{size_mb:.1f} MB]" if size_mb >= 1 else f" [{f.file_size / 1024:.0f} KB]"
-            lines.append(f"  - {name}{size_str}")
-
-    lines.append("")
-
     footer = (
-        "════════════════════════════════════════\n"
+        "\n════════════════════════════════════════\n"
         "Esta lista é atualizada diariamente.\n"
-        "Novos arquivos são adicionados todo dia às 15h.\n"
     )
 
-    return header + "\n".join(lines) + "\n" + footer
+    all_lines = vip_lines + [""] + free_lines + [""] + pending_lines
+    return header + "\n".join(all_lines) + footer
 
 
 async def _send_catalog_to_channel(bot: Bot, channel_id: int, config_key: str, catalog_content: str, caption: str):
