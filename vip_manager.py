@@ -147,24 +147,31 @@ async def log_member_change(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
 
             try:
-                action_emoji = {"joined": "✅", "left": "👋", "removed": "🚫"}.get(action, "❓")
-                action_label = {"joined": "ENTROU", "left": "SAIU", "removed": "REMOVIDO"}.get(action, action.upper())
-
-                log_msg = (
-                    f"{action_emoji} <b>{action_label}</b> — {grupo_label}\n"
+                user_line = (
                     f"👤 {user.first_name or 'N/A'}"
-                    + (f" (@{user.username})" if user.username else "") + "\n"
-                    f"🆔 ID: <code>{user.id}</code>\n"
-                    f"📅 {log.created_at.strftime('%d/%m/%Y %H:%M:%S')}\n"
+                    + (f" (@{user.username})" if user.username else "")
+                    + f"\n🆔 ID: <code>{user.id}</code>\n"
+                    f"📅 {log.created_at.strftime('%d/%m/%Y %H:%M:%S')}"
                 )
 
                 if vip_until:
                     now = datetime.now(timezone.utc)
                     if vip_until > now:
                         days_left = (vip_until - now).days
-                        log_msg += f"⏰ VIP até: {vip_until.strftime('%d/%m/%Y %H:%M')} ({days_left} dias)\n"
+                        user_line += f"\n⏰ VIP até: {vip_until.strftime('%d/%m/%Y %H:%M')} ({days_left} dias)"
                     else:
-                        log_msg += f"⏰ VIP expirado em: {vip_until.strftime('%d/%m/%Y %H:%M')}\n"
+                        user_line += f"\n⏰ VIP expirado em: {vip_until.strftime('%d/%m/%Y %H:%M')}"
+
+                # Cabeçalho visual diferente por ação e grupo
+                if action == "joined" and chat_id == GROUP_VIP_ID:
+                    header = "Alguém Assinou:\n" + "✅" * 9
+                elif action == "joined":
+                    header = f"Entrou alguém no GRUPO {grupo_label}:\n" + "⚠️" * 9
+                else:
+                    label = "REMOVIDO" if action == "removed" else "SAIU"
+                    header = f"{label} do GRUPO {grupo_label}:\n" + "❌" * 8
+
+                log_msg = f"{header}\n\n{user_line}"
 
                 await context.bot.send_message(
                     chat_id=LOGS_GROUP_ID,
