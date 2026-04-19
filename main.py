@@ -6375,6 +6375,8 @@ async def enviar_pack_nome_cmd(update: Update, context: ContextTypes.DEFAULT_TYP
             return await msg.edit_text(f"❌ {tier.upper()}_CHANNEL_ID não configurado.")
 
         with SessionLocal() as session:
+            from auto_sender import extract_base_name, is_part_file
+
             # Busca parcial case-insensitive no file_name e caption
             pattern = f"%{search}%"
             matches = session.query(SourceFile).filter(
@@ -6391,20 +6393,35 @@ async def enviar_pack_nome_cmd(update: Update, context: ContextTypes.DEFAULT_TYP
                     parse_mode="HTML"
                 )
 
-            # Se mais de 1 resultado, lista os primeiros 10
-            if len(matches) > 1:
+            # Agrupar por nome base para não mostrar .001 e .002 separados
+            seen_bases: dict = {}
+            for m in matches:
+                base = extract_base_name(m.file_name) if is_part_file(m.file_name, m.caption) else (m.file_name or m.caption or "")
+                if base not in seen_bases:
+                    seen_bases[base] = m  # guarda o primeiro representante de cada pack
+
+            unique_packs = list(seen_bases.values())
+
+            if not unique_packs:
+                return await msg.edit_text(
+                    f"❌ Nenhum pack encontrado com <b>{html.escape(search)}</b>.",
+                    parse_mode="HTML"
+                )
+
+            # Se mais de 1 pack distinto, lista para o usuário escolher
+            if len(unique_packs) > 1:
                 nomes = "\n".join(
                     f"  {i+1}. {html.escape((m.file_name or m.caption or '')[:70])}"
-                    for i, m in enumerate(matches[:10])
+                    for i, m in enumerate(unique_packs[:10])
                 )
-                extra = f"\n  ... e mais {len(matches)-10}" if len(matches) > 10 else ""
+                extra = f"\n  ... e mais {len(unique_packs)-10}" if len(unique_packs) > 10 else ""
                 return await msg.edit_text(
-                    f"⚠️ <b>{len(matches)} packs encontrados</b> para <i>{html.escape(search)}</i>.\n"
+                    f"⚠️ <b>{len(unique_packs)} packs encontrados</b> para <i>{html.escape(search)}</i>.\n"
                     f"Seja mais específico:\n{nomes}{extra}",
                     parse_mode="HTML"
                 )
 
-            source_file = matches[0]
+            source_file = unique_packs[0]
             nome = (source_file.file_name or source_file.caption or "")[:80]
             await msg.edit_text(f"✅ Encontrado: <b>{html.escape(nome)}</b>\n📤 Enviando...", parse_mode="HTML")
 
