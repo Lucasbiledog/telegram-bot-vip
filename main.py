@@ -6352,7 +6352,20 @@ async def enviar_pack_nome_cmd(update: Update, context: ContextTypes.DEFAULT_TYP
     if tier not in ("vip", "free"):
         return await update.effective_message.reply_text("Canal deve ser <b>vip</b> ou <b>free</b>.", parse_mode="HTML")
 
-    search = " ".join(args[1:]).strip()
+    # Verifica se o último argumento é um número (seleção da lista)
+    raw_terms = args[1:]
+    selected_index: int | None = None
+    if raw_terms and raw_terms[-1].isdigit():
+        selected_index = int(raw_terms[-1]) - 1  # converte para 0-based
+        raw_terms = raw_terms[:-1]
+
+    search = " ".join(raw_terms).strip()
+    if not search:
+        return await update.effective_message.reply_text(
+            "Uso: /enviar_pack <vip|free> <nome do pack> [número]\n"
+            "Exemplo: /enviar_pack vip ultra dynamic sky\n"
+            "         /enviar_pack vip ultra dynamic sky 2"
+        )
 
     msg = await update.effective_message.reply_text(
         f"🔍 Buscando <b>{html.escape(search)}</b> para enviar no {tier.upper()}...",
@@ -6408,8 +6421,8 @@ async def enviar_pack_nome_cmd(update: Update, context: ContextTypes.DEFAULT_TYP
                     parse_mode="HTML"
                 )
 
-            # Se mais de 1 pack distinto, lista para o usuário escolher
-            if len(unique_packs) > 1:
+            # Se mais de 1 pack distinto e nenhum número foi passado, lista
+            if len(unique_packs) > 1 and selected_index is None:
                 nomes = "\n".join(
                     f"  {i+1}. {html.escape((m.file_name or m.caption or '')[:70])}"
                     for i, m in enumerate(unique_packs[:10])
@@ -6417,17 +6430,28 @@ async def enviar_pack_nome_cmd(update: Update, context: ContextTypes.DEFAULT_TYP
                 extra = f"\n  ... e mais {len(unique_packs)-10}" if len(unique_packs) > 10 else ""
                 return await msg.edit_text(
                     f"⚠️ <b>{len(unique_packs)} packs encontrados</b> para <i>{html.escape(search)}</i>.\n"
-                    f"Seja mais específico:\n{nomes}{extra}",
+                    f"Adicione o número para selecionar:\n{nomes}{extra}\n\n"
+                    f"Exemplo: <code>/enviar_pack {tier} {search} 2</code>",
                     parse_mode="HTML"
                 )
 
-            source_file = unique_packs[0]
+            # Seleciona pelo índice ou único resultado
+            if selected_index is not None:
+                if selected_index < 0 or selected_index >= len(unique_packs):
+                    return await msg.edit_text(
+                        f"❌ Número inválido. Escolha entre 1 e {len(unique_packs)}."
+                    )
+                source_file = unique_packs[selected_index]
+            else:
+                source_file = unique_packs[0]
+
             nome = (source_file.file_name or source_file.caption or "")[:80]
             await msg.edit_text(f"✅ Encontrado: <b>{html.escape(nome)}</b>\n📤 Enviando...", parse_mode="HTML")
 
-            # Imagens Fab.com
-            _fab_title = (source_file.caption or source_file.file_name or "").strip()
-            await _send_fab_images_for_caption(context.application.bot, channel_id, _fab_title)
+            # Imagens Fab.com apenas para FREE (VIP recebe só o arquivo)
+            if tier == "free":
+                _fab_title = (source_file.caption or source_file.file_name or "").strip()
+                await _send_fab_images_for_caption(context.application.bot, channel_id, _fab_title)
 
             all_parts = get_all_parts(session, source_file)
             can_media_group = (
