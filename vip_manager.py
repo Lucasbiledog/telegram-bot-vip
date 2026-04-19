@@ -98,15 +98,20 @@ async def send_pending_notifications(update: Update, context: ContextTypes.DEFAU
 # Log de Membros Entrando/Saindo
 # =========================
 async def log_member_change(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Registra entrada/saída de membros no grupo VIP e envia para grupo de logs"""
+    """Registra entrada/saída de membros no grupo VIP e FREE e envia para grupo de logs"""
     try:
-        from main import SessionLocal, GROUP_VIP_ID, LOGS_GROUP_ID
+        from main import SessionLocal, GROUP_VIP_ID, GROUP_FREE_ID, LOGS_GROUP_ID
         from models import MemberLog, User
 
         result: ChatMemberUpdated = update.chat_member
+        chat_id = result.chat.id
 
-        # Verificar se é no grupo VIP
-        if result.chat.id != GROUP_VIP_ID:
+        # Monitorar VIP e FREE
+        if chat_id == GROUP_VIP_ID:
+            grupo_label = "👑 VIP"
+        elif chat_id == GROUP_FREE_ID:
+            grupo_label = "🆓 FREE"
+        else:
             return
 
         user = result.new_chat_member.user
@@ -121,14 +126,12 @@ async def log_member_change(update: Update, context: ContextTypes.DEFAULT_TYPE):
             action = "left" if new_status == "left" else "removed"
 
         if not action:
-            return  # Sem mudança relevante
+            return
 
         with SessionLocal() as s:
-            # Buscar VIP do usuário
             vip_user = s.query(User).filter(User.tg_id == user.id).first()
             vip_until = vip_user.vip_until if vip_user else None
 
-            # Criar log
             log = MemberLog(
                 user_id=user.id,
                 username=user.username,
@@ -140,21 +143,17 @@ async def log_member_change(update: Update, context: ContextTypes.DEFAULT_TYPE):
             s.commit()
 
             LOG.info(
-                f"[MEMBER-LOG] {action.upper()}: {user.first_name} (@{user.username or 'sem_username'}) "
-                f"| VIP até: {vip_until.strftime('%d/%m/%Y %H:%M') if vip_until else 'N/A'}"
+                f"[MEMBER-LOG] [{grupo_label}] {action.upper()}: {user.first_name} (@{user.username or 'sem_username'})"
             )
 
-            # Enviar log para grupo de logs
             try:
-                action_emoji = {
-                    "joined": "✅",
-                    "left": "👋",
-                    "removed": "🚫"
-                }.get(action, "❓")
+                action_emoji = {"joined": "✅", "left": "👋", "removed": "🚫"}.get(action, "❓")
+                action_label = {"joined": "ENTROU", "left": "SAIU", "removed": "REMOVIDO"}.get(action, action.upper())
 
                 log_msg = (
-                    f"{action_emoji} <b>{action.upper()}</b>\n"
-                    f"👤 {user.first_name or 'N/A'} (@{user.username or 'sem_username'})\n"
+                    f"{action_emoji} <b>{action_label}</b> — {grupo_label}\n"
+                    f"👤 {user.first_name or 'N/A'}"
+                    + (f" (@{user.username})" if user.username else "") + "\n"
                     f"🆔 ID: <code>{user.id}</code>\n"
                     f"📅 {log.created_at.strftime('%d/%m/%Y %H:%M:%S')}\n"
                 )
