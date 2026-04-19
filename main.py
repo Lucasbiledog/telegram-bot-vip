@@ -6151,6 +6151,132 @@ async def send_free_extra_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE
         await msg.edit_text(f"❌ Erro: {html.escape(str(exc)[:200])}")
 
 
+async def enviar_pack_nome_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /enviar_pack <vip|free> <parte do nome>
+    Busca o pack pelo nome (busca parcial) e envia para o canal indicado.
+    Exemplo: /enviar_pack vip ultra dynamic sky
+             /enviar_pack free fluid flux
+    """
+    if not (update.effective_user and is_admin(update.effective_user.id)):
+        return await update.effective_message.reply_text("Apenas admins.")
+
+    args = context.args or []
+    if len(args) < 2:
+        return await update.effective_message.reply_text(
+            "Uso: /enviar_pack <vip|free> <nome do pack>\n"
+            "Exemplo: /enviar_pack vip ultra dynamic sky\n"
+            "         /enviar_pack free fluid flux"
+        )
+
+    tier = args[0].lower()
+    if tier not in ("vip", "free"):
+        return await update.effective_message.reply_text("Canal deve ser <b>vip</b> ou <b>free</b>.", parse_mode="HTML")
+
+    search = " ".join(args[1:]).strip()
+
+    msg = await update.effective_message.reply_text(
+        f"🔍 Buscando <b>{html.escape(search)}</b> para enviar no {tier.upper()}...",
+        parse_mode="HTML"
+    )
+
+    try:
+        import auto_sender as _as
+        from auto_sender import (
+            get_all_parts,
+            send_file_to_channel,
+            send_as_media_group,
+            mark_file_as_sent,
+            _send_fab_images_for_caption,
+        )
+        from sqlalchemy import func
+
+        channel_id = _as.VIP_CHANNEL_ID if tier == "vip" else _as.FREE_CHANNEL_ID
+        if not channel_id:
+            return await msg.edit_text(f"❌ {tier.upper()}_CHANNEL_ID não configurado.")
+
+        with SessionLocal() as session:
+            # Busca parcial case-insensitive no file_name e caption
+            pattern = f"%{search}%"
+            matches = session.query(SourceFile).filter(
+                SourceFile.source_chat_id == SOURCE_CHAT_ID,
+                SourceFile.active == True,
+                SourceFile.file_type.in_(["document", "video", "audio", "animation"]),
+                (SourceFile.file_name.ilike(pattern) | SourceFile.caption.ilike(pattern))
+            ).order_by(SourceFile.file_name).all()
+
+            if not matches:
+                return await msg.edit_text(
+                    f"❌ Nenhum pack encontrado com <b>{html.escape(search)}</b>.\n"
+                    "Tente outra parte do nome.",
+                    parse_mode="HTML"
+                )
+
+            # Se mais de 1 resultado, lista os primeiros 10
+            if len(matches) > 1:
+                nomes = "\n".join(
+                    f"  {i+1}. {html.escape((m.file_name or m.caption or '')[:70])}"
+                    for i, m in enumerate(matches[:10])
+                )
+                extra = f"\n  ... e mais {len(matches)-10}" if len(matches) > 10 else ""
+                return await msg.edit_text(
+                    f"⚠️ <b>{len(matches)} packs encontrados</b> para <i>{html.escape(search)}</i>.\n"
+                    f"Seja mais específico:\n{nomes}{extra}",
+                    parse_mode="HTML"
+                )
+
+            source_file = matches[0]
+            nome = (source_file.file_name or source_file.caption or "")[:80]
+            await msg.edit_text(f"✅ Encontrado: <b>{html.escape(nome)}</b>\n📤 Enviando...", parse_mode="HTML")
+
+            # Imagens Fab.com
+            _fab_title = (source_file.caption or source_file.file_name or "").strip()
+            await _send_fab_images_for_caption(context.application.bot, channel_id, _fab_title)
+
+            all_parts = get_all_parts(session, source_file)
+            can_media_group = (
+                1 < len(all_parts) <= 10
+                and all(p.file_type in ["video", "photo"] for p in all_parts)
+            )
+
+            success_count = 0
+            tier_label = "🔥 Conteúdo VIP Exclusivo" if tier == "vip" else "🆓 Conteúdo Grátis da Semana"
+
+            if can_media_group:
+                ok = await send_as_media_group(context.application.bot, all_parts, channel_id, tier=tier)
+                if ok:
+                    for part in all_parts:
+                        await mark_file_as_sent(session, part, tier)
+                    success_count = len(all_parts)
+            else:
+                for i, part in enumerate(all_parts, 1):
+                    caption = (
+                        f"{tier_label}\n📅 {dt.datetime.now().strftime('%d/%m/%Y')}"
+                        + (f"\n\n{part.caption}" if part.caption else "")
+                        + (f"\n\n📦 Arquivo com {len(all_parts)} partes" if i == 1 and len(all_parts) > 1 else "")
+                        + (f"\n📦 Parte {i} de {len(all_parts)}" if i > 1 else "")
+                    )
+                    sent_msg = await send_file_to_channel(context.application.bot, part, channel_id, caption)
+                    if sent_msg:
+                        await mark_file_as_sent(session, part, tier)
+                        success_count += 1
+                    if i < len(all_parts):
+                        await asyncio.sleep(0.5)
+
+        if success_count > 0:
+            await msg.edit_text(
+                f"✅ <b>{html.escape(nome)}</b>\n"
+                f"📦 {success_count} parte(s) enviada(s) para {tier.upper()}",
+                parse_mode="HTML"
+            )
+        else:
+            await msg.edit_text("❌ Falha ao enviar o pack.")
+
+    except Exception as exc:
+        logging.exception(f"[enviar_pack_nome] Erro: {exc}")
+        await msg.edit_text(f"❌ Erro: {html.escape(str(exc)[:200])}")
+
+
 async def agendar_vip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     /agendar_vip HH:MM — agenda envio VIP único para hoje no horário dado.
@@ -8848,6 +8974,7 @@ async def on_startup():
         application.add_handler(CommandHandler("set_pack_horario_free", set_pack_horario_free_cmd), group=1)
         application.add_handler(CommandHandler("fab_teasers", fab_teasers_cmd), group=1)
         application.add_handler(CommandHandler("send_free_extra", send_free_extra_cmd), group=1)
+        application.add_handler(CommandHandler("enviar_pack", enviar_pack_nome_cmd), group=1)
         application.add_handler(CommandHandler("agendar_vip", agendar_vip_cmd), group=1)
         application.add_handler(CommandHandler("cancelar_vip", cancelar_vip_cmd), group=1)
         application.add_handler(CommandHandler("agendar_free", agendar_free_cmd), group=1)
