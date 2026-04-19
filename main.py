@@ -6151,6 +6151,172 @@ async def send_free_extra_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE
         await msg.edit_text(f"❌ Erro: {html.escape(str(exc)[:200])}")
 
 
+# Flag global para cancelar /enviar_vip em andamento
+_bulk_vip_running: bool = False
+
+
+async def enviar_vip_bulk_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /enviar_vip <quantidade>
+    Envia N packs do VIP sequencialmente, respeitando limites do Telegram.
+    Use /parar_vip para cancelar o envio em andamento.
+    Limites: 1 arquivo a cada 5s, pausa de 30s a cada 15 arquivos.
+    """
+    global _bulk_vip_running
+
+    if not (update.effective_user and is_admin(update.effective_user.id)):
+        return await update.effective_message.reply_text("Apenas admins.")
+
+    if _bulk_vip_running:
+        return await update.effective_message.reply_text(
+            "⚠️ Já há um envio em andamento. Use /parar_vip para cancelar."
+        )
+
+    args = context.args or []
+    if not args:
+        return await update.effective_message.reply_text(
+            "Uso: /enviar_vip <quantidade>\nExemplo: /enviar_vip 20"
+        )
+
+    try:
+        quantidade = int(args[0])
+        if quantidade < 1 or quantidade > 500:
+            raise ValueError
+    except ValueError:
+        return await update.effective_message.reply_text("Quantidade inválida. Use entre 1 e 500.")
+
+    import auto_sender as _as
+    from auto_sender import (
+        get_random_file_from_source,
+        get_all_parts,
+        send_file_to_channel,
+        send_as_media_group,
+        mark_file_as_sent,
+    )
+
+    vip_ch = _as.VIP_CHANNEL_ID
+    if not vip_ch:
+        return await update.effective_message.reply_text("❌ VIP_CHANNEL_ID não configurado.")
+
+    # Estimativa de tempo: 5s/arquivo + pausa de 30s a cada 15
+    pausas = quantidade // 15
+    tempo_est = quantidade * 5 + pausas * 30
+    tempo_min = tempo_est // 60
+    tempo_seg = tempo_est % 60
+
+    msg = await update.effective_message.reply_text(
+        f"🚀 Iniciando envio de <b>{quantidade} packs VIP</b>.\n"
+        f"⏱ Tempo estimado: ~{tempo_min}min {tempo_seg}s\n"
+        f"Use /parar_vip para cancelar a qualquer momento.",
+        parse_mode="HTML"
+    )
+
+    _bulk_vip_running = True
+    enviados = 0
+    falhas = 0
+
+    try:
+        for i in range(quantidade):
+            if not _bulk_vip_running:
+                break
+
+            with SessionLocal() as session:
+                source_file = await get_random_file_from_source(session, "vip")
+                if not source_file:
+                    await context.bot.send_message(
+                        chat_id=update.effective_chat.id,
+                        text=f"⚠️ Fila VIP esgotada após {enviados} packs enviados.",
+                        parse_mode="HTML"
+                    )
+                    break
+
+                all_parts = get_all_parts(session, source_file)
+                nome = (source_file.file_name or source_file.caption or "")[:60]
+
+                can_media_group = (
+                    1 < len(all_parts) <= 10
+                    and all(p.file_type in ["video", "photo"] for p in all_parts)
+                )
+
+                success = False
+                if can_media_group:
+                    ok = await send_as_media_group(context.bot, all_parts, vip_ch, tier="vip")
+                    if ok:
+                        for part in all_parts:
+                            await mark_file_as_sent(session, part, "vip")
+                        success = True
+                else:
+                    part_ok = 0
+                    for j, part in enumerate(all_parts, 1):
+                        caption = (
+                            f"🔥 Conteúdo VIP Exclusivo\n📅 {dt.datetime.now().strftime('%d/%m/%Y')}"
+                            + (f"\n\n{part.caption}" if part.caption else "")
+                            + (f"\n\n📦 Arquivo com {len(all_parts)} partes" if j == 1 and len(all_parts) > 1 else "")
+                            + (f"\n📦 Parte {j} de {len(all_parts)}" if j > 1 else "")
+                        )
+                        sent_msg = await send_file_to_channel(context.bot, part, vip_ch, caption)
+                        if sent_msg:
+                            await mark_file_as_sent(session, part, "vip")
+                            part_ok += 1
+                        # Delay entre partes do mesmo pack
+                        if j < len(all_parts):
+                            await asyncio.sleep(4)
+                    success = part_ok == len(all_parts)
+
+            if success:
+                enviados += 1
+            else:
+                falhas += 1
+
+            # Atualiza progresso a cada 5 packs
+            if enviados % 5 == 0 or enviados == quantidade:
+                try:
+                    await msg.edit_text(
+                        f"📤 Enviando packs VIP...\n"
+                        f"✅ {enviados}/{quantidade} enviados"
+                        + (f" | ❌ {falhas} falhas" if falhas else ""),
+                        parse_mode="HTML"
+                    )
+                except Exception:
+                    pass
+
+            # Delay entre packs (respeita limite do Telegram: ~15 msgs/min)
+            if i < quantidade - 1 and _bulk_vip_running:
+                await asyncio.sleep(5)
+                # Pausa extra a cada 15 packs para não tomar ban
+                if (i + 1) % 15 == 0:
+                    await asyncio.sleep(30)
+
+    except Exception as exc:
+        logging.exception(f"[enviar_vip_bulk] Erro: {exc}")
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=f"❌ Erro durante o envio: {html.escape(str(exc)[:200])}",
+            parse_mode="HTML"
+        )
+    finally:
+        _bulk_vip_running = False
+
+    status = "cancelado" if enviados < quantidade and not _bulk_vip_running else "concluído"
+    await msg.edit_text(
+        f"{'✅' if status == 'concluído' else '🛑'} Envio {status}!\n"
+        f"📦 {enviados} pack(s) enviado(s) para o VIP"
+        + (f"\n❌ {falhas} falha(s)" if falhas else ""),
+        parse_mode="HTML"
+    )
+
+
+async def parar_vip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Para o envio em massa do /enviar_vip."""
+    global _bulk_vip_running
+    if not (update.effective_user and is_admin(update.effective_user.id)):
+        return await update.effective_message.reply_text("Apenas admins.")
+    if not _bulk_vip_running:
+        return await update.effective_message.reply_text("ℹ️ Nenhum envio em andamento.")
+    _bulk_vip_running = False
+    await update.effective_message.reply_text("🛑 Envio VIP cancelado.")
+
+
 async def enviar_pack_nome_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     /enviar_pack <vip|free> <parte do nome>
@@ -8974,6 +9140,8 @@ async def on_startup():
         application.add_handler(CommandHandler("set_pack_horario_free", set_pack_horario_free_cmd), group=1)
         application.add_handler(CommandHandler("fab_teasers", fab_teasers_cmd), group=1)
         application.add_handler(CommandHandler("send_free_extra", send_free_extra_cmd), group=1)
+        application.add_handler(CommandHandler("enviar_vip", enviar_vip_bulk_cmd), group=1)
+        application.add_handler(CommandHandler("parar_vip", parar_vip_cmd), group=1)
         application.add_handler(CommandHandler("enviar_pack", enviar_pack_nome_cmd), group=1)
         application.add_handler(CommandHandler("agendar_vip", agendar_vip_cmd), group=1)
         application.add_handler(CommandHandler("cancelar_vip", cancelar_vip_cmd), group=1)
