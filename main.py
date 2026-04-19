@@ -6192,20 +6192,23 @@ async def enviar_vip_bulk_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE
         send_file_to_channel,
         send_as_media_group,
         mark_file_as_sent,
+        send_teaser_to_free,
+        send_or_update_vip_catalog,
     )
 
     vip_ch = _as.VIP_CHANNEL_ID
     if not vip_ch:
         return await update.effective_message.reply_text("❌ VIP_CHANNEL_ID não configurado.")
 
-    # Estimativa de tempo: 5s/arquivo + pausa de 30s a cada 15
+    # Estimativa de tempo: 5s/pack VIP + 5s/teaser FREE + pausas
     pausas = quantidade // 15
-    tempo_est = quantidade * 5 + pausas * 30
+    tempo_est = quantidade * 10 + pausas * 30
     tempo_min = tempo_est // 60
     tempo_seg = tempo_est % 60
 
     msg = await update.effective_message.reply_text(
         f"🚀 Iniciando envio de <b>{quantidade} packs VIP</b>.\n"
+        f"📢 Teaser .txt será enviado ao FREE para cada pack.\n"
         f"⏱ Tempo estimado: ~{tempo_min}min {tempo_seg}s\n"
         f"Use /parar_vip para cancelar a qualquer momento.",
         parse_mode="HTML"
@@ -6231,7 +6234,6 @@ async def enviar_vip_bulk_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE
                     break
 
                 all_parts = get_all_parts(session, source_file)
-                nome = (source_file.file_name or source_file.caption or "")[:60]
 
                 can_media_group = (
                     1 < len(all_parts) <= 10
@@ -6258,17 +6260,20 @@ async def enviar_vip_bulk_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE
                         if sent_msg:
                             await mark_file_as_sent(session, part, "vip")
                             part_ok += 1
-                        # Delay entre partes do mesmo pack
                         if j < len(all_parts):
                             await asyncio.sleep(4)
                     success = part_ok == len(all_parts)
+
+                # Teaser .txt para FREE após cada pack VIP enviado
+                if success:
+                    await send_teaser_to_free(context.bot, all_parts)
 
             if success:
                 enviados += 1
             else:
                 falhas += 1
 
-            # Atualiza progresso a cada 5 packs
+            # Progresso a cada 5 packs
             if enviados % 5 == 0 or enviados == quantidade:
                 try:
                     await msg.edit_text(
@@ -6280,10 +6285,9 @@ async def enviar_vip_bulk_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE
                 except Exception:
                     pass
 
-            # Delay entre packs (respeita limite do Telegram: ~15 msgs/min)
+            # Rate limiting: 5s entre packs, pausa de 30s a cada 15
             if i < quantidade - 1 and _bulk_vip_running:
                 await asyncio.sleep(5)
-                # Pausa extra a cada 15 packs para não tomar ban
                 if (i + 1) % 15 == 0:
                     await asyncio.sleep(30)
 
@@ -6297,10 +6301,19 @@ async def enviar_vip_bulk_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE
     finally:
         _bulk_vip_running = False
 
+    # Atualiza o catálogo completo ao final do envio em massa
+    if enviados > 0:
+        try:
+            with SessionLocal() as session:
+                await send_or_update_vip_catalog(context.bot, session)
+        except Exception as exc:
+            logging.warning(f"[enviar_vip_bulk] Erro ao atualizar catálogo: {exc}")
+
     status = "cancelado" if enviados < quantidade and not _bulk_vip_running else "concluído"
     await msg.edit_text(
         f"{'✅' if status == 'concluído' else '🛑'} Envio {status}!\n"
-        f"📦 {enviados} pack(s) enviado(s) para o VIP"
+        f"📦 {enviados} pack(s) enviado(s) para o VIP\n"
+        f"📋 Catálogo atualizado automaticamente."
         + (f"\n❌ {falhas} falha(s)" if falhas else ""),
         parse_mode="HTML"
     )
