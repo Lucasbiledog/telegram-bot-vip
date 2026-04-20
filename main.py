@@ -7638,11 +7638,27 @@ async def scan_history_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
 
 
+_scan_full_running: bool = False
+
 async def scan_full_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Faz scan COMPLETO do histórico usando Pyrogram (User API)"""
+    global _scan_full_running
     if not is_admin(update.effective_user.id):
         return
 
+    if _scan_full_running:
+        return await update.effective_message.reply_text(
+            "⚠️ Já há um scan em andamento. Aguarde terminar."
+        )
+
+    _scan_full_running = True
+    try:
+        await _scan_full_inner(update, context)
+    finally:
+        _scan_full_running = False
+
+
+async def _scan_full_inner(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.effective_message.reply_text(
         "🔄 <b>Scan Completo do Histórico</b>\n\n"
         "⏳ Verificando Pyrogram...",
