@@ -7704,7 +7704,6 @@ async def scan_full_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Criar cliente Pyrogram (User API)
             session_string = os.getenv("SESSION_STRING", "")
             if session_string:
-                from pyrogram.storage import StringSession
                 app = Client(
                     "bot_scanner",
                     api_id=int(api_id),
