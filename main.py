@@ -7814,7 +7814,14 @@ async def _scan_full_inner(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     ).first()
 
                     if existing:
-                        total_duplicadas += 1
+                        if existing.source_chat_id != SOURCE_CHAT_ID:
+                            # Corrige source_chat_id de scans anteriores com ID errado
+                            existing.source_chat_id = SOURCE_CHAT_ID
+                            existing.active = True
+                            session.commit()
+                            total_indexadas += 1
+                        else:
+                            total_duplicadas += 1
                         continue
 
                     # Criar novo registro
