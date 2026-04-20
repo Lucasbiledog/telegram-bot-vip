@@ -6330,6 +6330,84 @@ async def parar_vip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.effective_message.reply_text("🛑 Envio VIP cancelado.")
 
 
+async def fila_diagnostico_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /fila_diagnostico — mostra exatamente quantos arquivos estão indexados,
+    enviados e disponíveis por tier, com breakdown por file_type.
+    """
+    if not (update.effective_user and is_admin(update.effective_user.id)):
+        return await update.effective_message.reply_text("Apenas admins.")
+
+    msg = await update.effective_message.reply_text("🔍 Analisando fila...")
+
+    with SessionLocal() as session:
+        from sqlalchemy import func
+
+        # Total geral na tabela
+        total_geral = session.query(SourceFile).count()
+        total_source = session.query(SourceFile).filter(
+            SourceFile.source_chat_id == SOURCE_CHAT_ID
+        ).count()
+        total_active = session.query(SourceFile).filter(
+            SourceFile.source_chat_id == SOURCE_CHAT_ID,
+            SourceFile.active == True
+        ).count()
+
+        # Por file_type
+        tipos = session.query(SourceFile.file_type, func.count()).filter(
+            SourceFile.source_chat_id == SOURCE_CHAT_ID,
+            SourceFile.active == True
+        ).group_by(SourceFile.file_type).all()
+
+        # Arquivos elegíveis (document/video/audio/animation)
+        TYPES = ['document', 'video', 'audio', 'animation']
+        total_elegiveis = session.query(SourceFile).filter(
+            SourceFile.source_chat_id == SOURCE_CHAT_ID,
+            SourceFile.active == True,
+            SourceFile.file_type.in_(TYPES)
+        ).count()
+
+        # Enviados
+        sent_vip = session.query(func.count(SentFile.id)).filter(
+            SentFile.sent_to_tier == 'vip',
+            SentFile.source_chat_id == SOURCE_CHAT_ID
+        ).scalar() or 0
+        sent_free = session.query(func.count(SentFile.id)).filter(
+            SentFile.sent_to_tier == 'free',
+            SentFile.source_chat_id == SOURCE_CHAT_ID
+        ).scalar() or 0
+
+        # Disponíveis para VIP (não enviados ainda)
+        sent_vip_ids = {r.file_unique_id for r in session.query(SentFile.file_unique_id).filter(
+            SentFile.sent_to_tier == 'vip', SentFile.source_chat_id == SOURCE_CHAT_ID
+        ).all()}
+        q_vip = session.query(SourceFile).filter(
+            SourceFile.source_chat_id == SOURCE_CHAT_ID,
+            SourceFile.active == True,
+            SourceFile.file_type.in_(TYPES)
+        )
+        if sent_vip_ids:
+            q_vip = q_vip.filter(~SourceFile.file_unique_id.in_(sent_vip_ids))
+        disponivel_vip = q_vip.count()
+
+    tipos_txt = "\n".join(f"  • {t}: {c}" for t, c in sorted(tipos, key=lambda x: -x[1]))
+
+    await msg.edit_text(
+        f"📊 <b>DIAGNÓSTICO DA FILA</b>\n\n"
+        f"🗄 <b>SourceFile (source_chat_id={SOURCE_CHAT_ID})</b>\n"
+        f"  Total geral na tabela: {total_geral}\n"
+        f"  Com source_chat_id correto: {total_source}\n"
+        f"  Com active=True: {total_active}\n"
+        f"  Elegíveis (tipos certos): {total_elegiveis}\n\n"
+        f"📋 <b>Por tipo:</b>\n{tipos_txt}\n\n"
+        f"📤 <b>SentFile</b>\n"
+        f"  Enviados para VIP: {sent_vip}\n"
+        f"  Enviados para FREE: {sent_free}\n\n"
+        f"✅ <b>Disponível agora para VIP: {disponivel_vip}</b>",
+        parse_mode="HTML"
+    )
+
+
 async def enviar_pack_nome_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     /enviar_pack <vip|free> <parte do nome>
@@ -9196,6 +9274,7 @@ async def on_startup():
         application.add_handler(CommandHandler("send_free_extra", send_free_extra_cmd), group=1)
         application.add_handler(CommandHandler("enviar_vip", enviar_vip_bulk_cmd), group=1)
         application.add_handler(CommandHandler("parar_vip", parar_vip_cmd), group=1)
+        application.add_handler(CommandHandler("fila_diagnostico", fila_diagnostico_cmd), group=1)
         application.add_handler(CommandHandler("enviar_pack", enviar_pack_nome_cmd), group=1)
         application.add_handler(CommandHandler("agendar_vip", agendar_vip_cmd), group=1)
         application.add_handler(CommandHandler("cancelar_vip", cancelar_vip_cmd), group=1)
