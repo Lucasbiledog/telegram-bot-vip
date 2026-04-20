@@ -7721,6 +7721,9 @@ async def scan_full_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             async with app:
                 # Verificar se está autenticado
                 me = await app.get_me()
+                # Popular cache de peers (necessário com StringSession)
+                async for _ in app.get_dialogs():
+                    pass
                 await update.effective_message.reply_text(
                     f"👤 <b>Autenticado como:</b> {me.first_name}\n\n"
                     f"🔍 Escaneando grupo {SOURCE_CHAT_ID}...",
