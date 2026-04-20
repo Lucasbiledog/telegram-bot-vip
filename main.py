@@ -7714,6 +7714,7 @@ async def _scan_full_inner(update: Update, context: ContextTypes.DEFAULT_TYPE):
     total_duplicadas = 0
     total_erros = 0
     tipos_encontrados = {}
+    unique_ids_in_group: set = set()
 
     with SessionLocal() as session:
         try:
@@ -7808,6 +7809,9 @@ async def _scan_full_inner(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     tipo = file_data['file_type']
                     tipos_encontrados[tipo] = tipos_encontrados.get(tipo, 0) + 1
 
+                    # Rastrear unique_ids vistos no grupo
+                    unique_ids_in_group.add(file_data['file_unique_id'])
+
                     # Verificar se já existe
                     existing = session.query(SourceFile).filter(
                         SourceFile.file_unique_id == file_data['file_unique_id']
@@ -7856,9 +7860,12 @@ async def _scan_full_inner(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             tipos_str = "\n".join([f"  • {tipo}: {count}" for tipo, count in tipos_encontrados.items()])
 
+            total_unique_in_group = len(unique_ids_in_group)
+
             msg = (
                 f"✅ <b>Scan Completo Finalizado!</b>\n\n"
                 f"📨 Mensagens processadas: {total_processadas}\n"
+                f"🔑 Arquivos únicos no grupo: {total_unique_in_group}\n"
                 f"✅ Novas indexadas: {total_indexadas}\n"
                 f"⏭️ Já existentes: {total_duplicadas}\n"
                 f"❌ Erros: {total_erros}\n\n"
