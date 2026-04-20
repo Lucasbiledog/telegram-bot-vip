@@ -7702,12 +7702,22 @@ async def scan_full_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     with SessionLocal() as session:
         try:
             # Criar cliente Pyrogram (User API)
-            app = Client(
-                "bot_scanner",
-                api_id=int(api_id),
-                api_hash=api_hash,
-                workdir="."
-            )
+            session_string = os.getenv("SESSION_STRING", "")
+            if session_string:
+                from pyrogram.storage import StringSession
+                app = Client(
+                    "bot_scanner",
+                    api_id=int(api_id),
+                    api_hash=api_hash,
+                    session_string=session_string,
+                )
+            else:
+                app = Client(
+                    "bot_scanner",
+                    api_id=int(api_id),
+                    api_hash=api_hash,
+                    workdir="."
+                )
 
             async with app:
                 # Verificar se está autenticado
