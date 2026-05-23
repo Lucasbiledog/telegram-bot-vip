@@ -25,8 +25,7 @@ _HEADERS = {
     ),
     "Accept-Language": "en-US,en;q=0.9",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-    "Accept-Encoding": "gzip, deflate, br",
-    "Cache-Control": "no-cache",
+    "Accept-Encoding": "gzip, deflate",
 }
 
 # Extração robusta: JSON murl/imgurl do Bing (mais estável que regex CDN)
