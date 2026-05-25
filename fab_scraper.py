@@ -303,7 +303,7 @@ async def _fab_search_curl(query: str) -> list[str]:
                         )
                         LOG.info("[fab_curl] listing/%s status=%d", uid, lresp.status_code)
                         if lresp.status_code == 200:
-                            LOG.info("[fab_curl] listing JSON: %s", lresp.text[:600])
+                            LOG.info("[fab_curl] listing JSON: %s", lresp.text[:3000])
                             urls.extend(_find_image_urls_in_obj(lresp.json()))
 
                 if urls:
