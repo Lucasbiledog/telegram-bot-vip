@@ -24,8 +24,6 @@ SOURCE_CHAT_ID = int(os.getenv("SOURCE_CHAT_ID", "-1003080645605"))
 # ==========================================================
 # PREÇOS DOS PLANOS VIP (ALTERE SOMENTE AQUI)
 # ==========================================================
-# Para modo teste use: 1.0, 2.0, 3.0, 4.0
-# Para produção use:  30.0, 70.0, 110.0, 179.0
 VIP_PRICE_MENSAL     = float(os.getenv("VIP_PRICE_MENSAL",     "30.0"))
 VIP_PRICE_TRIMESTRAL = float(os.getenv("VIP_PRICE_TRIMESTRAL", "70.0"))
 VIP_PRICE_SEMESTRAL  = float(os.getenv("VIP_PRICE_SEMESTRAL",  "110.0"))

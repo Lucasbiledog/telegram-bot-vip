@@ -14,12 +14,15 @@ VERSION: 2.0.1 - Fixed SQL query bug with empty sets (2025-11-04 02:45)
 import asyncio
 import logging
 import random
+import re
 from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
 
 # Version marker to force module reload
 __version__ = "2.0.2"
 __updated__ = "2025-11-11 11:00:00"
+
+import json as _json
 
 from telegram import Bot, Message, Update, InputMediaVideo, InputMediaPhoto, InputMediaDocument
 from telegram.error import TelegramError
@@ -31,6 +34,29 @@ LOG = logging.getLogger(__name__)
 # IDs dos canais/grupos (SOURCE_CHAT_ID importado de config.py)
 VIP_CHANNEL_ID = None  # Será configurado via variável de ambiente
 FREE_CHANNEL_ID = None  # Será configurado via variável de ambiente
+
+# Lock para garantir que mensagens do canal FREE nunca se intercalem
+# (send_weekly_free_file e send_teaser_to_free rodam ao mesmo horário)
+_FREE_CHANNEL_LOCK = asyncio.Lock()
+
+# Regex para detectar versão Unreal Engine no nome do arquivo
+# Captura padrões como: 4.27, 5.5, 5.4, 5_3, 4_26, etc.
+_UE_VERSION_RE = re.compile(
+    r'(?:^|[\s._\-,])([4-9])[\._](\d{1,2})(?:[\s._\-,]|$|\.(zip|rar|7z|pak))',
+    re.IGNORECASE,
+)
+
+
+def _ue_major_version(name: str) -> Optional[int]:
+    """Retorna a versão major da Unreal Engine detectada no nome, ou None."""
+    if not name:
+        return None
+    m = _UE_VERSION_RE.search(name)
+    if m:
+        major = int(m.group(1))
+        if 4 <= major <= 9:
+            return major
+    return None
 
 # Tipos de arquivo suportados
 SUPPORTED_TYPES = ['photo', 'video', 'document', 'animation', 'audio']
@@ -298,6 +324,25 @@ async def get_random_file_from_source(
                 if not is_part_file(f.file_name, f.caption)
             ]
 
+        # Filtro de versão UE para FREE: nunca enviar UE4, priorizar UE5+
+        if tier == 'free':
+            def _ver(f):
+                return _ue_major_version(f.file_name or "") or _ue_major_version(f.caption or "")
+
+            ue5_plus  = [f for f in available_files if (_ver(f) or 0) >= 5]
+            ue_none   = [f for f in available_files if _ver(f) is None]
+            # UE4 descartado completamente
+
+            if ue5_plus:
+                available_files = ue5_plus
+                LOG.info(f"[AUTO-SEND] 🎯 FREE: {len(ue5_plus)} arquivo(s) UE5+ disponíveis")
+            elif ue_none:
+                available_files = ue_none
+                LOG.info(f"[AUTO-SEND] 🎯 FREE: sem UE5+, usando {len(ue_none)} arquivo(s) sem versão detectada")
+            else:
+                LOG.warning("[AUTO-SEND] ⚠️ FREE: apenas arquivos UE4 disponíveis, pulando envio")
+                return None
+
         if not available_files:
             LOG.warning(f"[AUTO-SEND] ⚠️ Nenhum arquivo novo disponível para {tier}")
 
@@ -466,6 +511,11 @@ async def send_teaser_to_free(bot: Bot, all_parts: list):
         LOG.warning("[AUTO-SEND] FREE_CHANNEL_ID não configurado, pulando teaser")
         return
 
+    async with _FREE_CHANNEL_LOCK:
+        await _send_teaser_to_free_inner(bot, all_parts)
+
+
+async def _send_teaser_to_free_inner(bot: Bot, all_parts: list):
     try:
         import tempfile
         import os
@@ -532,6 +582,12 @@ async def send_teaser_to_free(bot: Bot, all_parts: list):
             temp_path = f.name
 
         try:
+            # Enviar imagens Fab.com antes do teaser (usa file_name como título)
+            _fab_title_teaser = (first_part.caption or first_part.file_name or "").strip()
+            fab_ok_free = await _send_fab_images_for_caption(bot, FREE_CHANNEL_ID, _fab_title_teaser)
+            if not fab_ok_free:
+                LOG.warning(f"[AUTO-SEND] ⚠️ Sem imagem Fab para FREE '{_fab_title_teaser[:60]}' — enviando só o teaser")
+
             # Enviar arquivo .txt para o canal FREE
             with open(temp_path, 'rb') as f:
                 await bot.send_document(
@@ -644,6 +700,58 @@ async def send_as_media_group(
         return False
 
 
+async def _send_fab_images_for_caption(bot: Bot, channel_id: int, caption: str) -> bool:
+    """
+    Busca imagens do Fab.com para a caption/título e envia ao canal.
+    1º tenta o FabImageCache (pré-baixado pelo /fab_teasers).
+    Se não houver cache, busca on-the-fly no Bing/Fab e salva no cache.
+    Retorna True se enviou pelo menos 1 imagem.
+    """
+    if not caption:
+        return False
+    try:
+        from models import FabImageCache
+        from main import SessionLocal, _normalize_fab_query, _fab_cache_save
+        norm = _normalize_fab_query(caption)
+        if not norm:
+            return False
+
+        # ── 1) Tenta cache ──────────────────────────────────────────────────
+        file_ids: list[str] = []
+        with SessionLocal() as s:
+            cache = s.query(FabImageCache).filter(FabImageCache.query == norm).first()
+            if cache:
+                file_ids = _json.loads(cache.file_ids_json or "[]")
+
+        # ── 2) Fallback on-the-fly ──────────────────────────────────────────
+        if not file_ids:
+            LOG.info(f"[AUTO-SEND] Cache miss — buscando Fab on-the-fly para '{norm[:60]}'")
+            try:
+                from fab_scraper import fetch_fab_images
+                raw_imgs = await fetch_fab_images(norm, count=3)
+                if raw_imgs:
+                    file_ids = await _fab_cache_save(bot, norm, raw_imgs)
+                    LOG.info(f"[AUTO-SEND] {len(file_ids)} imagem(ns) salvas no cache para '{norm[:60]}'")
+            except Exception as fetch_exc:
+                LOG.warning(f"[AUTO-SEND] Falha ao buscar Fab on-the-fly para '{norm[:60]}': {fetch_exc}")
+
+        if not file_ids:
+            LOG.info(f"[AUTO-SEND] Nenhuma imagem Fab disponível para '{norm[:60]}'")
+            return False
+
+        # ── 3) Envia ────────────────────────────────────────────────────────
+        media = [
+            InputMediaPhoto(media=fid, caption=f"Imagem {i}")
+            for i, fid in enumerate(file_ids, 1)
+        ]
+        await bot.send_media_group(chat_id=channel_id, media=media)
+        LOG.info(f"[AUTO-SEND] {len(file_ids)} imagem(ns) Fab enviada(s) para '{caption[:60]}'")
+        return True
+    except Exception as exc:
+        LOG.warning(f"[AUTO-SEND] Falha ao enviar imagens Fab para '{caption[:60]}': {exc}")
+        return False
+
+
 async def send_daily_vip_file(bot: Bot, session: Session):
     """
     Envia arquivo diário para o canal VIP (executa às 15h).
@@ -661,13 +769,18 @@ async def send_daily_vip_file(bot: Bot, session: Session):
 
         if not source_file:
             LOG.warning("[AUTO-SEND] ⚠️ Nenhum arquivo novo disponível para VIP")
-            # Enviar notificação ao admin se necessário
             return
 
         # Buscar todas as partes relacionadas (se houver)
         all_parts = get_all_parts(session, source_file)
 
-        LOG.info(f"[AUTO-SEND] Enviando {len(all_parts)} parte(s) para VIP")
+        _fab_title_vip = (source_file.caption or source_file.file_name or "").strip()
+        LOG.info(f"[AUTO-SEND] Arquivo selecionado: '{_fab_title_vip[:80]}' — {len(all_parts)} parte(s) para VIP")
+
+        # Enviar imagens Fab.com para o canal VIP antes do pack
+        fab_ok = await _send_fab_images_for_caption(bot, VIP_CHANNEL_ID, _fab_title_vip)
+        if not fab_ok:
+            LOG.warning(f"[AUTO-SEND] ⚠️ Sem imagem Fab para '{_fab_title_vip[:60]}' — enviando só o arquivo")
 
         # Verificar se pode enviar como media group (máximo 10 arquivos, apenas videos/photos)
         can_use_media_group = (
@@ -743,24 +856,26 @@ async def send_daily_vip_file(bot: Bot, session: Session):
         LOG.error(traceback.format_exc())
 
 
-async def send_weekly_free_file(bot: Bot, session: Session):
+async def send_weekly_free_file(bot: Bot, session: Session, force: bool = False):
     """
     Envia arquivo semanal para o canal FREE (quartas às 15h).
     Se o arquivo tiver partes (001, 002, etc), envia todas as partes juntas.
+    force=True ignora a verificação de quarta-feira (usado pelo /agendar_free).
     """
     LOG.info("[AUTO-SEND] 🎯 Verificando envio semanal FREE")
 
-    # Verificar se é quarta-feira
-    if datetime.now().weekday() != 2:  # 0=segunda, 2=quarta
+    # Verificar se é quarta-feira (ignorar se force=True)
+    if not force and datetime.now().weekday() != 2:  # 0=segunda, 2=quarta
         LOG.info(f"[AUTO-SEND] Hoje não é quarta-feira (dia: {datetime.now().strftime('%A')}), pulando envio FREE")
         return
 
-    LOG.info("[AUTO-SEND] ✅ É quarta-feira! Iniciando envio FREE")
+    LOG.info("[AUTO-SEND] ✅ Iniciando envio FREE")
 
     if not FREE_CHANNEL_ID:
         LOG.error("[AUTO-SEND] ❌ FREE_CHANNEL_ID não configurado!")
         return
 
+    await _FREE_CHANNEL_LOCK.acquire()
     try:
         # Buscar arquivo aleatório não enviado
         source_file = await get_random_file_from_source(session, 'free')
@@ -768,6 +883,10 @@ async def send_weekly_free_file(bot: Bot, session: Session):
         if not source_file:
             LOG.warning("[AUTO-SEND] ⚠️ Nenhum arquivo novo disponível para FREE")
             return
+
+        # Enviar imagens Fab.com antes do pack (caption ou nome do arquivo)
+        _fab_title_free = (source_file.caption or source_file.file_name or "").strip()
+        await _send_fab_images_for_caption(bot, FREE_CHANNEL_ID, _fab_title_free)
 
         # Buscar todas as partes relacionadas (se houver)
         all_parts = get_all_parts(session, source_file)
@@ -833,8 +952,8 @@ async def send_weekly_free_file(bot: Bot, session: Session):
         if success_count == len(all_parts):
             LOG.info(f"[AUTO-SEND] ✅ Envio FREE semanal concluído: {success_count} parte(s)")
 
-            # === REPLICAR NO VIP (mesmo arquivo nos 2 grupos) ===
-            if VIP_CHANNEL_ID:
+            # === REPLICAR NO VIP (apenas no envio automático, não no /agendar_free) ===
+            if VIP_CHANNEL_ID and not force:
                 LOG.info("[AUTO-SEND] 📤 Replicando arquivo FREE no canal VIP...")
 
                 # Verificar quais partes já foram enviadas ao VIP
@@ -904,8 +1023,8 @@ async def send_weekly_free_file(bot: Bot, session: Session):
 
                     LOG.info(f"[AUTO-SEND] 🎁 Bônus VIP enviado: {bonus_success}/{len(bonus_parts)} parte(s)")
 
-                    # Enviar teaser do bônus para o FREE
-                    await send_teaser_to_free(bot, bonus_parts)
+                    # Enviar teaser do bônus para o FREE (sem re-adquirir o lock)
+                    await _send_teaser_to_free_inner(bot, bonus_parts)
                 else:
                     LOG.warning("[AUTO-SEND] ⚠️ Nenhum arquivo disponível para bônus VIP")
 
@@ -918,6 +1037,8 @@ async def send_weekly_free_file(bot: Bot, session: Session):
         LOG.error(f"[AUTO-SEND] ❌ Erro no envio FREE semanal: {e}")
         import traceback
         LOG.error(traceback.format_exc())
+    finally:
+        _FREE_CHANNEL_LOCK.release()
 
 
 def setup_auto_sender(vip_channel: int, free_channel: int, source_file_class=None, sent_file_class=None):
@@ -1133,109 +1254,111 @@ def setup_catalog(cfg_get_func, cfg_set_func):
 def _build_catalog_content(session: Session) -> str:
     """
     Gera o conteúdo do catálogo .txt com:
-    1. Todos os arquivos já enviados ao VIP (com data)
-    2. Arquivos futuros que ainda serão enviados (sem data)
-    Sem limite de tamanho — será enviado como arquivo.
+    1. Arquivos já enviados ao VIP (com data)
+    2. Arquivos já enviados ao FREE (com data)
+    3. Arquivos pendentes (não enviados em nenhum canal)
     """
     from config import SOURCE_CHAT_ID as src_id
 
-    # === ARQUIVOS JÁ ENVIADOS ===
-    sent_records = session.query(SentFile).filter(
-        SentFile.sent_to_tier == 'vip',
-        SentFile.source_chat_id == src_id
-    ).order_by(SentFile.sent_at.desc()).all()
+    def _size_str(file_size):
+        if not file_size:
+            return ""
+        size_mb = file_size / (1024 * 1024)
+        return f" [{size_mb:.1f} MB]" if size_mb >= 1 else f" [{file_size / 1024:.0f} KB]"
 
-    sent_unique_ids = {r.file_unique_id for r in sent_records}
+    def _sent_section(tier_label: str, tier: str) -> tuple[list[str], set]:
+        """Retorna (linhas formatadas, set de file_unique_ids enviados)."""
+        records = session.query(SentFile).filter(
+            SentFile.sent_to_tier == tier,
+            SentFile.source_chat_id == src_id
+        ).order_by(SentFile.sent_at.desc()).all()
 
-    # === ARQUIVOS FUTUROS (indexados mas não enviados) ===
-    future_query = session.query(SourceFile).filter(
+        unique_ids = {r.file_unique_id for r in records}
+
+        source_map = {}
+        if unique_ids:
+            sources = session.query(SourceFile).filter(
+                SourceFile.file_unique_id.in_(unique_ids)
+            ).all()
+            source_map = {s.file_unique_id: s for s in sources}
+
+        sec = []
+        sec.append(f"┌────────────────────────────────────────┐")
+        sec.append(f"│  ENVIADOS NO {tier_label:<27}│")
+        sec.append(f"└────────────────────────────────────────┘\n")
+
+        if not records:
+            sec.append("  Nenhum arquivo enviado ainda.\n")
+            return sec, unique_ids
+
+        months: dict = {}
+        for rec in records:
+            src = source_map.get(rec.file_unique_id)
+            name = (src.file_name if src and src.file_name else None) or rec.caption or "Arquivo sem nome"
+            sz = _size_str(src.file_size if src else None)
+            month_key = rec.sent_at.strftime('%m/%Y') if rec.sent_at else "Desconhecido"
+            day_str = rec.sent_at.strftime('%d/%m') if rec.sent_at else "??"
+            months.setdefault(month_key, []).append(f"  [{day_str}] {name}{sz}")
+
+        for month, items in months.items():
+            sec.append(f"--- {month} ({len(items)} arquivo(s)) ---")
+            sec.extend(items)
+            sec.append("")
+
+        return sec, unique_ids
+
+    vip_lines, vip_ids   = _sent_section("VIP", "vip")
+    free_lines, free_ids = _sent_section("FREE", "free")
+
+    # --- Arquivos pendentes: não enviados nem para VIP nem para FREE ---
+    sent_all_ids = vip_ids | free_ids
+    pending_query = session.query(SourceFile).filter(
         SourceFile.source_chat_id == src_id,
         SourceFile.active == True,
         SourceFile.file_type.in_(['document', 'video', 'audio', 'animation'])
     )
-    if sent_unique_ids:
-        future_query = future_query.filter(~SourceFile.file_unique_id.in_(sent_unique_ids))
-    future_files = future_query.order_by(SourceFile.file_name).all()
+    if sent_all_ids:
+        pending_query = pending_query.filter(~SourceFile.file_unique_id.in_(sent_all_ids))
+    pending_files = pending_query.order_by(SourceFile.file_name).all()
 
-    total_geral = len(sent_records) + len(future_files)
+    pending_lines = []
+    pending_lines.append("┌────────────────────────────────────────┐")
+    pending_lines.append("│  PENDENTES — PRÓXIMOS A ENVIAR         │")
+    pending_lines.append("└────────────────────────────────────────┘\n")
 
+    if not pending_files:
+        pending_lines.append("  Todos os arquivos já foram enviados!\n")
+    else:
+        for f in pending_files:
+            name = f.file_name or f.caption or "Arquivo sem nome"
+            pending_lines.append(f"  - {name}{_size_str(f.file_size)}")
+
+    pending_lines.append("")
+
+    # --- Cabeçalho ---
+    total = len(vip_ids) + len(free_ids) + len(pending_files)
     header = (
         "╔════════════════════════════════════════╗\n"
-        "║     CATÁLOGO VIP — ARQUIVOS            ║\n"
+        "║     CATÁLOGO — TODOS OS ARQUIVOS       ║\n"
         "╚════════════════════════════════════════╝\n\n"
         f"Atualizado em: {datetime.now().strftime('%d/%m/%Y %H:%M')}\n"
-        f"Arquivos já enviados: {len(sent_records)}\n"
-        f"Arquivos a caminho: {len(future_files)}\n"
-        f"Total geral: {total_geral}\n\n"
+        f"Enviados no VIP : {len(vip_ids)}\n"
+        f"Enviados no FREE: {len(free_ids)}\n"
+        f"Pendentes       : {len(pending_files)}\n"
+        f"Total geral     : {total}\n\n"
         "Use Ctrl+F para pesquisar pelo nome do arquivo.\n"
         "════════════════════════════════════════\n\n"
+        "We have ALL the Assets!\n"
+        "Caso não esteja na lista, solicite ao suporte ⚠️\n\n"
     )
-
-    # --- Seção: Arquivos já enviados ---
-    lines = []
-    lines.append("┌────────────────────────────────────────┐")
-    lines.append("│  ARQUIVOS JÁ ENVIADOS                  │")
-    lines.append("└────────────────────────────────────────┘\n")
-
-    if not sent_records:
-        lines.append("  Nenhum arquivo enviado ainda.\n")
-    else:
-        # Buscar detalhes dos arquivos enviados
-        source_map = {}
-        if sent_unique_ids:
-            sources = session.query(SourceFile).filter(
-                SourceFile.file_unique_id.in_(sent_unique_ids)
-            ).all()
-            source_map = {s.file_unique_id: s for s in sources}
-
-        # Agrupar por mês de envio
-        months = {}
-        for rec in sent_records:
-            src = source_map.get(rec.file_unique_id)
-            name = src.file_name if src and src.file_name else rec.caption or "Arquivo sem nome"
-            size_str = ""
-            if src and src.file_size:
-                size_mb = src.file_size / (1024 * 1024)
-                size_str = f" [{size_mb:.1f} MB]" if size_mb >= 1 else f" [{src.file_size / 1024:.0f} KB]"
-
-            month_key = rec.sent_at.strftime('%m/%Y') if rec.sent_at else "Desconhecido"
-            day_str = rec.sent_at.strftime('%d/%m') if rec.sent_at else "??"
-
-            if month_key not in months:
-                months[month_key] = []
-            months[month_key].append(f"  [{day_str}] {name}{size_str}")
-
-        for month, items in months.items():
-            lines.append(f"--- {month} ({len(items)} arquivo(s)) ---")
-            lines.extend(items)
-            lines.append("")
-
-    # --- Seção: Arquivos futuros ---
-    lines.append("")
-    lines.append("┌────────────────────────────────────────┐")
-    lines.append("│  EM BREVE — PRÓXIMOS ARQUIVOS          │")
-    lines.append("└────────────────────────────────────────┘\n")
-
-    if not future_files:
-        lines.append("  Todos os arquivos já foram enviados!\n")
-    else:
-        for f in future_files:
-            name = f.file_name or f.caption or "Arquivo sem nome"
-            size_str = ""
-            if f.file_size:
-                size_mb = f.file_size / (1024 * 1024)
-                size_str = f" [{size_mb:.1f} MB]" if size_mb >= 1 else f" [{f.file_size / 1024:.0f} KB]"
-            lines.append(f"  - {name}{size_str}")
-
-    lines.append("")
 
     footer = (
-        "════════════════════════════════════════\n"
+        "\n════════════════════════════════════════\n"
         "Esta lista é atualizada diariamente.\n"
-        "Novos arquivos são adicionados todo dia às 15h.\n"
     )
 
-    return header + "\n".join(lines) + "\n" + footer
+    all_lines = vip_lines + [""] + free_lines + [""] + pending_lines
+    return header + "\n".join(all_lines) + footer
 
 
 async def _send_catalog_to_channel(bot: Bot, channel_id: int, config_key: str, catalog_content: str, caption: str):

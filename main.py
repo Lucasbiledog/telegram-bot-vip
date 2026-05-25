@@ -92,7 +92,15 @@ from sqlalchemy.engine import make_url
 
 # Importar apenas User, PendingNotification e MemberLog do models.py
 # Pack e Payment já estão definidos no main.py com mais campos
-from models import User, PendingNotification, MemberLog, SupportTicket, Base as ModelsBase
+from models import User, PendingNotification, MemberLog, SupportTicket, FabImageCache, FreeGroupMember, Base as ModelsBase
+
+# Fab.com image scraper
+try:
+    from fab_scraper import fetch_fab_images, to_input_media as fab_to_input_media
+    FAB_SCRAPER_AVAILABLE = True
+except ImportError:
+    FAB_SCRAPER_AVAILABLE = False
+    logging.warning("fab_scraper não disponível")
 
 # === Funções de Retry Automático ===
 async def send_with_retry(func, *args, max_retries=3, **kwargs):
@@ -388,28 +396,24 @@ else:
     connect_args = {}
     if url.drivername.startswith("postgresql"):
         connect_args = {
-            "application_name": "telegram_bot",
-            "connect_timeout": 30,  # Aumentado para 30s
-            "sslmode": "prefer",  # prefer é mais tolerante que require
+            # Sem application_name — pgbouncer (Supabase port 6543) não suporta SET em transaction mode
+            "connect_timeout": 30,
             "keepalives": 1,
             "keepalives_idle": 30,
             "keepalives_interval": 10,
-            "keepalives_count": 5
+            "keepalives_count": 5,
         }
 
     engine = create_engine(
         url,
-        pool_pre_ping=True,  # Testa conexão antes de usar
+        pool_pre_ping=True,       # Testa conexão antes de usar (detecta drops silenciosos)
         future=True,
-        pool_size=20,  # Reduzido de 50 para 20
-        max_overflow=40,  # Reduzido de 100 para 40
-        pool_timeout=30,  # Aumentado de 5 para 30s
-        pool_recycle=3600,  # 1 hora (aumentado de 30min)
+        pool_size=5,              # Supabase free: máx 15 conexões diretas; pooler aguenta mais
+        max_overflow=10,
+        pool_timeout=30,
+        pool_recycle=300,         # 5 min — compatível com pgbouncer transaction mode (Supabase)
         echo=False,
         connect_args=connect_args,
-        execution_options={
-            "isolation_level": "READ COMMITTED"
-        }
     )
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 # Usar a Base do models.py para que todas as tabelas sejam criadas juntas
@@ -428,6 +432,10 @@ def ensure_bigint_columns():
                 pass
             try:
                 conn.execute(text("ALTER TABLE payments ALTER COLUMN user_id TYPE BIGINT USING user_id::bigint"))
+            except Exception:
+                pass
+            try:
+                conn.execute(text("ALTER TABLE support_tickets ALTER COLUMN user_id TYPE BIGINT USING user_id::bigint"))
             except Exception:
                 pass
     except Exception as e:
@@ -559,6 +567,47 @@ def ensure_payment_fields():
     except Exception as e:
         logging.warning("Falha ensure_payment_fields: %s", e)
 
+def ensure_member_log_fields():
+    """Adiciona group_type ao member_logs, corrige user_id para BIGINT e cria free_group_members"""
+    # Cada operação em transação separada — no PostgreSQL um erro aborta toda a transação
+    try:
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE member_logs ADD COLUMN group_type VARCHAR(10) DEFAULT 'vip'"))
+            logging.info("✅ [MIGR] group_type adicionado ao member_logs")
+    except Exception:
+        pass  # coluna já existe
+
+    try:
+        with engine.begin() as conn:
+            result = conn.execute(text("""
+                SELECT data_type FROM information_schema.columns
+                WHERE table_name='member_logs' AND column_name='user_id'
+            """)).fetchone()
+            col_type = result[0].lower() if result else ""
+            logging.info(f"[MIGR] user_id tipo atual: {col_type}")
+            if col_type and col_type != 'bigint':
+                conn.execute(text(
+                    "ALTER TABLE member_logs ALTER COLUMN user_id TYPE BIGINT USING user_id::bigint"
+                ))
+                logging.info("✅ [MIGR] user_id convertido para BIGINT no member_logs")
+    except Exception as e:
+        logging.warning(f"[MIGR] Falha ao converter user_id para BIGINT: {e}")
+
+    try:
+        with engine.begin() as conn:
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS free_group_members (
+                    id SERIAL PRIMARY KEY,
+                    user_id BIGINT UNIQUE NOT NULL,
+                    username VARCHAR(64),
+                    first_name VARCHAR(120),
+                    joined_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+                )
+            """))
+            logging.info("✅ [MIGR] Tabela free_group_members garantida")
+    except Exception as e:
+        logging.warning(f"[MIGR] Falha ao criar free_group_members: {e}")
+
 class VipPlan(str, Enum):
     TRIMESTRAL = "TRIMESTRAL"
     SEMESTRAL = "SEMESTRAL"
@@ -582,6 +631,7 @@ def init_db():
         try:
             logging.info(f"[DB] Tentativa {attempt + 1}/{max_retries} de conectar ao banco...")
             Base.metadata.create_all(bind=engine)
+            ensure_member_log_fields()
             logging.info(f"[DB] ✅ Conexão estabelecida com sucesso!")
             break
         except Exception as e:
@@ -670,7 +720,13 @@ def ensure_schema():
         ensure_vip_notification_columns()
         ensure_vip_plan_column()
         ensure_payment_fields()
+        ensure_member_log_fields()
         ensure_critical_indexes()  # Criar índices para alta performance
+        # Garante tabela de cache de imagens Fab.com
+        try:
+            FabImageCache.__table__.create(bind=engine, checkfirst=True)
+        except Exception:
+            pass
         
         # Show appropriate success message based on database type
         db_type = "PostgreSQL" if url.get_backend_name() == "postgresql" else "SQLite"
@@ -719,28 +775,23 @@ def ensure_schema():
                 connect_args = {}
                 if url.drivername.startswith("postgresql"):
                     connect_args = {
-                        "application_name": "telegram_bot",
-                        "connect_timeout": 30,  # Aumentado para 30s
-                        "sslmode": "prefer",  # prefer é mais tolerante que require
+                        "connect_timeout": 30,
                         "keepalives": 1,
                         "keepalives_idle": 30,
                         "keepalives_interval": 10,
-                        "keepalives_count": 5
+                        "keepalives_count": 5,
                     }
 
                 engine = create_engine(
                     url,
-                    pool_pre_ping=True,  # Testa conexão antes de usar
+                    pool_pre_ping=True,
                     future=True,
-                    pool_size=20,  # Reduzido de 50 para 20
-                    max_overflow=40,  # Reduzido de 100 para 40
-                    pool_timeout=30,  # Aumentado de 5 para 30s
-                    pool_recycle=3600,  # 1 hora (aumentado de 30min)
+                    pool_size=5,
+                    max_overflow=10,
+                    pool_timeout=30,
+                    pool_recycle=300,   # 5 min — compatível com Supabase pgbouncer
                     echo=False,
                     connect_args=connect_args,
-                    execution_options={
-                        "isolation_level": "READ COMMITTED"
-                    }
                 )
             SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
@@ -752,6 +803,7 @@ def ensure_schema():
                 ensure_vip_invite_column()
                 ensure_vip_notification_columns()
                 ensure_vip_plan_column()
+                ensure_member_log_fields()
                 print("Successfully initialized with in-memory database")
             except Exception as fallback_error:
                 print(f"Critical error: Even in-memory database failed: {fallback_error}")
@@ -1191,7 +1243,7 @@ WEBAPP_LINK_SECRET = os.getenv("WEBAPP_LINK_SECRET", "")
 STORAGE_GROUP_ID       = int(os.getenv("STORAGE_GROUP_ID", "-4806334341"))
 GROUP_VIP_ID           = int(os.getenv("Group_VIP_ID", os.getenv("GROUP_VIP_ID", "-1003255098941")))
 STORAGE_GROUP_FREE_ID  = int(os.getenv("STORAGE_GROUP_FREE_ID", "-1002509364079"))
-GROUP_FREE_ID          = int(os.getenv("GROUP_FREE_ID", "-1002932075976"))
+GROUP_FREE_ID          = int(os.getenv("GROUP_FREE_ID", "-1003288702359"))
 PACK_ADMIN_CHAT_ID     = int(os.getenv("PACK_ADMIN_CHAT_ID", "-1003080645605"))
 
 # Novos IDs para sistema de envio automático
@@ -1267,6 +1319,19 @@ import os
 webapp_dir = os.path.join(os.path.dirname(__file__), "webapp")
 if os.path.exists(webapp_dir):
     app.mount("/webapp", StaticFiles(directory=webapp_dir), name="webapp")
+
+from starlette.middleware.base import BaseHTTPMiddleware
+
+class NoCacheWebappMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        response = await call_next(request)
+        if request.url.path.startswith("/webapp") or request.url.path.startswith("/pay"):
+            response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+            response.headers["Pragma"] = "no-cache"
+            response.headers["Expires"] = "0"
+        return response
+
+app.add_middleware(NoCacheWebappMiddleware)
 
 # =========================
 # HEALTH CHECK & MONITORING ENDPOINTS
@@ -2539,7 +2604,9 @@ async def storage_media_handler(update: Update, context: ContextTypes.DEFAULT_TY
 SENDING_PACKS = set()
 
 async def _try_copy_message(context: ContextTypes.DEFAULT_TYPE, target_chat_id: int, pf: PackFile, caption: Optional[str] = None) -> bool:
-    if not (pf.src_chat_id and pf.src_message_id): return False
+    if not (pf.src_chat_id and pf.src_message_id):
+        logging.warning(f"[copy_message] id={pf.id} sem src_chat_id/src_message_id — ignorado")
+        return False
     try:
         await context.application.bot.copy_message(
             chat_id=target_chat_id,
@@ -2547,9 +2614,11 @@ async def _try_copy_message(context: ContextTypes.DEFAULT_TYPE, target_chat_id: 
             message_id=pf.src_message_id,
             caption=caption if caption else None,
             parse_mode="HTML" if caption else None
-        ); return True
+        )
+        return True
     except Exception as e:
-        logging.warning(f"[copy_message] Falhou para item {pf.id}: {e}"); return False
+        logging.warning(f"[copy_message] Falhou id={pf.id} src={pf.src_chat_id}/{pf.src_message_id}: {e}")
+        return False
 
 async def _create_checkout_keyboard():
     """Cria o teclado inline com botão de checkout"""
@@ -2576,12 +2645,13 @@ async def _create_checkout_keyboard():
 
 async def _try_send_photo(context: ContextTypes.DEFAULT_TYPE, target_chat_id: int, pf: PackFile, caption: Optional[str] = None) -> bool:
     try:
-        await context.application.bot.send_photo(chat_id=target_chat_id, photo=pf.file_id, caption=caption); return True
+        await context.application.bot.send_photo(chat_id=target_chat_id, photo=pf.file_id, caption=caption)
+        return True
     except BadRequest as e:
-        logging.warning(f"[send_photo] Falha {pf.id}: {e}. Tentando copy_message.")
+        logging.warning(f"[send_photo] BadRequest id={pf.id} chat={target_chat_id}: {e}. Tentando copy_message.")
         return await _try_copy_message(context, target_chat_id, pf, caption=caption)
     except Exception as e:
-        logging.warning(f"[send_photo] Erro {pf.id}: {e}. Tentando copy_message.")
+        logging.warning(f"[send_photo] Erro id={pf.id} chat={target_chat_id} tipo={type(e).__name__}: {e}. Tentando copy_message.")
         return await _try_copy_message(context, target_chat_id, pf, caption=caption)
 
 async def _try_send_video_or_animation(context: ContextTypes.DEFAULT_TYPE, target_chat_id: int, pf: PackFile, caption: Optional[str] = None) -> bool:
@@ -2619,57 +2689,78 @@ async def _try_send_document_like(context: ContextTypes.DEFAULT_TYPE, target_cha
         return await _try_copy_message(context, target_chat_id, pf, caption=caption)
 
 
+async def _store_fab_images(bot, pack_id: int, imgs: list) -> list:
+    """
+    Faz upload de cada imagem (bytes) no Telegram via LOGS_GROUP_ID,
+    obtém file_ids estáveis e persiste como PackFile(role='fab_image').
+    Retorna lista de file_ids salvos.
+    """
+    import io as _io
+
+    # Remove entradas antigas para este pack (evita duplicatas ao re-rodar)
+    with SessionLocal() as s:
+        old = s.query(PackFile).filter(
+            PackFile.pack_id == pack_id,
+            PackFile.role == "fab_image",
+        ).all()
+        for o in old:
+            s.delete(o)
+        s.commit()
+
+    file_ids: list = []
+    for i, img_bytes in enumerate(imgs, 1):
+        try:
+            sent = await bot.send_photo(
+                chat_id=LOGS_GROUP_ID,
+                photo=_io.BytesIO(img_bytes),
+                caption=f"[fab-cache] pack#{pack_id} imagem {i}",
+            )
+            photo = sent.photo[-1]
+            with SessionLocal() as s:
+                pf = PackFile(
+                    pack_id=pack_id,
+                    file_id=photo.file_id,
+                    file_unique_id=photo.file_unique_id,
+                    file_type="photo",
+                    role="fab_image",
+                    file_name=f"fab_{i}.jpg",
+                )
+                s.add(pf)
+                s.commit()
+            file_ids.append(photo.file_id)
+            logging.info(f"[fab_store] pack#{pack_id} imagem {i} armazenada (fid={photo.file_id[:20]}...)")
+        except Exception as exc:
+            logging.warning(f"[fab_store] Erro ao salvar imagem {i} do pack #{pack_id}: {exc}")
+
+    return file_ids
+
+
 async def _send_preview_media(context: ContextTypes.DEFAULT_TYPE, target_chat_id: int, previews: List[PackFile], is_crosspost: bool = False) -> Dict[str, int]:
     counts = {"photos": 0, "videos": 0, "animations": 0}
-    photo_items = [pf for pf in previews if pf.file_type == "photo"]
-    if photo_items:
-        # Agrupar fotos para uma melhor apresentação visual
-        media = []
-        for pf in photo_items:
-            try: media.append(InputMediaPhoto(media=pf.file_id))
-            except Exception: media = []; break
-        
-        if media and len(media) > 1:
-            # Para múltiplas fotos, sempre enviar como media_group para agrupamento
-            try:
-                await context.application.bot.send_media_group(chat_id=target_chat_id, media=media[:10])  # Telegram limita a 10
-                counts["photos"] += len(media[:10])
-                # Se houver mais de 10 fotos, enviar o resto em grupos separados
-                if len(media) > 10:
-                    remaining = media[10:]
-                    while remaining:
-                        batch = remaining[:10]
-                        remaining = remaining[10:]
-                        try:
-                            await context.application.bot.send_media_group(chat_id=target_chat_id, media=batch)
-                            counts["photos"] += len(batch)
-                        except Exception as e:
-                            logging.warning(f"[send_preview_media] Falha media_group adicional: {e}")
-                            for item in batch:
-                                try:
-                                    await context.application.bot.send_photo(chat_id=target_chat_id, photo=item.media)
-                                    counts["photos"] += 1
-                                except Exception:
-                                    pass
-            except Exception as e:
-                logging.warning(f"[send_preview_media] Falha media_group: {e}. Enviando foto a foto.")
-                for pf in photo_items:
-                    if await _try_send_photo(context, target_chat_id, pf, caption=None):
-                        counts["photos"] += 1
-        elif media:
-            # Para uma única foto, enviar normalmente
-            if await _try_send_photo(context, target_chat_id, photo_items[0], caption=None):
-                counts["photos"] += 1
-        else:
-            # Fallback para envio individual
-            for pf in photo_items:
-                if await _try_send_photo(context, target_chat_id, pf, caption=None):
-                    counts["photos"] += 1
 
-    other_prev = [pf for pf in previews if pf.file_type in ("video", "animation")]
-    for pf in other_prev:
-        if await _try_send_video_or_animation(context, target_chat_id, pf, caption=None):
-            counts["videos" if pf.file_type == "video" else "animations"] += 1
+    logging.info(f"[send_preview_media] chat={target_chat_id} crosspost={is_crosspost} total_previews={len(previews)}")
+    for i, pf in enumerate(previews):
+        logging.info(f"[send_preview_media] preview[{i}] id={pf.id} type={pf.file_type} fid={str(pf.file_id)[:30] if pf.file_id else 'None'}")
+
+    # Envia cada arquivo de preview individualmente
+    for pf in previews:
+        if pf.file_type == "photo":
+            ok = await _try_send_photo(context, target_chat_id, pf, caption=None)
+            logging.info(f"[send_preview_media] photo id={pf.id} -> {'OK' if ok else 'FALHOU'}")
+            if ok:
+                counts["photos"] += 1
+        elif pf.file_type == "video":
+            ok = await _try_send_video_or_animation(context, target_chat_id, pf, caption=None)
+            logging.info(f"[send_preview_media] video id={pf.id} -> {'OK' if ok else 'FALHOU'}")
+            if ok:
+                counts["videos"] += 1
+        elif pf.file_type == "animation":
+            ok = await _try_send_video_or_animation(context, target_chat_id, pf, caption=None)
+            logging.info(f"[send_preview_media] animation id={pf.id} -> {'OK' if ok else 'FALHOU'}")
+            if ok:
+                counts["animations"] += 1
+
+    logging.info(f"[send_preview_media] resultado chat={target_chat_id}: {counts}")
     
     # Adicionar botão de checkout apenas quando é crosspost VIP->FREE (não em envios diretos do pack FREE)
     if target_chat_id == GROUP_FREE_ID and is_crosspost and (counts["photos"] > 0 or counts["videos"] > 0 or counts["animations"] > 0):
@@ -2678,19 +2769,16 @@ async def _send_preview_media(context: ContextTypes.DEFAULT_TYPE, target_chat_id
         
         keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton(
-                "💳 Abrir Página de Pagamento",
-                callback_data="checkout_callback"
+                "👉 Clique aqui para assinar",
+                url="https://t.me/UnrealPack5_bot?start=vip"
             )]
         ])
-        
-        # Mensagem completa com informações de pagamento
+
         checkout_msg = (
-            "💸 <b>Quer ver o conteúdo completo?</b>\n\n"
-            "✅ Clique no botão abaixo para abrir a página de pagamento\n"
-            "🔒 Pague com qualquer criptomoeda\n"
-            "⚡ Ativação automática\n\n"
-            "💰 <b>Planos:</b>\n"
-            f"{vip_plans_text_usd()}"
+            "We have ALL the Assets!\n"
+            "Caso não esteja na lista, solicite ao suporte ⚠️\n\n"
+            "👀 <b>Preview do conteúdo VIP de hoje!</b>\n\n"
+            "💎 Quer ter acesso completo? Assine o VIP!"
         )
         
         try:
@@ -2751,6 +2839,43 @@ async def enviar_pack_job(context: ContextTypes.DEFAULT_TYPE, tier: str, target_
 
         if tier == "free":
             # GRUPO FREE: Pack completo como bonificação semanal
+
+            # --- Imagens Fab.com: usa armazenadas ou busca on-the-fly ---
+            if FAB_SCRAPER_AVAILABLE:
+                try:
+                    with SessionLocal() as s:
+                        fab_files = (
+                            s.query(PackFile)
+                            .filter(PackFile.pack_id == p.id, PackFile.role == "fab_image")
+                            .order_by(PackFile.id.asc())
+                            .all()
+                        )
+                        fab_fids = [f.file_id for f in fab_files]
+
+                    # Sem armazenadas: busca no Fab.com agora e persiste
+                    if not fab_fids:
+                        logging.info(f"[fab] Buscando imagens on-the-fly para '{p.title}'...")
+                        raw = await fetch_fab_images(p.title, count=3)
+                        if raw:
+                            fab_fids = await _store_fab_images(
+                                context.application.bot, p.id, raw
+                            )
+
+                    if fab_fids:
+                        # Cada imagem com legenda "Imagem N"
+                        media = [
+                            InputMediaPhoto(media=fid, caption=f"Imagem {i}")
+                            for i, fid in enumerate(fab_fids, 1)
+                        ]
+                        await context.application.bot.send_media_group(
+                            chat_id=target_chat_id,
+                            media=media,
+                        )
+                        logging.info(f"[fab] {len(fab_fids)} imagem(ns) enviada(s) para pack '{p.title}'")
+                    else:
+                        logging.info(f"[fab] Nenhuma imagem encontrada para '{p.title}'")
+                except Exception as fab_err:
+                    logging.warning(f"[fab] Falha ao enviar imagens Fab para '{p.title}': {fab_err}")
 
             # Enviar mensagem personalizada
             now = datetime.now()
@@ -3451,6 +3576,9 @@ async def comandos_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🛠 <b>Admin</b>",
         "• /simularvip — envia o próximo pack VIP pendente",
         "• /simularfree — envia o próximo pack FREE pendente",
+        "• /fab_teasers — envia previews Fab.com de todos os packs FREE pendentes",
+        "• /fab_teasers <id> — preview Fab.com de um pack específico",
+        "• /fab_teasers test <titulo> — testa busca no Fab.com sem enviar ao grupo",
         "• /listar_packs — lista todos os packs (VIP e FREE)",
         "• /pack_info <id> — detalhes do pack",
         "• /excluir_item <id_item> — remove item do pack",
@@ -4707,7 +4835,221 @@ async def listar_packsfree_cmd(update: Update, context: ContextTypes.DEFAULT_TYP
                 f"[{p.id}] {esc(p.title)} — {status} — previews:{previews} arquivos:{docs} — {p.created_at.strftime('%d/%m %H:%M')}{ag}"
             )
         await update.effective_message.reply_text("\n".join(lines))
-   
+
+
+def _normalize_fab_query(raw: str) -> str:
+    """
+    Limpa o nome de arquivo/caption para usar como query no Fab.com.
+    Remove: extensões, underscores, versões, 'Unreal Engine', emojis, Part N.
+    """
+    import re
+    q = raw.strip()
+    # Remove emoji e similares no início
+    q = re.sub(r'^[\U00010000-\U0010ffff\U0001F300-\U0001FAFF\U00002700-\U000027BF\s📦📁🗂️]+', '', q)
+    # Remove extensões de arquivo (incluindo .zip.txt)
+    q = re.sub(r'\.(zip|rar|7z|tar\.gz|gz|pak|uasset|umap|fbx|obj|txt)(\.[a-z]{1,4})?', '', q, flags=re.IGNORECASE)
+    # Troca underscores por espaços (nomes de arquivo como medieval_harbor_kit)
+    q = q.replace('_', ' ')
+    # Remove versões com underscores tipo "4 26", "5 5", "4 27" após substituição
+    q = re.sub(r'\b(\d)\s(\d{1,2})\b', '', q)
+    # Remove versões com ponto tipo "5.6", "4.26"
+    q = re.sub(r'\b\d+\.\d+\b', '', q)
+    # Remove "Unreal Engine" / "UE5" / "UE4"
+    q = re.sub(r'\b(Unreal\s*Engine|UE\d+)\b', '', q, flags=re.IGNORECASE)
+    # Remove "- Part N" ou "- Part" no final
+    q = re.sub(r'\s*[-–]\s*[Pp]art\s*\d*\s*$', '', q)
+    # Remove colchetes e parênteses
+    q = re.sub(r'\[.*?\]|\(.*?\)', '', q)
+    # Limpa pontuação residual e espaços duplos
+    q = re.sub(r'\s+', ' ', q).strip(' -–_.,')
+    return q
+
+
+async def _fab_cache_save(bot, query: str, imgs: list) -> list:
+    """
+    Faz upload das imagens para o Telegram (via LOGS_GROUP_ID), obtém file_ids
+    e salva/atualiza o FabImageCache para a query dada.
+    Retorna lista de file_ids.
+    """
+    import io as _io, json as _json
+    from datetime import datetime as _dt, timezone as _tz
+    file_ids = []
+    for i, img_bytes in enumerate(imgs, 1):
+        try:
+            sent = await bot.send_photo(
+                chat_id=LOGS_GROUP_ID,
+                photo=_io.BytesIO(img_bytes),
+                caption=f"[fab-cache] {query[:80]} img{i}",
+            )
+            file_ids.append(sent.photo[-1].file_id)
+        except Exception as exc:
+            logging.warning(f"[fab_cache] Upload img{i} falhou para '{query}': {exc}")
+
+    if not file_ids:
+        return []
+
+    now = _dt.now(_tz.utc)
+    with SessionLocal() as s:
+        existing = s.query(FabImageCache).filter(FabImageCache.query == query).first()
+        if existing:
+            existing.file_ids_json = _json.dumps(file_ids)
+            existing.updated_at = now
+        else:
+            s.add(FabImageCache(query=query, file_ids_json=_json.dumps(file_ids), created_at=now))
+        s.commit()
+    return file_ids
+
+
+# Lock para /fab_teasers: impede execução simultânea
+_FAB_TEASERS_LOCK = asyncio.Lock()
+
+
+def _get_fab_pending_titles() -> list[str]:
+    """Retorna títulos normalizados ainda não salvos no FabImageCache."""
+    queries: dict[str, str] = {}
+
+    # 1) SourceFile pendentes (fila automática)
+    try:
+        with SessionLocal() as s:
+            sent_ids = {
+                row[0] for row in
+                s.query(SentFile.file_unique_id).filter(SentFile.sent_to_tier == "vip").all()
+            }
+            source_files = (
+                s.query(SourceFile)
+                .filter(SourceFile.active == True, ~SourceFile.file_unique_id.in_(sent_ids))
+                .all()
+            )
+            for sf in source_files:
+                cap = (sf.caption or "").strip()
+                if not cap:
+                    continue
+                norm = _normalize_fab_query(cap)
+                if norm and norm not in queries:
+                    queries[norm] = norm
+    except Exception as exc:
+        logging.warning(f"[fab_teasers] Erro ao ler SourceFile: {exc}")
+
+    # 2) Pack pendentes (sistema Pack/PackFile)
+    try:
+        with SessionLocal() as s:
+            packs = s.query(Pack).filter(Pack.sent == False).order_by(Pack.created_at.asc()).all()
+            for p in packs:
+                title = (p.title or "").strip()
+                if not title:
+                    continue
+                norm = _normalize_fab_query(title)
+                if norm and norm not in queries:
+                    queries[norm] = norm
+    except Exception as exc:
+        logging.warning(f"[fab_teasers] Erro ao ler Pack: {exc}")
+
+    # Remove títulos que já estão no cache
+    try:
+        with SessionLocal() as s:
+            cached = {row[0] for row in s.query(FabImageCache.query).all()}
+        return [t for t in queries if t not in cached]
+    except Exception as exc:
+        logging.warning(f"[fab_teasers] Erro ao ler FabImageCache: {exc}")
+        return list(queries.keys())
+
+
+async def fab_teasers_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /fab_teasers — baixa imagens do Fab.com para packs pendentes (1 por vez).
+    Cada chamada processa 1 título; rode novamente para o próximo.
+
+    Uso:
+      /fab_teasers              → processa o próximo título pendente
+      /fab_teasers test <titulo>→ testa busca sem salvar (mostra aqui)
+    """
+    if not (update.effective_user and is_admin(update.effective_user.id)):
+        return await update.effective_message.reply_text("Apenas admins.")
+
+    if not FAB_SCRAPER_AVAILABLE:
+        return await update.effective_message.reply_text("❌ fab_scraper não está disponível.")
+
+    args = context.args or []
+
+    # ── Modo teste ────────────────────────────────────────────────────────────
+    if args and args[0].lower() == "test":
+        titulo = " ".join(args[1:]) or "test"
+        await update.effective_message.reply_text(
+            f"🔍 Buscando imagens para: <b>{html.escape(titulo)}</b>...",
+            parse_mode="HTML",
+        )
+        imgs = await fetch_fab_images(titulo, count=3)
+        if not imgs:
+            return await update.effective_message.reply_text("❌ Nenhuma imagem encontrada no Fab.com.")
+
+        media = [
+            InputMediaPhoto(media=fab_to_input_media(b).media, caption=f"Imagem {i}")
+            for i, b in enumerate(imgs, 1)
+        ]
+        await update.effective_message.reply_media_group(media=media)
+        return await update.effective_message.reply_text(
+            f"✅ {len(imgs)} imagem(ns) encontrada(s) — <i>(modo teste, nada salvo)</i>",
+            parse_mode="HTML",
+        )
+
+    # ── Impede execução simultânea ────────────────────────────────────────────
+    if _FAB_TEASERS_LOCK.locked():
+        return await update.effective_message.reply_text(
+            "⏳ Já existe um /fab_teasers em execução. Aguarde terminar antes de enviar outro."
+        )
+
+    async with _FAB_TEASERS_LOCK:
+        # ── Busca próximo título pendente ──────────────────────────────────────
+        pendentes = _get_fab_pending_titles()
+
+        if not pendentes:
+            return await update.effective_message.reply_text(
+                "✅ Todos os packs pendentes já têm imagens no cache. Nada a processar."
+            )
+
+        titulo = pendentes[0]
+        restantes = len(pendentes) - 1
+
+        status_msg = await update.effective_message.reply_text(
+            f"⏳ Buscando imagens para:\n<b>{html.escape(titulo)}</b>\n\n"
+            f"({restantes} título(s) restante(s) na fila)",
+            parse_mode="HTML",
+        )
+
+        try:
+            imgs = await fetch_fab_images(titulo, count=3)
+            if not imgs:
+                await status_msg.edit_text(
+                    f"❌ <b>Sem imagem:</b> {html.escape(titulo)}\n\n"
+                    f"({restantes} restante(s)) — rode /fab_teasers para o próximo",
+                    parse_mode="HTML",
+                )
+                return
+
+            file_ids = await _fab_cache_save(context.application.bot, titulo, imgs)
+            if file_ids:
+                await status_msg.edit_text(
+                    f"✅ <b>Salvo:</b> {html.escape(titulo)}\n"
+                    f"💾 {len(file_ids)} imagem(ns) no cache\n\n"
+                    + (f"📋 {restantes} título(s) restante(s) — rode /fab_teasers para o próximo"
+                       if restantes > 0 else "🏁 Fila concluída!"),
+                    parse_mode="HTML",
+                )
+            else:
+                await status_msg.edit_text(
+                    f"⚠️ <b>Falha no upload:</b> {html.escape(titulo)}\n\n"
+                    f"({restantes} restante(s)) — rode /fab_teasers para o próximo",
+                    parse_mode="HTML",
+                )
+        except Exception as exc:
+            logging.warning(f"[fab_teasers] '{titulo}': {exc}")
+            await status_msg.edit_text(
+                f"❌ <b>Erro:</b> {html.escape(titulo)}\n"
+                f"{html.escape(str(exc)[:120])}\n\n"
+                f"({restantes} restante(s)) — rode /fab_teasers para o próximo",
+                parse_mode="HTML",
+            )
+
 
 async def pack_info_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not (update.effective_user and is_admin(update.effective_user.id)): return await update.effective_message.reply_text("Apenas admins.")
@@ -5757,6 +6099,756 @@ async def enviar_pack_agora_cmd(update: Update, context: ContextTypes.DEFAULT_TY
         await update.effective_message.reply_text(f"❌ Erro no envio manual: {e}")
         logging.error(f"Erro no envio manual de pack {tier}: {e}")
 
+async def resetar_pack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Reseta o flag sent=True de um pack para permitir reenvio. Uso: /resetar_pack <id>"""
+    if not (update.effective_user and is_admin(update.effective_user.id)):
+        return await update.effective_message.reply_text("Apenas admins.")
+    if not context.args or not context.args[0].isdigit():
+        return await update.effective_message.reply_text("Uso: /resetar_pack <id>\nExemplo: /resetar_pack 5\nUse /listar_packs para ver os IDs.")
+    pack_id = int(context.args[0])
+    with SessionLocal() as s:
+        p = s.query(Pack).filter(Pack.id == pack_id).first()
+        if not p:
+            return await update.effective_message.reply_text(f"Pack #{pack_id} não encontrado.")
+        p.sent = False
+        s.commit()
+    await update.effective_message.reply_text(
+        f"✅ Pack #{pack_id} marcado como não enviado.\n"
+        f"Use /enviar_pack_agora vip (ou free) para enviá-lo agora."
+    )
+    logging.info(f"[resetar_pack] Pack #{pack_id} resetado por {update.effective_user.id}")
+
+
+async def send_free_extra_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /send_free_extra — força envio imediato de 1 pack FREE da fila automática
+    (SourceFile/SentFile), independente do dia da semana.
+    Usado para testar o fluxo completo sem esperar quarta-feira às 15h.
+    """
+    if not (update.effective_user and is_admin(update.effective_user.id)):
+        return await update.effective_message.reply_text("Apenas admins.")
+
+    msg = await update.effective_message.reply_text(
+        "🚀 Enviando pack FREE extra da fila automática..."
+    )
+
+    try:
+        import auto_sender as _as
+        from auto_sender import (
+            get_random_file_from_source,
+            get_all_parts,
+            send_file_to_channel,
+            send_as_media_group,
+            mark_file_as_sent,
+            _send_fab_images_for_caption,
+        )
+
+        free_ch = _as.FREE_CHANNEL_ID
+        if not free_ch:
+            return await msg.edit_text("❌ FREE_CHANNEL_ID não configurado.")
+
+        with SessionLocal() as session:
+            source_file = await get_random_file_from_source(session, "free")
+            if not source_file:
+                return await msg.edit_text("⚠️ Nenhum arquivo novo disponível para FREE.")
+
+            # Envia imagens Fab.com (usa caption ou file_name como título)
+            _fab_title = (source_file.caption or source_file.file_name or "").strip()
+            await _send_fab_images_for_caption(
+                context.application.bot, free_ch, _fab_title
+            )
+
+            all_parts = get_all_parts(session, source_file)
+            can_media_group = (
+                1 < len(all_parts) <= 10
+                and all(p.file_type in ["video", "photo"] for p in all_parts)
+            )
+
+            success_count = 0
+            if can_media_group:
+                ok = await send_as_media_group(
+                    context.application.bot, all_parts, free_ch, tier="free"
+                )
+                if ok:
+                    for part in all_parts:
+                        await mark_file_as_sent(session, part, "free")
+                    success_count = len(all_parts)
+            else:
+                for i, part in enumerate(all_parts, 1):
+                    caption = (
+                        f"🆓 Pack FREE Extra\n📅 {dt.datetime.now().strftime('%d/%m/%Y')}"
+                        + (f"\n\n{part.caption}" if part.caption else "")
+                        + (f"\n\n📦 Parte {i} de {len(all_parts)}" if len(all_parts) > 1 else "")
+                    )
+                    sent_msg = await send_file_to_channel(
+                        context.application.bot, part, free_ch, caption
+                    )
+                    if sent_msg:
+                        await mark_file_as_sent(session, part, "free")
+                        success_count += 1
+                    if i < len(all_parts):
+                        await asyncio.sleep(0.5)
+
+        if success_count > 0:
+            cap_title = (source_file.caption or source_file.file_name or "")[:60]
+            await msg.edit_text(
+                f"✅ Pack FREE extra enviado!\n"
+                f"📄 {html.escape(cap_title)}\n"
+                f"📦 {success_count} parte(s) enviada(s)"
+            )
+            logging.info(f"[send_free_extra] Enviado por {update.effective_user.id}: {cap_title}")
+        else:
+            await msg.edit_text("❌ Falha ao enviar o pack FREE.")
+
+    except Exception as exc:
+        logging.exception(f"[send_free_extra] Erro: {exc}")
+        await msg.edit_text(f"❌ Erro: {html.escape(str(exc)[:200])}")
+
+
+# Flag global para cancelar /enviar_vip em andamento
+_bulk_vip_running: bool = False
+
+
+async def enviar_vip_bulk_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /enviar_vip <quantidade>
+    Envia N packs do VIP sequencialmente, respeitando limites do Telegram.
+    Use /parar_vip para cancelar o envio em andamento.
+    Limites: 1 arquivo a cada 5s, pausa de 30s a cada 15 arquivos.
+    """
+    global _bulk_vip_running
+
+    if not (update.effective_user and is_admin(update.effective_user.id)):
+        return await update.effective_message.reply_text("Apenas admins.")
+
+    if _bulk_vip_running:
+        return await update.effective_message.reply_text(
+            "⚠️ Já há um envio em andamento. Use /parar_vip para cancelar."
+        )
+
+    args = context.args or []
+    if not args:
+        return await update.effective_message.reply_text(
+            "Uso: /enviar_vip <quantidade>\nExemplo: /enviar_vip 20"
+        )
+
+    try:
+        quantidade = int(args[0])
+        if quantidade < 1 or quantidade > 500:
+            raise ValueError
+    except ValueError:
+        return await update.effective_message.reply_text("Quantidade inválida. Use entre 1 e 500.")
+
+    import auto_sender as _as
+    from auto_sender import (
+        get_random_file_from_source,
+        get_all_parts,
+        send_file_to_channel,
+        send_as_media_group,
+        mark_file_as_sent,
+        send_teaser_to_free,
+        send_or_update_vip_catalog,
+        _send_fab_images_for_caption,
+    )
+
+    vip_ch = _as.VIP_CHANNEL_ID
+    if not vip_ch:
+        return await update.effective_message.reply_text("❌ VIP_CHANNEL_ID não configurado.")
+
+    # Estimativa de tempo: 5s/pack VIP + 5s/teaser FREE + pausas
+    pausas = quantidade // 15
+    tempo_est = quantidade * 10 + pausas * 30
+    tempo_min = tempo_est // 60
+    tempo_seg = tempo_est % 60
+
+    msg = await update.effective_message.reply_text(
+        f"🚀 Iniciando envio de <b>{quantidade} packs VIP</b>.\n"
+        f"📢 Teaser .txt será enviado ao FREE para cada pack.\n"
+        f"⏱ Tempo estimado: ~{tempo_min}min {tempo_seg}s\n"
+        f"Use /parar_vip para cancelar a qualquer momento.",
+        parse_mode="HTML"
+    )
+
+    _bulk_vip_running = True
+    enviados = 0
+    falhas = 0
+
+    try:
+        for i in range(quantidade):
+            if not _bulk_vip_running:
+                break
+
+            with SessionLocal() as session:
+                source_file = await get_random_file_from_source(session, "vip")
+                if not source_file:
+                    await context.bot.send_message(
+                        chat_id=update.effective_chat.id,
+                        text=f"⚠️ Fila VIP esgotada após {enviados} packs enviados.",
+                        parse_mode="HTML"
+                    )
+                    break
+
+                all_parts = get_all_parts(session, source_file)
+
+                # Enviar imagens Fab.com para VIP antes do pack
+                _fab_title = (source_file.caption or source_file.file_name or "").strip()
+                await _send_fab_images_for_caption(context.bot, vip_ch, _fab_title)
+
+                can_media_group = (
+                    1 < len(all_parts) <= 10
+                    and all(p.file_type in ["video", "photo"] for p in all_parts)
+                )
+
+                success = False
+                if can_media_group:
+                    ok = await send_as_media_group(context.bot, all_parts, vip_ch, tier="vip")
+                    if ok:
+                        for part in all_parts:
+                            await mark_file_as_sent(session, part, "vip")
+                        success = True
+                else:
+                    part_ok = 0
+                    for j, part in enumerate(all_parts, 1):
+                        caption = (
+                            f"🔥 Conteúdo VIP Exclusivo\n📅 {dt.datetime.now().strftime('%d/%m/%Y')}"
+                            + (f"\n\n{part.caption}" if part.caption else "")
+                            + (f"\n\n📦 Arquivo com {len(all_parts)} partes" if j == 1 and len(all_parts) > 1 else "")
+                            + (f"\n📦 Parte {j} de {len(all_parts)}" if j > 1 else "")
+                        )
+                        sent_msg = await send_file_to_channel(context.bot, part, vip_ch, caption)
+                        if sent_msg:
+                            await mark_file_as_sent(session, part, "vip")
+                            part_ok += 1
+                        if j < len(all_parts):
+                            await asyncio.sleep(4)
+                    success = part_ok == len(all_parts)
+
+                # Teaser .txt para FREE após cada pack VIP enviado
+                if success:
+                    await send_teaser_to_free(context.bot, all_parts)
+
+            if success:
+                enviados += 1
+            else:
+                falhas += 1
+
+            # Progresso a cada 5 packs
+            if enviados % 5 == 0 or enviados == quantidade:
+                try:
+                    await msg.edit_text(
+                        f"📤 Enviando packs VIP...\n"
+                        f"✅ {enviados}/{quantidade} enviados"
+                        + (f" | ❌ {falhas} falhas" if falhas else ""),
+                        parse_mode="HTML"
+                    )
+                except Exception:
+                    pass
+
+            # Rate limiting: 5s entre packs, pausa de 30s a cada 15
+            if i < quantidade - 1 and _bulk_vip_running:
+                await asyncio.sleep(5)
+                if (i + 1) % 15 == 0:
+                    await asyncio.sleep(30)
+
+    except Exception as exc:
+        logging.exception(f"[enviar_vip_bulk] Erro: {exc}")
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=f"❌ Erro durante o envio: {html.escape(str(exc)[:200])}",
+            parse_mode="HTML"
+        )
+    finally:
+        _bulk_vip_running = False
+
+    # Atualiza o catálogo completo ao final do envio em massa
+    if enviados > 0:
+        try:
+            with SessionLocal() as session:
+                await send_or_update_vip_catalog(context.bot, session)
+        except Exception as exc:
+            logging.warning(f"[enviar_vip_bulk] Erro ao atualizar catálogo: {exc}")
+
+    status = "cancelado" if enviados < quantidade and not _bulk_vip_running else "concluído"
+    await msg.edit_text(
+        f"{'✅' if status == 'concluído' else '🛑'} Envio {status}!\n"
+        f"📦 {enviados} pack(s) enviado(s) para o VIP\n"
+        f"📋 Catálogo atualizado automaticamente."
+        + (f"\n❌ {falhas} falha(s)" if falhas else ""),
+        parse_mode="HTML"
+    )
+
+
+async def parar_vip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Para o envio em massa do /enviar_vip."""
+    global _bulk_vip_running
+    if not (update.effective_user and is_admin(update.effective_user.id)):
+        return await update.effective_message.reply_text("Apenas admins.")
+    if not _bulk_vip_running:
+        return await update.effective_message.reply_text("ℹ️ Nenhum envio em andamento.")
+    _bulk_vip_running = False
+    await update.effective_message.reply_text("🛑 Envio VIP cancelado.")
+
+
+async def fila_diagnostico_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /fila_diagnostico — mostra exatamente quantos arquivos estão indexados,
+    enviados e disponíveis por tier, com breakdown por file_type.
+    """
+    if not (update.effective_user and is_admin(update.effective_user.id)):
+        return await update.effective_message.reply_text("Apenas admins.")
+
+    msg = await update.effective_message.reply_text("🔍 Analisando fila...")
+
+    with SessionLocal() as session:
+        from sqlalchemy import func
+
+        # Total geral na tabela
+        total_geral = session.query(SourceFile).count()
+        total_source = session.query(SourceFile).filter(
+            SourceFile.source_chat_id == SOURCE_CHAT_ID
+        ).count()
+        total_active = session.query(SourceFile).filter(
+            SourceFile.source_chat_id == SOURCE_CHAT_ID,
+            SourceFile.active == True
+        ).count()
+
+        # Por file_type
+        tipos = session.query(SourceFile.file_type, func.count()).filter(
+            SourceFile.source_chat_id == SOURCE_CHAT_ID,
+            SourceFile.active == True
+        ).group_by(SourceFile.file_type).all()
+
+        # Arquivos elegíveis (document/video/audio/animation)
+        TYPES = ['document', 'video', 'audio', 'animation']
+        total_elegiveis = session.query(SourceFile).filter(
+            SourceFile.source_chat_id == SOURCE_CHAT_ID,
+            SourceFile.active == True,
+            SourceFile.file_type.in_(TYPES)
+        ).count()
+
+        # Enviados
+        sent_vip = session.query(func.count(SentFile.id)).filter(
+            SentFile.sent_to_tier == 'vip',
+            SentFile.source_chat_id == SOURCE_CHAT_ID
+        ).scalar() or 0
+        sent_free = session.query(func.count(SentFile.id)).filter(
+            SentFile.sent_to_tier == 'free',
+            SentFile.source_chat_id == SOURCE_CHAT_ID
+        ).scalar() or 0
+
+        # Disponíveis para VIP (não enviados ainda)
+        sent_vip_ids = {r.file_unique_id for r in session.query(SentFile.file_unique_id).filter(
+            SentFile.sent_to_tier == 'vip', SentFile.source_chat_id == SOURCE_CHAT_ID
+        ).all()}
+        q_vip = session.query(SourceFile).filter(
+            SourceFile.source_chat_id == SOURCE_CHAT_ID,
+            SourceFile.active == True,
+            SourceFile.file_type.in_(TYPES)
+        )
+        if sent_vip_ids:
+            q_vip = q_vip.filter(~SourceFile.file_unique_id.in_(sent_vip_ids))
+        disponivel_vip = q_vip.count()
+
+    tipos_txt = "\n".join(f"  • {t}: {c}" for t, c in sorted(tipos, key=lambda x: -x[1]))
+
+    await msg.edit_text(
+        f"📊 <b>DIAGNÓSTICO DA FILA</b>\n\n"
+        f"🗄 <b>SourceFile (source_chat_id={SOURCE_CHAT_ID})</b>\n"
+        f"  Total geral na tabela: {total_geral}\n"
+        f"  Com source_chat_id correto: {total_source}\n"
+        f"  Com active=True: {total_active}\n"
+        f"  Elegíveis (tipos certos): {total_elegiveis}\n\n"
+        f"📋 <b>Por tipo:</b>\n{tipos_txt}\n\n"
+        f"📤 <b>SentFile</b>\n"
+        f"  Enviados para VIP: {sent_vip}\n"
+        f"  Enviados para FREE: {sent_free}\n\n"
+        f"✅ <b>Disponível agora para VIP: {disponivel_vip}</b>",
+        parse_mode="HTML"
+    )
+
+
+async def enviar_pack_nome_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /enviar_pack <vip|free> <parte do nome>
+    Busca o pack pelo nome (busca parcial) e envia para o canal indicado.
+    Exemplo: /enviar_pack vip ultra dynamic sky
+             /enviar_pack free fluid flux
+    """
+    if not (update.effective_user and is_admin(update.effective_user.id)):
+        return await update.effective_message.reply_text("Apenas admins.")
+
+    args = context.args or []
+    if len(args) < 2:
+        return await update.effective_message.reply_text(
+            "Uso: /enviar_pack <vip|free> <nome do pack>\n"
+            "Exemplo: /enviar_pack vip ultra dynamic sky\n"
+            "         /enviar_pack free fluid flux"
+        )
+
+    tier = args[0].lower()
+    if tier not in ("vip", "free"):
+        return await update.effective_message.reply_text("Canal deve ser <b>vip</b> ou <b>free</b>.", parse_mode="HTML")
+
+    # Verifica se o último argumento é um número (seleção da lista)
+    raw_terms = args[1:]
+    selected_index: int | None = None
+    if raw_terms and raw_terms[-1].isdigit():
+        selected_index = int(raw_terms[-1]) - 1  # converte para 0-based
+        raw_terms = raw_terms[:-1]
+
+    search = " ".join(raw_terms).strip()
+    if not search:
+        return await update.effective_message.reply_text(
+            "Uso: /enviar_pack <vip|free> <nome do pack> [número]\n"
+            "Exemplo: /enviar_pack vip ultra dynamic sky\n"
+            "         /enviar_pack vip ultra dynamic sky 2"
+        )
+
+    msg = await update.effective_message.reply_text(
+        f"🔍 Buscando <b>{html.escape(search)}</b> para enviar no {tier.upper()}...",
+        parse_mode="HTML"
+    )
+
+    try:
+        import auto_sender as _as
+        from auto_sender import (
+            get_all_parts,
+            send_file_to_channel,
+            send_as_media_group,
+            mark_file_as_sent,
+            _send_fab_images_for_caption,
+        )
+        from sqlalchemy import func
+
+        channel_id = _as.VIP_CHANNEL_ID if tier == "vip" else _as.FREE_CHANNEL_ID
+        if not channel_id:
+            return await msg.edit_text(f"❌ {tier.upper()}_CHANNEL_ID não configurado.")
+
+        with SessionLocal() as session:
+            from auto_sender import extract_base_name, is_part_file
+
+            # Busca parcial case-insensitive no file_name e caption
+            pattern = f"%{search}%"
+            matches = session.query(SourceFile).filter(
+                SourceFile.source_chat_id == SOURCE_CHAT_ID,
+                SourceFile.active == True,
+                SourceFile.file_type.in_(["document", "video", "audio", "animation"]),
+                (SourceFile.file_name.ilike(pattern) | SourceFile.caption.ilike(pattern))
+            ).order_by(SourceFile.file_name).all()
+
+            if not matches:
+                return await msg.edit_text(
+                    f"❌ Nenhum pack encontrado com <b>{html.escape(search)}</b>.\n"
+                    "Tente outra parte do nome.",
+                    parse_mode="HTML"
+                )
+
+            # Agrupar por nome base para não mostrar .001 e .002 separados
+            seen_bases: dict = {}
+            for m in matches:
+                base = extract_base_name(m.file_name) if is_part_file(m.file_name, m.caption) else (m.file_name or m.caption or "")
+                if base not in seen_bases:
+                    seen_bases[base] = m  # guarda o primeiro representante de cada pack
+
+            unique_packs = list(seen_bases.values())
+
+            if not unique_packs:
+                return await msg.edit_text(
+                    f"❌ Nenhum pack encontrado com <b>{html.escape(search)}</b>.",
+                    parse_mode="HTML"
+                )
+
+            # Se mais de 1 pack distinto e nenhum número foi passado, lista
+            if len(unique_packs) > 1 and selected_index is None:
+                nomes = "\n".join(
+                    f"  {i+1}. {html.escape((m.file_name or m.caption or '')[:70])}"
+                    for i, m in enumerate(unique_packs[:10])
+                )
+                extra = f"\n  ... e mais {len(unique_packs)-10}" if len(unique_packs) > 10 else ""
+                return await msg.edit_text(
+                    f"⚠️ <b>{len(unique_packs)} packs encontrados</b> para <i>{html.escape(search)}</i>.\n"
+                    f"Adicione o número para selecionar:\n{nomes}{extra}\n\n"
+                    f"Exemplo: <code>/enviar_pack {tier} {search} 2</code>",
+                    parse_mode="HTML"
+                )
+
+            # Seleciona pelo índice ou único resultado
+            if selected_index is not None:
+                if selected_index < 0 or selected_index >= len(unique_packs):
+                    return await msg.edit_text(
+                        f"❌ Número inválido. Escolha entre 1 e {len(unique_packs)}."
+                    )
+                source_file = unique_packs[selected_index]
+            else:
+                source_file = unique_packs[0]
+
+            nome = (source_file.file_name or source_file.caption or "")[:80]
+            await msg.edit_text(f"✅ Encontrado: <b>{html.escape(nome)}</b>\n📤 Enviando...", parse_mode="HTML")
+
+            # Imagens Fab.com apenas para FREE (VIP recebe só o arquivo)
+            if tier == "free":
+                _fab_title = (source_file.caption or source_file.file_name or "").strip()
+                await _send_fab_images_for_caption(context.application.bot, channel_id, _fab_title)
+
+            all_parts = get_all_parts(session, source_file)
+            can_media_group = (
+                1 < len(all_parts) <= 10
+                and all(p.file_type in ["video", "photo"] for p in all_parts)
+            )
+
+            success_count = 0
+            tier_label = "🔥 Conteúdo VIP Exclusivo" if tier == "vip" else "🆓 Conteúdo Grátis da Semana"
+
+            if can_media_group:
+                ok = await send_as_media_group(context.application.bot, all_parts, channel_id, tier=tier)
+                if ok:
+                    for part in all_parts:
+                        await mark_file_as_sent(session, part, tier)
+                    success_count = len(all_parts)
+            else:
+                for i, part in enumerate(all_parts, 1):
+                    caption = (
+                        f"{tier_label}\n📅 {dt.datetime.now().strftime('%d/%m/%Y')}"
+                        + (f"\n\n{part.caption}" if part.caption else "")
+                        + (f"\n\n📦 Arquivo com {len(all_parts)} partes" if i == 1 and len(all_parts) > 1 else "")
+                        + (f"\n📦 Parte {i} de {len(all_parts)}" if i > 1 else "")
+                    )
+                    sent_msg = await send_file_to_channel(context.application.bot, part, channel_id, caption)
+                    if sent_msg:
+                        await mark_file_as_sent(session, part, tier)
+                        success_count += 1
+                    if i < len(all_parts):
+                        await asyncio.sleep(0.5)
+
+        if success_count > 0:
+            await msg.edit_text(
+                f"✅ <b>{html.escape(nome)}</b>\n"
+                f"📦 {success_count} parte(s) enviada(s) para {tier.upper()}",
+                parse_mode="HTML"
+            )
+        else:
+            await msg.edit_text("❌ Falha ao enviar o pack.")
+
+    except Exception as exc:
+        logging.exception(f"[enviar_pack_nome] Erro: {exc}")
+        await msg.edit_text(f"❌ Erro: {html.escape(str(exc)[:200])}")
+
+
+async def agendar_vip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /agendar_vip HH:MM — agenda envio VIP único para hoje no horário dado.
+    Usa send_daily_vip_file (fila SourceFile) com imagens Fab.com.
+    Exemplo: /agendar_vip 15:08
+    """
+    if not (update.effective_user and is_admin(update.effective_user.id)):
+        return await update.effective_message.reply_text("Apenas admins.")
+
+    args = context.args or []
+    if not args:
+        return await update.effective_message.reply_text(
+            "Uso: /agendar_vip HH:MM\nExemplo: /agendar_vip 15:08"
+        )
+
+    try:
+        hh, mm = map(int, args[0].split(":"))
+        if not (0 <= hh <= 23 and 0 <= mm <= 59):
+            raise ValueError
+    except ValueError:
+        return await update.effective_message.reply_text("Horário inválido. Use o formato HH:MM, ex: 15:08")
+
+    tz = pytz.timezone("America/Sao_Paulo")
+    now = dt.datetime.now(tz)
+    target = now.replace(hour=hh, minute=mm, second=0, microsecond=0)
+
+    if target <= now:
+        return await update.effective_message.reply_text(
+            f"⚠️ {hh:02d}:{mm:02d} já passou hoje. Escolha um horário futuro."
+        )
+
+    delay = (target - now).total_seconds()
+
+    async def _one_time_vip_job(ctx):
+        with SessionLocal() as session:
+            try:
+                await send_daily_vip_file(ctx.bot, session)
+                await log_to_group("✅ <b>Envio VIP agendado concluído</b>")
+            except Exception as e:
+                await log_to_group(f"❌ <b>Erro no envio VIP agendado</b>\n{e}")
+                logging.error(f"[agendar_vip] Erro: {e}")
+
+    context.application.job_queue.run_once(
+        _one_time_vip_job,
+        when=dt.timedelta(seconds=delay),
+        name=f"vip_agendado_{hh:02d}{mm:02d}",
+    )
+
+    await update.effective_message.reply_text(
+        f"✅ Envio VIP agendado para hoje às <b>{hh:02d}:{mm:02d}</b> (Brasília).\n"
+        f"Faltam {int(delay // 60)} min e {int(delay % 60)} seg.",
+        parse_mode="HTML",
+    )
+
+
+async def cancelar_vip_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /cancelar_vip HH:MM — cancela o envio VIP agendado para aquele horário.
+    Sem argumento: lista os agendamentos ativos para escolher.
+    """
+    if not (update.effective_user and is_admin(update.effective_user.id)):
+        return await update.effective_message.reply_text("Apenas admins.")
+
+    if not application or not application.job_queue:
+        return await update.effective_message.reply_text("❌ Job queue não disponível.")
+
+    agendados = [j for j in application.job_queue.jobs() if j.name and j.name.startswith("vip_agendado_")]
+
+    # Sem argumento: listar os agendamentos ativos
+    if not context.args:
+        if not agendados:
+            return await update.effective_message.reply_text("ℹ️ Nenhum envio VIP agendado.")
+        tz = pytz.timezone("America/Sao_Paulo")
+        linhas = ["📋 <b>Envios VIP agendados:</b>"]
+        for j in agendados:
+            hhmm = j.name.replace("vip_agendado_", "")
+            hora = f"{hhmm[:2]}:{hhmm[2:]}"
+            if hasattr(j, "next_t") and j.next_t:
+                hora_fmt = j.next_t.astimezone(tz).strftime("%H:%M")
+                linhas.append(f"• <code>/cancelar_vip {hora_fmt}</code>")
+            else:
+                linhas.append(f"• <code>/cancelar_vip {hora}</code>")
+        linhas.append("\nUse o comando acima para cancelar o desejado.")
+        return await update.effective_message.reply_text("\n".join(linhas), parse_mode="HTML")
+
+    # Com argumento HH:MM: cancelar o específico
+    try:
+        hh, mm = map(int, context.args[0].split(":"))
+        if not (0 <= hh <= 23 and 0 <= mm <= 59):
+            raise ValueError
+    except ValueError:
+        return await update.effective_message.reply_text("Horário inválido. Use HH:MM, ex: /cancelar_vip 15:08")
+
+    job_name = f"vip_agendado_{hh:02d}{mm:02d}"
+    alvo = [j for j in agendados if j.name == job_name]
+
+    if not alvo:
+        return await update.effective_message.reply_text(
+            f"ℹ️ Nenhum agendamento encontrado para <b>{hh:02d}:{mm:02d}</b>.", parse_mode="HTML"
+        )
+
+    for j in alvo:
+        j.schedule_removal()
+
+    await update.effective_message.reply_text(
+        f"✅ Agendamento das <b>{hh:02d}:{mm:02d}</b> cancelado.", parse_mode="HTML"
+    )
+
+
+async def agendar_free_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /agendar_free HH:MM — agenda envio FREE único para hoje no horário dado.
+    Usa send_weekly_free_file (fila SourceFile) com imagens Fab.com.
+    Exemplo: /agendar_free 16:00
+    """
+    if not (update.effective_user and is_admin(update.effective_user.id)):
+        return await update.effective_message.reply_text("Apenas admins.")
+
+    args = context.args or []
+    if not args:
+        return await update.effective_message.reply_text(
+            "Uso: /agendar_free HH:MM\nExemplo: /agendar_free 16:00"
+        )
+
+    try:
+        hh, mm = map(int, args[0].split(":"))
+        if not (0 <= hh <= 23 and 0 <= mm <= 59):
+            raise ValueError
+    except ValueError:
+        return await update.effective_message.reply_text("Horário inválido. Use o formato HH:MM, ex: 16:00")
+
+    tz = pytz.timezone("America/Sao_Paulo")
+    now = dt.datetime.now(tz)
+    target = now.replace(hour=hh, minute=mm, second=0, microsecond=0)
+
+    if target <= now:
+        return await update.effective_message.reply_text(
+            f"⚠️ {hh:02d}:{mm:02d} já passou hoje. Escolha um horário futuro."
+        )
+
+    delay = (target - now).total_seconds()
+
+    async def _one_time_free_job(ctx):
+        with SessionLocal() as session:
+            try:
+                await send_weekly_free_file(ctx.bot, session, force=True)
+                await log_to_group("✅ <b>Envio FREE agendado concluído</b>")
+            except Exception as e:
+                await log_to_group(f"❌ <b>Erro no envio FREE agendado</b>\n{e}")
+                logging.error(f"[agendar_free] Erro: {e}")
+
+    context.application.job_queue.run_once(
+        _one_time_free_job,
+        when=dt.timedelta(seconds=delay),
+        name=f"free_agendado_{hh:02d}{mm:02d}",
+    )
+
+    await update.effective_message.reply_text(
+        f"✅ Envio FREE agendado para hoje às <b>{hh:02d}:{mm:02d}</b> (Brasília).\n"
+        f"Faltam {int(delay // 60)} min e {int(delay % 60)} seg.",
+        parse_mode="HTML",
+    )
+
+
+async def cancelar_free_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /cancelar_free HH:MM — cancela o envio FREE agendado para aquele horário.
+    Sem argumento: lista os agendamentos ativos para escolher.
+    """
+    if not (update.effective_user and is_admin(update.effective_user.id)):
+        return await update.effective_message.reply_text("Apenas admins.")
+
+    if not application or not application.job_queue:
+        return await update.effective_message.reply_text("❌ Job queue não disponível.")
+
+    agendados = [j for j in application.job_queue.jobs() if j.name and j.name.startswith("free_agendado_")]
+
+    if not context.args:
+        if not agendados:
+            return await update.effective_message.reply_text("ℹ️ Nenhum envio FREE agendado.")
+        tz = pytz.timezone("America/Sao_Paulo")
+        linhas = ["📋 <b>Envios FREE agendados:</b>"]
+        for j in agendados:
+            if hasattr(j, "next_t") and j.next_t:
+                hora_fmt = j.next_t.astimezone(tz).strftime("%H:%M")
+                linhas.append(f"• <code>/cancelar_free {hora_fmt}</code>")
+            else:
+                hhmm = j.name.replace("free_agendado_", "")
+                linhas.append(f"• <code>/cancelar_free {hhmm[:2]}:{hhmm[2:]}</code>")
+        linhas.append("\nUse o comando acima para cancelar o desejado.")
+        return await update.effective_message.reply_text("\n".join(linhas), parse_mode="HTML")
+
+    try:
+        hh, mm = map(int, context.args[0].split(":"))
+        if not (0 <= hh <= 23 and 0 <= mm <= 59):
+            raise ValueError
+    except ValueError:
+        return await update.effective_message.reply_text("Horário inválido. Use HH:MM, ex: /cancelar_free 16:00")
+
+    job_name = f"free_agendado_{hh:02d}{mm:02d}"
+    alvo = [j for j in agendados if j.name == job_name]
+
+    if not alvo:
+        return await update.effective_message.reply_text(
+            f"ℹ️ Nenhum agendamento encontrado para <b>{hh:02d}:{mm:02d}</b>.", parse_mode="HTML"
+        )
+
+    for j in alvo:
+        j.schedule_removal()
+
+    await update.effective_message.reply_text(
+        f"✅ Agendamento FREE das <b>{hh:02d}:{mm:02d}</b> cancelado.", parse_mode="HTML"
+    )
+
+
 async def listar_packs_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Comando unificado para listar todos os packs (VIP e FREE)"""
     if not (update.effective_user and is_admin(update.effective_user.id)):
@@ -6605,11 +7697,27 @@ async def scan_history_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
 
 
+_scan_full_running: bool = False
+
 async def scan_full_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Faz scan COMPLETO do histórico usando Pyrogram (User API)"""
+    global _scan_full_running
     if not is_admin(update.effective_user.id):
         return
 
+    if _scan_full_running:
+        return await update.effective_message.reply_text(
+            "⚠️ Já há um scan em andamento. Aguarde terminar."
+        )
+
+    _scan_full_running = True
+    try:
+        await _scan_full_inner(update, context)
+    finally:
+        _scan_full_running = False
+
+
+async def _scan_full_inner(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.effective_message.reply_text(
         "🔄 <b>Scan Completo do Histórico</b>\n\n"
         "⏳ Verificando Pyrogram...",
@@ -6665,20 +7773,33 @@ async def scan_full_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     total_duplicadas = 0
     total_erros = 0
     tipos_encontrados = {}
+    unique_ids_in_group: set = set()
 
     with SessionLocal() as session:
         try:
             # Criar cliente Pyrogram (User API)
-            app = Client(
-                "bot_scanner",
-                api_id=int(api_id),
-                api_hash=api_hash,
-                workdir="."
-            )
+            session_string = os.getenv("SESSION_STRING", "")
+            if session_string:
+                app = Client(
+                    "bot_scanner",
+                    api_id=int(api_id),
+                    api_hash=api_hash,
+                    session_string=session_string,
+                )
+            else:
+                app = Client(
+                    "bot_scanner",
+                    api_id=int(api_id),
+                    api_hash=api_hash,
+                    workdir="."
+                )
 
             async with app:
                 # Verificar se está autenticado
                 me = await app.get_me()
+                # Popular cache de peers (necessário com StringSession)
+                async for _ in app.get_dialogs():
+                    pass
                 await update.effective_message.reply_text(
                     f"👤 <b>Autenticado como:</b> {me.first_name}\n\n"
                     f"🔍 Escaneando grupo {SOURCE_CHAT_ID}...",
@@ -6747,13 +7868,23 @@ async def scan_full_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     tipo = file_data['file_type']
                     tipos_encontrados[tipo] = tipos_encontrados.get(tipo, 0) + 1
 
+                    # Rastrear unique_ids vistos no grupo
+                    unique_ids_in_group.add(file_data['file_unique_id'])
+
                     # Verificar se já existe
                     existing = session.query(SourceFile).filter(
                         SourceFile.file_unique_id == file_data['file_unique_id']
                     ).first()
 
                     if existing:
-                        total_duplicadas += 1
+                        if existing.source_chat_id != SOURCE_CHAT_ID:
+                            # Corrige source_chat_id de scans anteriores com ID errado
+                            existing.source_chat_id = SOURCE_CHAT_ID
+                            existing.active = True
+                            session.commit()
+                            total_indexadas += 1
+                        else:
+                            total_duplicadas += 1
                         continue
 
                     # Criar novo registro
@@ -6788,9 +7919,12 @@ async def scan_full_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             tipos_str = "\n".join([f"  • {tipo}: {count}" for tipo, count in tipos_encontrados.items()])
 
+            total_unique_in_group = len(unique_ids_in_group)
+
             msg = (
                 f"✅ <b>Scan Completo Finalizado!</b>\n\n"
                 f"📨 Mensagens processadas: {total_processadas}\n"
+                f"🔑 Arquivos únicos no grupo: {total_unique_in_group}\n"
                 f"✅ Novas indexadas: {total_indexadas}\n"
                 f"⏭️ Já existentes: {total_duplicadas}\n"
                 f"❌ Erros: {total_erros}\n\n"
@@ -7948,17 +9082,12 @@ async def process_expired_vip(expired_vip: 'VipMembership', session):
 
 
 async def keepalive_job(context: ContextTypes.DEFAULT_TYPE):
-    ts = dt.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
-    if not SELF_URL:
-        logging.info(f"[keepalive] ⚙️ Bot ativo [{ts}] (SELF_URL não configurada, ping desabilitado)")
-        return
+    if not SELF_URL: return
     url = SELF_URL.rstrip("/") + "/keepalive"
     try:
         async with httpx.AsyncClient(timeout=10) as client:
-            r = await client.get(url)
-            logging.info(f"[keepalive] ✅ Bot ativo — ping OK [{ts}] status={r.status_code}")
-    except Exception as e:
-        logging.warning(f"[keepalive] ⚠️ Bot ativo mas ping falhou [{ts}]: {e}")
+            r = await client.get(url); logging.info(f"[keepalive] GET {url} -> {r.status_code}")
+    except Exception as e: logging.warning(f"[keepalive] erro: {e}")
 
 # ===== Guard global: só permite /tx para não-admin (em qualquer chat)
 ALLOWED_NON_ADMIN = {"tx", "status", "novopack", "novopackvip", "novopackfree", "getid", "comandos", "listar_comandos"}
@@ -8051,8 +9180,8 @@ async def on_startup():
     if bot:
         # Set webhook with retry
         try:
-            await bot.set_webhook(url=WEBHOOK_URL)
-            logging.info(f"Webhook configurado: {WEBHOOK_URL}")
+            await bot.set_webhook(url=WEBHOOK_URL, allowed_updates=list(Update.ALL_TYPES))
+            logging.info(f"Webhook configurado: {WEBHOOK_URL} (allowed_updates=ALL_TYPES)")
         except Exception as e:
             logging.warning(f"set_webhook falhou: {e}")
         
@@ -8242,8 +9371,19 @@ async def on_startup():
 
         application.add_handler(CommandHandler("set_pack_horario_vip", set_pack_horario_vip_cmd), group=1)
         application.add_handler(CommandHandler("set_pack_horario_free", set_pack_horario_free_cmd), group=1)
+        application.add_handler(CommandHandler("fab_teasers", fab_teasers_cmd), group=1)
+        application.add_handler(CommandHandler("send_free_extra", send_free_extra_cmd), group=1)
+        application.add_handler(CommandHandler("enviar_vip", enviar_vip_bulk_cmd), group=1)
+        application.add_handler(CommandHandler("parar_vip", parar_vip_cmd), group=1)
+        application.add_handler(CommandHandler("fila_diagnostico", fila_diagnostico_cmd), group=1)
+        application.add_handler(CommandHandler("enviar_pack", enviar_pack_nome_cmd), group=1)
+        application.add_handler(CommandHandler("agendar_vip", agendar_vip_cmd), group=1)
+        application.add_handler(CommandHandler("cancelar_vip", cancelar_vip_cmd), group=1)
+        application.add_handler(CommandHandler("agendar_free", agendar_free_cmd), group=1)
+        application.add_handler(CommandHandler("cancelar_free", cancelar_free_cmd), group=1)
         application.add_handler(CommandHandler("listar_jobs", listar_jobs_cmd), group=1)
         application.add_handler(CommandHandler("enviar_pack_agora", enviar_pack_agora_cmd), group=1)
+        application.add_handler(CommandHandler("resetar_pack", resetar_pack_cmd), group=1)
         application.add_handler(CommandHandler("debug_convite", debug_convite_cmd), group=1)
         application.add_handler(CommandHandler("fix_vip_dates", fix_vip_dates_cmd), group=1)
         application.add_handler(CommandHandler("migrate_vip_columns", migrate_vip_columns_cmd), group=1)
@@ -8287,7 +9427,7 @@ async def on_startup():
             group=0  # Prioridade alta
         )
 
-        # Handler para mudanças de status de membro (chat_member) - LOG DE MEMBROS
+        # Handler para mudanças de status de membro — cobre grupos e canais (requer bot admin)
         from vip_manager import log_member_change
         application.add_handler(
             ChatMemberHandler(
@@ -8296,13 +9436,15 @@ async def on_startup():
             ),
             group=0
         )
-        logging.info("✅ Sistema de log de membros ativado")
+        logging.info("✅ Sistema de log de membros FREE e VIP ativado")
 
         # ===== Comandos de Gerenciamento VIP
-        from vip_manager import view_member_logs_cmd, check_vip_status_cmd
+        from vip_manager import view_member_logs_cmd, check_vip_status_cmd, free_members_cmd, check_webhook_cmd
         application.add_handler(CommandHandler("logs", view_member_logs_cmd), group=1)
         application.add_handler(CommandHandler("meu_vip", check_vip_status_cmd), group=1)
-        logging.info("✅ Comandos /logs e /meu_vip registrados")
+        application.add_handler(CommandHandler("membros_free", free_members_cmd), group=1)
+        application.add_handler(CommandHandler("check_webhook", check_webhook_cmd), group=1)
+        logging.info("✅ Comandos /logs, /meu_vip, /membros_free e /check_webhook registrados")
         
         # ===== Callback Query Handler - Checkout e Renovação
         application.add_handler(CallbackQueryHandler(checkout_callback_handler, pattern="checkout_callback"), group=1)
@@ -8312,15 +9454,20 @@ async def on_startup():
 
         # ===== Sistema de Suporte =====
         from support import (
-            support_start_callback, support_text_handler, support_cancel_cmd,
-            tickets_cmd, reply_cmd, close_ticket_cmd, msg_cmd,
+            support_start_callback, support_text_handler, support_photo_handler,
+            support_cancel_cmd, tickets_cmd, reply_cmd, close_ticket_cmd, msg_cmd,
         )
         # Callback do botão "Suporte"
         application.add_handler(CallbackQueryHandler(support_start_callback, pattern="^support_start$"), group=1)
-        # Captura texto do usuário quando aguardando descrição (antes de outros handlers de texto)
+        # Captura texto do usuário (antes de outros handlers de texto)
         application.add_handler(MessageHandler(
             filters.TEXT & ~filters.COMMAND & filters.ChatType.PRIVATE,
             support_text_handler
+        ), group=-3)
+        # Captura fotos do usuário (novo ticket ou follow-up com imagem)
+        application.add_handler(MessageHandler(
+            filters.PHOTO & filters.ChatType.PRIVATE,
+            support_photo_handler
         ), group=-3)
         application.add_handler(CommandHandler("cancelar_suporte", support_cancel_cmd), group=1)
         # Comandos admin
@@ -8378,7 +9525,7 @@ async def on_startup():
         async def weekly_free_promo_job(context: ContextTypes.DEFAULT_TYPE):
             """Job semanal para mensagem promocional FREE (quartas 15:30)"""
             # Verificar se é quarta-feira
-            if datetime.now().weekday() != 2:  # 0=segunda, 2=quarta
+            if dt.datetime.now().weekday() != 2:  # 0=segunda, 2=quarta
                 logging.info(f"[PROMO] Hoje não é quarta-feira, pulando mensagem promocional")
                 return
 

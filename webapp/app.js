@@ -1,5 +1,12 @@
 // ./webapp/app.js
 
+// Limpa todos os caches do navegador ao iniciar para garantir dados atualizados
+if ('caches' in window) {
+  caches.keys().then(function(names) {
+    names.forEach(function(name) { caches.delete(name); });
+  });
+}
+
 // --- helpers de DOM ---
 const $ = (id) => document.getElementById(id);
 const alertBox = $("alert");
@@ -110,7 +117,7 @@ async function loadConfig() {
       configUrl = `/api/config?uid=${encodeURIComponent(uid)}&ts=${encodeURIComponent(ts)}&sig=${encodeURIComponent(sig)}`;
     }
     
-    const r = await fetch(configUrl);
+    const r = await fetch(configUrl, { cache: 'no-store' });
     if (!r.ok) {
       // Fallback para configurações padrão se a API falhar
       loadBasicInfo();
@@ -243,7 +250,8 @@ async function validatePayment() {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ uid: userID, username: null, hash }),
-      signal: controller.signal
+      signal: controller.signal,
+      cache: 'no-store'
     }).finally(() => clearTimeout(timeoutId));
 
     updateProgress(70, "Processando resposta do servidor...");
@@ -357,13 +365,11 @@ async function loadBasicInfo() {
     // Mostrar carteira padrão (pode ser obtida da API)
     $("addr").value = "0x40dDBD27F878d07808339F9965f013F1CBc2F812";
 
-    // ====== VALORES DE PRODUÇÃO ======
-    // Valores atualizados: Mensal $30 | Trimestral $70 | Semestral $110 | Anual $179
     const defaultPlans = {
-      "30": 30.00,   // Mensal
-      "90": 70.00,   // Trimestral
-      "180": 110.00, // Semestral
-      "365": 179.00  // Anual
+      "30": 30.00,
+      "90": 70.00,
+      "180": 110.00,
+      "365": 179.00
     };
     console.log("[loadBasicInfo] Renderizando planos padrão:", defaultPlans);
     renderPlans(defaultPlans);

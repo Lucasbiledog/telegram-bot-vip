@@ -54,15 +54,40 @@ class SupportTicket(Base):
     admin_reply: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     replied_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
+class FabImageCache(Base):
+    """Cache de imagens baixadas do Fab.com por título de pack."""
+    __tablename__ = "fab_image_cache"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    query: Mapped[str] = mapped_column(String(500), nullable=False, unique=True, index=True)
+    file_ids_json: Mapped[str] = mapped_column(Text, nullable=False)  # JSON list de file_ids
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+    updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class MemberLog(Base):
-    """Log de entrada/saída de membros no grupo VIP"""
+    """Log de entrada/saída de membros no grupo VIP e FREE"""
     __tablename__ = "member_logs"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(BigInteger, index=True, nullable=False)
     username: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     first_name: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
     action: Mapped[str] = mapped_column(String(20), nullable=False)  # "joined", "left", "removed"
+    group_type: Mapped[str] = mapped_column(String(10), default="vip", nullable=False)  # "vip" ou "free"
     vip_until: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True
+    )
+
+
+class FreeGroupMember(Base):
+    """Membros atualmente no grupo FREE"""
+    __tablename__ = "free_group_members"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, unique=True, index=True, nullable=False)
+    username: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    first_name: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
+    joined_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
