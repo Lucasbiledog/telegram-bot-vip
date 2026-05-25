@@ -422,6 +422,7 @@ async def fetch_fab_images(pack_title: str, count: int = 3) -> list[bytes]:
 
     try:
         async with httpx.AsyncClient(follow_redirects=True, timeout=20) as client:
+            urls: list[str] = []
 
             # 0. UUID → API direta do Fab.com
             uid = await _find_fab_uuid(client, query)
