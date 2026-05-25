@@ -20,6 +20,13 @@ LOG = logging.getLogger("fab_scraper")
 
 _BING_IMG = "https://www.bing.com/images/search"
 _FAB_SEARCH = "https://www.fab.com/i/listings/search"
+_FAB_LISTING = "https://www.fab.com/i/listings/{uid}"
+
+# UUID do Fab.com (ex: 7b5c2213-cf53-4669-899a-32883cd5519d)
+_FAB_UUID_PAT = re.compile(
+    r"fab\.com/listings/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})",
+    re.IGNORECASE,
+)
 
 _UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -119,7 +126,61 @@ def _rank_urls(candidates: list[str]) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
-# Estratégia 1: API interna do Fab.com
+# Estratégia 0: UUID → API direta do Fab.com
+# ---------------------------------------------------------------------------
+
+async def _find_fab_uuid(client: httpx.AsyncClient, query: str) -> str | None:
+    """Usa Bing web search para encontrar o UUID do produto no Fab.com."""
+    try:
+        resp = await client.get(
+            "https://www.bing.com/search",
+            params={"q": f'site:fab.com/listings "{query}"', "count": 5},
+            headers=_HEADERS_BROWSER,
+            timeout=12,
+        )
+        if resp.status_code != 200:
+            return None
+        m = _FAB_UUID_PAT.search(resp.text)
+        if m:
+            LOG.info("[fab_uuid] UUID encontrado: %s", m.group(1))
+            return m.group(1)
+    except Exception as exc:
+        LOG.debug("[fab_uuid] Erro: %s", exc)
+    return None
+
+
+async def _fetch_fab_listing(client: httpx.AsyncClient, uid: str) -> list[str]:
+    """Chama a API do Fab.com para um UUID específico e extrai URLs de imagem."""
+    try:
+        resp = await client.get(
+            _FAB_LISTING.format(uid=uid),
+            headers=_HEADERS_JSON,
+            timeout=12,
+        )
+        if resp.status_code != 200:
+            LOG.debug("[fab_listing] Status %d para uid=%s", resp.status_code, uid)
+            return []
+        data = resp.json()
+        urls: list[str] = []
+        for field in ("images", "gallery", "screenshots", "media", "assets"):
+            for img in data.get(field, []):
+                url = (img.get("url") or img.get("src") or img.get("original", "")) if isinstance(img, dict) else str(img)
+                if url and _IMG_EXT.search(url):
+                    urls.append(url)
+        for field in ("thumbnail", "preview_image", "cover_image", "hero_image"):
+            val = data.get(field) or ""
+            url = (val.get("url", "") if isinstance(val, dict) else str(val))
+            if url and _IMG_EXT.search(url):
+                urls.append(url)
+        LOG.info("[fab_listing] %d URL(s) para uid=%s", len(urls), uid)
+        return urls
+    except Exception as exc:
+        LOG.debug("[fab_listing] Erro uid=%s: %s", uid, exc)
+        return []
+
+
+# ---------------------------------------------------------------------------
+# Estratégia 1: API interna do Fab.com (search genérico)
 # ---------------------------------------------------------------------------
 
 async def _search_fab_api(client: httpx.AsyncClient, query: str) -> list[str]:
@@ -362,12 +423,20 @@ async def fetch_fab_images(pack_title: str, count: int = 3) -> list[bytes]:
     try:
         async with httpx.AsyncClient(follow_redirects=True, timeout=20) as client:
 
-            # 1. API do Fab.com
-            urls = _rank_urls(await _search_fab_api(client, query))
-            if urls:
-                LOG.info("[fab] API Fab retornou %d URL(s)", len(urls))
+            # 0. UUID → API direta do Fab.com
+            uid = await _find_fab_uuid(client, query)
+            if uid:
+                urls = _rank_urls(await _fetch_fab_listing(client, uid))
+                if urls:
+                    LOG.info("[fab] UUID+API retornou %d URL(s)", len(urls))
 
-            # 2. Bing
+            # 1. API do Fab.com (search genérico)
+            if not urls:
+                urls = _rank_urls(await _search_fab_api(client, query))
+                if urls:
+                    LOG.info("[fab] API Fab retornou %d URL(s)", len(urls))
+
+            # 2. Bing (múltiplas queries)
             if not urls:
                 urls = await _search_bing(client, query, count)
 
