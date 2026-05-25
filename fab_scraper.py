@@ -256,48 +256,84 @@ async def _fetch_wayback(client: httpx.AsyncClient, uid: str) -> list[str]:
 
 async def _fab_search_curl(query: str) -> list[str]:
     """
-    Acessa Fab.com usando curl_cffi que imita o fingerprint TLS do Chrome.
-    Isso bypassa a proteção Cloudflare que bloqueia IPs de data center.
+    Acessa Fab.com usando curl_cffi (Chrome TLS fingerprint) para bypassar Cloudflare.
+    Fluxo: search API → individual listings → HTML __NEXT_DATA__
     """
     if not _CURL_CFFI_OK:
         LOG.debug("[fab_curl] curl_cffi não disponível")
         return []
+    import json as _json
+
     try:
         async with CurlSession(impersonate="chrome136") as session:
-            # Tenta API de search do Fab.com
+            urls: list[str] = []
+
+            # 1. API de search
             resp = await session.get(
                 "https://www.fab.com/i/listings/search",
                 params={"q": query, "product_type": "unreal_engine", "page_size": "6"},
                 headers={"Referer": "https://www.fab.com/", "Accept": "application/json"},
                 timeout=12,
             )
-            LOG.info("[fab_curl] search status=%d para '%s'", resp.status_code, query)
+            LOG.info("[fab_curl] search status=%d", resp.status_code)
+
             if resp.status_code == 200:
                 data = resp.json()
-                # Log estrutura para diagnóstico (primeiros 1000 chars)
-                import json as _json
                 LOG.info("[fab_curl] JSON keys=%s snippet=%s",
                          list(data.keys()) if isinstance(data, dict) else type(data).__name__,
-                         _json.dumps(data)[:1000])
-                urls: list[str] = []
-                results = data.get("results") or data.get("listings") or data.get("items") or []
-                if isinstance(results, list):
-                    for listing in results:
-                        # Varre TODOS os campos recursivamente buscando URLs de imagem
-                        urls.extend(_find_image_urls_in_obj(listing))
-                LOG.info("[fab_curl] %d URL(s) brutas", len(urls))
-                return urls
+                         _json.dumps(data)[:800])
 
-            # Se não encontrou por search, tenta página de resultados HTML
+                # Extrai URLs diretas dos resultados
+                results = data.get("results") or data.get("listings") or data.get("items") or []
+                for listing in (results if isinstance(results, list) else []):
+                    urls.extend(_find_image_urls_in_obj(listing))
+
+                # Busca UIDs e chama listing individual para dados completos
+                for listing in (results if isinstance(results, list) else [])[:3]:
+                    uid = None
+                    for k in ("uid", "id", "uuid", "listing_id", "slug"):
+                        uid = listing.get(k)
+                        if uid and len(str(uid)) > 8:
+                            break
+                    if uid:
+                        lresp = await session.get(
+                            f"https://www.fab.com/i/listings/{uid}",
+                            headers={"Accept": "application/json", "Referer": "https://www.fab.com/"},
+                            timeout=10,
+                        )
+                        LOG.info("[fab_curl] listing/%s status=%d", uid, lresp.status_code)
+                        if lresp.status_code == 200:
+                            LOG.info("[fab_curl] listing JSON: %s", lresp.text[:600])
+                            urls.extend(_find_image_urls_in_obj(lresp.json()))
+
+                if urls:
+                    LOG.info("[fab_curl] %d URL(s) brutas via API", len(urls))
+                    return urls
+
+            # 2. Página HTML de search — extrai __NEXT_DATA__ (dados do Next.js)
             resp2 = await session.get(
                 "https://www.fab.com/search",
                 params={"q": query},
+                headers={"Referer": "https://www.fab.com/"},
                 timeout=12,
             )
+            LOG.info("[fab_curl] HTML search status=%d", resp2.status_code)
             if resp2.status_code == 200:
+                m = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', resp2.text, re.DOTALL)
+                if m:
+                    try:
+                        nd = _json.loads(m.group(1))
+                        LOG.info("[fab_curl] __NEXT_DATA__ snippet=%s", _json.dumps(nd)[:600])
+                        urls = _find_image_urls_in_obj(nd)
+                        LOG.info("[fab_curl] %d URL(s) brutas via __NEXT_DATA__", len(urls))
+                        return urls
+                    except Exception:
+                        pass
+                # Fallback: regex CDN direto no HTML
                 urls = _extract_urls_from_html(resp2.text)
-                LOG.info("[fab_curl] HTML search: %d URL(s) brutas", len(urls))
+                LOG.info("[fab_curl] %d URL(s) brutas via HTML regex", len(urls))
                 return urls
+
     except Exception as exc:
         LOG.debug("[fab_curl] Erro: %s", exc)
     return []
