@@ -47,12 +47,15 @@ _HEADERS_JSON = {
     "Referer": "https://www.fab.com/",
 }
 
-# CDN URLs do Epic/Fab (sem Cloudflare, acesso direto)
+# CDN URLs do Epic/Fab/UE (sem Cloudflare, acesso direto)
 _CDN_PAT = re.compile(
     r"https?://(?:"
     r"cdn\d*\.epicgames\.com"
-    r"|(?:media|cdn|static|images|assets)\.fab\.com"
+    r"|(?:media|cdn|static|images|assets|cdn-1|cdn-2)\.fab\.com"
     r"|fab\.com/cdn-cgi"
+    r"|(?:cdn|images|assets|static)\.unrealengine\.com"
+    r"|(?:cdn|media|static)\.fabstatic\.com"
+    r"|(?:cdn|media)\.unrealassets\.com"
     r")"
     r"[^\x00-\x20\"'<>\\]+",
     re.IGNORECASE,
@@ -100,9 +103,11 @@ def _rank_urls(candidates: list[str]) -> list[str]:
         if not _IMG_EXT.search(url):
             continue
         if not _CDN_PAT.match(url):
+            LOG.info("[fab_filter] URL rejeitada (domínio fora do CDN): %s", url[:120])
             continue
         score = _score_url(url)
         if score == 0:
+            LOG.debug("[fab_filter] URL rejeitada (thumbnail): %s", url[:120])
             continue
         key = _canonical_key(url)
         if key in seen:
