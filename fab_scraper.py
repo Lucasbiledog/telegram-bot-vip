@@ -14,6 +14,12 @@ from html import unescape
 
 import httpx
 
+try:
+    from curl_cffi.requests import AsyncSession as CurlSession
+    _CURL_CFFI_OK = True
+except ImportError:
+    _CURL_CFFI_OK = False
+
 LOG = logging.getLogger("fab_scraper")
 
 _UA = (
@@ -231,13 +237,69 @@ async def _fetch_wayback(client: httpx.AsyncClient, uid: str) -> list[str]:
         return []
 
 
+async def _fab_search_curl(query: str) -> list[str]:
+    """
+    Acessa Fab.com usando curl_cffi que imita o fingerprint TLS do Chrome.
+    Isso bypassa a proteção Cloudflare que bloqueia IPs de data center.
+    """
+    if not _CURL_CFFI_OK:
+        LOG.debug("[fab_curl] curl_cffi não disponível")
+        return []
+    try:
+        async with CurlSession(impersonate="chrome136") as session:
+            # Tenta API de search do Fab.com
+            resp = await session.get(
+                "https://www.fab.com/i/listings/search",
+                params={"q": query, "product_type": "unreal_engine", "page_size": "6"},
+                headers={"Referer": "https://www.fab.com/", "Accept": "application/json"},
+                timeout=12,
+            )
+            LOG.info("[fab_curl] search status=%d para '%s'", resp.status_code, query)
+            if resp.status_code == 200:
+                data = resp.json()
+                urls: list[str] = []
+                for listing in data.get("results", []):
+                    for field in ("images", "gallery", "screenshots", "media"):
+                        for img in listing.get(field, []):
+                            url = (img.get("url") or img.get("src") or "") if isinstance(img, dict) else str(img)
+                            if url and _IMG_EXT.search(url):
+                                urls.append(url)
+                    for field in ("thumbnail", "preview_image", "cover_image"):
+                        val = listing.get(field) or ""
+                        url = val.get("url", "") if isinstance(val, dict) else str(val)
+                        if url and _IMG_EXT.search(url):
+                            urls.append(url)
+                LOG.info("[fab_curl] %d URL(s) brutas", len(urls))
+                return urls
+
+            # Se não encontrou por search, tenta página de resultados HTML
+            resp2 = await session.get(
+                "https://www.fab.com/search",
+                params={"q": query},
+                timeout=12,
+            )
+            if resp2.status_code == 200:
+                urls = _extract_urls_from_html(resp2.text)
+                LOG.info("[fab_curl] HTML search: %d URL(s) brutas", len(urls))
+                return urls
+    except Exception as exc:
+        LOG.debug("[fab_curl] Erro: %s", exc)
+    return []
+
+
 async def _try_fab_listing(client: httpx.AsyncClient, query: str) -> list[str]:
-    """Tenta obter imagens via: 1) API Fab direta, 2) Wayback Machine."""
+    """Tenta obter imagens via: 1) curl_cffi (Chrome TLS), 2) API Fab, 3) Wayback Machine."""
+
+    # 1. curl_cffi: imita Chrome para bypassar Cloudflare
+    urls = await _fab_search_curl(query)
+    if urls:
+        return urls
+
+    # 2. UUID → API direta ou Wayback Machine
     uid = await _find_fab_uuid(client, query)
     if not uid:
         return []
 
-    # Tenta API direta primeiro (rápido, pode funcionar)
     try:
         resp = await client.get(
             f"https://www.fab.com/i/listings/{uid}",
@@ -246,7 +308,7 @@ async def _try_fab_listing(client: httpx.AsyncClient, query: str) -> list[str]:
         )
         if resp.status_code == 200:
             data = resp.json()
-            urls: list[str] = []
+            urls = []
             for field in ("images", "gallery", "screenshots", "media"):
                 for img in data.get(field, []):
                     url = (img.get("url") or img.get("src") or "") if isinstance(img, dict) else str(img)
@@ -263,7 +325,7 @@ async def _try_fab_listing(client: httpx.AsyncClient, query: str) -> list[str]:
     except Exception:
         pass
 
-    # Fallback: Wayback Machine (bypassa Cloudflare via snapshot arquivado)
+    # 3. Wayback Machine (bypassa Cloudflare via snapshot arquivado)
     return await _fetch_wayback(client, uid)
 
 

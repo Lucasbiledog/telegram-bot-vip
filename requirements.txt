@@ -15,4 +15,6 @@ psycopg2-binary
 # Cache e performance
 aioredis>=2.0.1
 redis>=4.6.0
+# Bypass Cloudflare via Chrome TLS fingerprint
+curl_cffi>=0.7.0
 
