@@ -188,29 +188,74 @@ def _extract_bing_urls(html_text: str) -> list[str]:
     return candidates
 
 
-async def _search_bing(client: httpx.AsyncClient, query: str, count: int) -> list[str]:
-    bing_query = f"fab.com {query} unreal engine"
+async def _bing_img_query(client: httpx.AsyncClient, query: str, count: int, label: str) -> list[str]:
+    """Executa uma query no Bing Images e retorna URLs CDN rankeadas."""
     try:
         resp = await client.get(
             _BING_IMG,
-            params={"q": bing_query, "count": count * 8, "first": 1},
+            params={"q": query, "count": count * 8, "first": 1},
             headers=_HEADERS_BROWSER,
             timeout=18,
         )
         if resp.status_code != 200:
-            LOG.warning("[fab_bing] Status %d para '%s'", resp.status_code, query)
+            LOG.debug("[fab_bing/%s] Status %d", label, resp.status_code)
             return []
         raw = _extract_bing_urls(resp.text)
         urls = _rank_urls(raw)
-        LOG.info("[fab_bing] %d URL(s) CDN para '%s' (brutas=%d)", len(urls), query, len(raw))
-        if not urls:
-            # Log snippet para diagnóstico
-            snippet = resp.text[:800].replace("\n", " ")
-            LOG.info("[fab_bing] snippet HTML: %s", snippet)
+        LOG.info("[fab_bing/%s] %d URL(s) CDN (brutas=%d) para '%s'", label, len(urls), len(raw), query)
         return urls
     except Exception as exc:
-        LOG.warning("[fab_bing] Erro para '%s': %s", query, exc)
+        LOG.debug("[fab_bing/%s] Erro: %s", label, exc)
         return []
+
+
+async def _search_bing_web(client: httpx.AsyncClient, query: str) -> list[str]:
+    """Busca no Bing Web (não imagem) por site:fab.com e extrai CDN URLs dos snippets."""
+    try:
+        resp = await client.get(
+            "https://www.bing.com/search",
+            params={"q": f'site:fab.com "{query}"', "count": 5},
+            headers=_HEADERS_BROWSER,
+            timeout=15,
+        )
+        if resp.status_code != 200:
+            LOG.debug("[fab_web] Status %d", resp.status_code)
+            return []
+        raw = _extract_bing_urls(resp.text)
+        urls = _rank_urls(raw)
+        LOG.info("[fab_web] %d URL(s) CDN para '%s'", len(urls), query)
+        return urls
+    except Exception as exc:
+        LOG.debug("[fab_web] Erro: %s", exc)
+        return []
+
+
+async def _search_bing(client: httpx.AsyncClient, query: str, count: int) -> list[str]:
+    """Tenta várias queries no Bing até encontrar URLs do CDN Fab/Epic."""
+
+    # 1. Query genérica
+    urls = await _bing_img_query(client, f"fab.com {query} unreal engine", count, "geral")
+    if urls:
+        return urls
+
+    # 2. Restrito ao CDN media.fab.com
+    urls = await _bing_img_query(client, f'site:media.fab.com "{query}"', count, "media.fab")
+    if urls:
+        return urls
+
+    # 3. Restrito ao CDN Epic Games
+    urls = await _bing_img_query(client, f'site:cdn1.epicgames.com "{query}"', count, "cdn.epic")
+    if urls:
+        return urls
+
+    # 4. Bing Web Search — extrai og:images dos snippets de resultados do fab.com
+    urls = await _search_bing_web(client, query)
+    if urls:
+        return urls
+
+    # Log snippet da última resposta para diagnóstico
+    LOG.info("[fab_bing] Nenhuma URL CDN encontrada para '%s'", query)
+    return []
 
 
 # ---------------------------------------------------------------------------
