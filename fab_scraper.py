@@ -176,55 +176,95 @@ async def _google_search(client: httpx.AsyncClient, query: str, count: int) -> l
 
 
 # ---------------------------------------------------------------------------
-# UUID → listing direto no Fab.com
+# UUID → Wayback Machine (archive.org) + API Fab direta
 # ---------------------------------------------------------------------------
 
-async def _try_fab_listing(client: httpx.AsyncClient, query: str) -> list[str]:
-    """Busca o UUID do produto via Bing web e tenta a API do Fab.com."""
+async def _find_fab_uuid(client: httpx.AsyncClient, query: str) -> str | None:
+    """Busca o UUID do produto via Google e Bing web search."""
+    searches = [
+        ("https://www.google.com/search", {"q": f'site:fab.com "{query}"', "num": 5}, "https://www.google.com/"),
+        ("https://www.bing.com/search",   {"q": f'site:fab.com/listings "{query}"', "count": 5}, "https://www.bing.com/"),
+    ]
+    for url, params, referer in searches:
+        try:
+            resp = await client.get(url, params=params,
+                                    headers={**_HEADERS, "Referer": referer}, timeout=10)
+            if resp.status_code != 200:
+                continue
+            for text in (resp.text, urllib.parse.unquote(resp.text)):
+                m = _FAB_UUID_PAT.search(text)
+                if m:
+                    LOG.info("[fab_uuid] UUID: %s (via %s)", m.group(1), url)
+                    return m.group(1)
+        except Exception as exc:
+            LOG.debug("[fab_uuid] Erro %s: %s", url, exc)
+    return None
+
+
+async def _fetch_wayback(client: httpx.AsyncClient, uid: str) -> list[str]:
+    """Busca página arquivada do Fab.com no Wayback Machine (archive.org).
+    Bypassa o Cloudflare acessando snapshot arquivado que contém as URLs CDN."""
+    fab_url = f"https://www.fab.com/listings/{uid}"
     try:
-        resp = await client.get(
-            "https://www.bing.com/search",
-            params={"q": f'site:fab.com/listings "{query}"', "count": 5},
-            headers={**_HEADERS, "Referer": "https://www.bing.com/"},
+        avail = await client.get(
+            "https://archive.org/wayback/available",
+            params={"url": fab_url},
+            headers={"User-Agent": _UA},
             timeout=10,
         )
+        if avail.status_code != 200:
+            return []
+        snapshot = avail.json().get("archived_snapshots", {}).get("closest", {})
+        snap_url = snapshot.get("url")
+        if not snap_url:
+            LOG.debug("[fab_wayback] Sem snapshot para uid=%s", uid)
+            return []
+        LOG.info("[fab_wayback] Snapshot: %s", snap_url)
+        resp = await client.get(snap_url, headers={"User-Agent": _UA}, timeout=15)
         if resp.status_code != 200:
             return []
-        # tenta UUID direto e também em URL-decoded (Bing pode codificar)
-        m = _FAB_UUID_PAT.search(resp.text) or _FAB_UUID_PAT.search(urllib.parse.unquote(resp.text))
-        if not m:
-            return []
-        uid = m.group(1)
-        LOG.info("[fab_uuid] UUID: %s", uid)
-    except Exception:
+        urls = _extract_urls_from_html(resp.text)
+        LOG.info("[fab_wayback] %d URL(s) brutas para uid=%s", len(urls), uid)
+        return urls
+    except Exception as exc:
+        LOG.debug("[fab_wayback] Erro uid=%s: %s", uid, exc)
         return []
 
+
+async def _try_fab_listing(client: httpx.AsyncClient, query: str) -> list[str]:
+    """Tenta obter imagens via: 1) API Fab direta, 2) Wayback Machine."""
+    uid = await _find_fab_uuid(client, query)
+    if not uid:
+        return []
+
+    # Tenta API direta primeiro (rápido, pode funcionar)
     try:
         resp = await client.get(
             f"https://www.fab.com/i/listings/{uid}",
             headers={"User-Agent": _UA, "Accept": "application/json", "Referer": "https://www.fab.com/"},
-            timeout=10,
+            timeout=8,
         )
-        if resp.status_code != 200:
-            LOG.debug("[fab_listing] Status %d uid=%s", resp.status_code, uid)
-            return []
-        data = resp.json()
-        urls: list[str] = []
-        for field in ("images", "gallery", "screenshots", "media"):
-            for img in data.get(field, []):
-                url = (img.get("url") or img.get("src") or "") if isinstance(img, dict) else str(img)
+        if resp.status_code == 200:
+            data = resp.json()
+            urls: list[str] = []
+            for field in ("images", "gallery", "screenshots", "media"):
+                for img in data.get(field, []):
+                    url = (img.get("url") or img.get("src") or "") if isinstance(img, dict) else str(img)
+                    if url and _IMG_EXT.search(url):
+                        urls.append(url)
+            for field in ("thumbnail", "preview_image", "cover_image", "hero_image"):
+                val = data.get(field) or ""
+                url = val.get("url", "") if isinstance(val, dict) else str(val)
                 if url and _IMG_EXT.search(url):
                     urls.append(url)
-        for field in ("thumbnail", "preview_image", "cover_image", "hero_image"):
-            val = data.get(field) or ""
-            url = val.get("url", "") if isinstance(val, dict) else str(val)
-            if url and _IMG_EXT.search(url):
-                urls.append(url)
-        LOG.info("[fab_listing] %d URL(s) uid=%s", len(urls), uid)
-        return urls
-    except Exception as exc:
-        LOG.debug("[fab_listing] Erro uid=%s: %s", uid, exc)
-        return []
+            if urls:
+                LOG.info("[fab_listing] API direta: %d URL(s) uid=%s", len(urls), uid)
+                return urls
+    except Exception:
+        pass
+
+    # Fallback: Wayback Machine (bypassa Cloudflare via snapshot arquivado)
+    return await _fetch_wayback(client, uid)
 
 
 # ---------------------------------------------------------------------------
