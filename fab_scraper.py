@@ -62,6 +62,23 @@ _FAB_UUID_PAT = re.compile(
 )
 
 
+def _find_image_urls_in_obj(obj, _depth: int = 0) -> list[str]:
+    """Varre recursivamente qualquer objeto JSON buscando URLs de imagem."""
+    if _depth > 6:
+        return []
+    urls: list[str] = []
+    if isinstance(obj, str):
+        if obj.startswith("http") and _IMG_EXT.search(obj):
+            urls.append(obj)
+    elif isinstance(obj, dict):
+        for v in obj.values():
+            urls.extend(_find_image_urls_in_obj(v, _depth + 1))
+    elif isinstance(obj, list):
+        for item in obj:
+            urls.extend(_find_image_urls_in_obj(item, _depth + 1))
+    return urls
+
+
 def _canonical_key(url: str) -> str:
     path = url.split("?")[0].lower()
     return _HASH_SUFFIX.sub("", path)
@@ -257,18 +274,17 @@ async def _fab_search_curl(query: str) -> list[str]:
             LOG.info("[fab_curl] search status=%d para '%s'", resp.status_code, query)
             if resp.status_code == 200:
                 data = resp.json()
+                # Log estrutura para diagnóstico (primeiros 1000 chars)
+                import json as _json
+                LOG.info("[fab_curl] JSON keys=%s snippet=%s",
+                         list(data.keys()) if isinstance(data, dict) else type(data).__name__,
+                         _json.dumps(data)[:1000])
                 urls: list[str] = []
-                for listing in data.get("results", []):
-                    for field in ("images", "gallery", "screenshots", "media"):
-                        for img in listing.get(field, []):
-                            url = (img.get("url") or img.get("src") or "") if isinstance(img, dict) else str(img)
-                            if url and _IMG_EXT.search(url):
-                                urls.append(url)
-                    for field in ("thumbnail", "preview_image", "cover_image"):
-                        val = listing.get(field) or ""
-                        url = val.get("url", "") if isinstance(val, dict) else str(val)
-                        if url and _IMG_EXT.search(url):
-                            urls.append(url)
+                results = data.get("results") or data.get("listings") or data.get("items") or []
+                if isinstance(results, list):
+                    for listing in results:
+                        # Varre TODOS os campos recursivamente buscando URLs de imagem
+                        urls.extend(_find_image_urls_in_obj(listing))
                 LOG.info("[fab_curl] %d URL(s) brutas", len(urls))
                 return urls
 
