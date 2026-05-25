@@ -1,14 +1,12 @@
 """
-Módulo para buscar imagens de preview no Fab.com.
-Estratégias em ordem:
-  1. API interna do Fab.com (JSON direto, sem Cloudflare nos endpoints de API)
-  2. Bing Image Search (extrai murl de blobs JSON + regex CDN)
-  3. DuckDuckGo Images (VQD token + endpoint JSON estruturado)
+Busca imagens de preview do Fab.com via mecanismos de busca.
+Fab.com está atrás de Cloudflare que bloqueia IPs de cloud (403).
+Solução: buscar imagens via Bing/Google, filtrar APENAS CDNs do Epic/Fab.
+Nenhuma imagem de domínio externo passa pelo filtro — se não encontrar, retorna vazio.
 """
 from __future__ import annotations
 
 import io
-import json
 import logging
 import re
 import urllib.parse
@@ -18,51 +16,29 @@ import httpx
 
 LOG = logging.getLogger("fab_scraper")
 
-_BING_IMG = "https://www.bing.com/images/search"
-_FAB_SEARCH = "https://www.fab.com/i/listings/search"
-_FAB_LISTING = "https://www.fab.com/i/listings/{uid}"
-
-# UUID do Fab.com (ex: 7b5c2213-cf53-4669-899a-32883cd5519d)
-_FAB_UUID_PAT = re.compile(
-    r"fab\.com/listings/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})",
-    re.IGNORECASE,
-)
-
 _UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "
     "Chrome/136.0.0.0 Safari/537.36"
 )
 
-_HEADERS_BROWSER = {
+_HEADERS = {
     "User-Agent": _UA,
     "Accept-Language": "en-US,en;q=0.9",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
     "Accept-Encoding": "gzip, deflate",
-    "Referer": "https://www.bing.com/",
-    "Sec-Fetch-Dest": "document",
-    "Sec-Fetch-Mode": "navigate",
-    "Sec-Fetch-Site": "same-origin",
     "Upgrade-Insecure-Requests": "1",
 }
 
-_HEADERS_JSON = {
-    "User-Agent": _UA,
-    "Accept": "application/json, text/plain, */*",
-    "Accept-Language": "en-US,en;q=0.9",
-    "Accept-Encoding": "gzip, deflate",
-    "Referer": "https://www.fab.com/",
-}
-
-# CDN URLs do Epic/Fab/UE (sem Cloudflare, acesso direto)
+# ---------------------------------------------------------------------------
+# Filtro CDN — ÚNICA porta de entrada. Somente Epic/Fab CDN passa.
+# ---------------------------------------------------------------------------
 _CDN_PAT = re.compile(
     r"https?://(?:"
     r"cdn\d*\.epicgames\.com"
     r"|(?:media|cdn|static|images|assets|cdn-1|cdn-2)\.fab\.com"
-    r"|fab\.com/cdn-cgi"
     r"|(?:cdn|images|assets|static)\.unrealengine\.com"
     r"|(?:cdn|media|static)\.fabstatic\.com"
-    r"|(?:cdn|media)\.unrealassets\.com"
     r")"
     r"[^\x00-\x20\"'<>\\]+",
     re.IGNORECASE,
@@ -70,30 +46,25 @@ _CDN_PAT = re.compile(
 _IMG_EXT = re.compile(r"\.(jpg|jpeg|png|webp)", re.IGNORECASE)
 _HASH_SUFFIX = re.compile(r"-[0-9a-f]{8,}$", re.IGNORECASE)
 
-# murl/iurl em blobs JSON embutidos no Bing
-_MURL_PAT = re.compile(r'"(?:murl|iurl)"\s*:\s*"(https?://[^"\\]+)"')
+# Padrões para extrair URLs de blobs JSON (Bing/Google)
+_MURL_PAT = re.compile(r'"(?:murl|iurl|ou|imgurl)"\s*:\s*"(https?://[^"\\]+)"')
 
-# VQD token do DuckDuckGo
-_VQD_PAT = re.compile(r'vqd=([^&"\']+)')
+# UUID do Fab.com para busca por listing direto
+_FAB_UUID_PAT = re.compile(
+    r"fab\.com/listings/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})",
+    re.IGNORECASE,
+)
 
 
 def _canonical_key(url: str) -> str:
     path = url.split("?")[0].lower()
-    path = _HASH_SUFFIX.sub("", path)
-    return path
+    return _HASH_SUFFIX.sub("", path)
 
 
 def _score_url(url: str) -> int:
-    """
-    4 = Screenshot 1920x1080
-    3 = media.fab.com
-    2 = featured
-    1 = outro CDN válido
-    0 = thumbnail (descartar)
-    """
     u = url.lower()
-    if "/thumbnail/" in u or "thumb-284x284" in u or "284x284" in u or "_thumb-" in u:
-        return 0
+    if "/thumbnail/" in u or "284x284" in u or "_thumb-" in u:
+        return 0  # descarta thumbnails
     if "/screenshot/" in u and "1920x1080" in u:
         return 4
     if "media.fab.com" in u:
@@ -104,17 +75,21 @@ def _score_url(url: str) -> int:
 
 
 def _rank_urls(candidates: list[str]) -> list[str]:
+    """
+    Filtra e rankeia URLs. SÓ passa CDN do Epic/Fab — qualquer outro domínio
+    é descartado silenciosamente, garantindo que imagens aleatórias nunca
+    sejam enviadas.
+    """
     seen: set[str] = set()
     ranked: list[tuple[int, str]] = []
     for url in candidates:
         if not _IMG_EXT.search(url):
             continue
         if not _CDN_PAT.match(url):
-            LOG.info("[fab_filter] URL rejeitada (domínio fora do CDN): %s", url[:120])
+            LOG.debug("[fab_filter] rejeitado (domínio inválido): %s", url[:100])
             continue
         score = _score_url(url)
         if score == 0:
-            LOG.debug("[fab_filter] URL rejeitada (thumbnail): %s", url[:120])
             continue
         key = _canonical_key(url)
         if key in seen:
@@ -125,257 +100,74 @@ def _rank_urls(candidates: list[str]) -> list[str]:
     return [u for _, u in ranked]
 
 
-# ---------------------------------------------------------------------------
-# Estratégia 0: UUID → API direta do Fab.com
-# ---------------------------------------------------------------------------
-
-async def _find_fab_uuid(client: httpx.AsyncClient, query: str) -> str | None:
-    """Usa Bing web search para encontrar o UUID do produto no Fab.com."""
-    try:
-        resp = await client.get(
-            "https://www.bing.com/search",
-            params={"q": f'site:fab.com/listings "{query}"', "count": 5},
-            headers=_HEADERS_BROWSER,
-            timeout=12,
-        )
-        if resp.status_code != 200:
-            return None
-        m = _FAB_UUID_PAT.search(resp.text)
-        if m:
-            LOG.info("[fab_uuid] UUID encontrado: %s", m.group(1))
-            return m.group(1)
-    except Exception as exc:
-        LOG.debug("[fab_uuid] Erro: %s", exc)
-    return None
-
-
-async def _fetch_fab_listing(client: httpx.AsyncClient, uid: str) -> list[str]:
-    """Chama a API do Fab.com para um UUID específico e extrai URLs de imagem."""
-    try:
-        resp = await client.get(
-            _FAB_LISTING.format(uid=uid),
-            headers=_HEADERS_JSON,
-            timeout=12,
-        )
-        if resp.status_code != 200:
-            LOG.debug("[fab_listing] Status %d para uid=%s", resp.status_code, uid)
-            return []
-        data = resp.json()
-        urls: list[str] = []
-        for field in ("images", "gallery", "screenshots", "media", "assets"):
-            for img in data.get(field, []):
-                url = (img.get("url") or img.get("src") or img.get("original", "")) if isinstance(img, dict) else str(img)
-                if url and _IMG_EXT.search(url):
-                    urls.append(url)
-        for field in ("thumbnail", "preview_image", "cover_image", "hero_image"):
-            val = data.get(field) or ""
-            url = (val.get("url", "") if isinstance(val, dict) else str(val))
-            if url and _IMG_EXT.search(url):
-                urls.append(url)
-        LOG.info("[fab_listing] %d URL(s) para uid=%s", len(urls), uid)
-        return urls
-    except Exception as exc:
-        LOG.debug("[fab_listing] Erro uid=%s: %s", uid, exc)
-        return []
-
-
-# ---------------------------------------------------------------------------
-# Estratégia 1: API interna do Fab.com (search genérico)
-# ---------------------------------------------------------------------------
-
-async def _search_fab_api(client: httpx.AsyncClient, query: str) -> list[str]:
-    """Tenta buscar imagens direto na API do Fab.com (retorna JSON)."""
-    try:
-        resp = await client.get(
-            _FAB_SEARCH,
-            params={"q": query, "product_type": "unreal_engine", "page_size": "6"},
-            headers=_HEADERS_JSON,
-            timeout=12,
-        )
-        if resp.status_code != 200:
-            LOG.debug("[fab_api] Status %d para '%s'", resp.status_code, query)
-            return []
-
-        data = resp.json()
-        urls: list[str] = []
-
-        for listing in data.get("results", []):
-            # Tenta campos comuns de imagem na resposta JSON
-            for field in ("images", "gallery", "screenshots", "media"):
-                for img in listing.get(field, []):
-                    if isinstance(img, dict):
-                        url = img.get("url") or img.get("src") or img.get("original") or ""
-                    else:
-                        url = str(img)
-                    if url and _IMG_EXT.search(url):
-                        urls.append(url)
-            # thumbnail de preview direto no listing
-            for field in ("thumbnail", "preview_image", "cover_image"):
-                url = listing.get(field) or ""
-                if isinstance(url, dict):
-                    url = url.get("url", "")
-                if url and _IMG_EXT.search(url):
-                    urls.append(url)
-
-        LOG.info("[fab_api] %d URL(s) brutas para '%s'", len(urls), query)
-        return urls
-
-    except Exception as exc:
-        LOG.debug("[fab_api] Erro para '%s': %s", query, exc)
-        return []
-
-
-# ---------------------------------------------------------------------------
-# Estratégia 2: Bing Image Search
-# ---------------------------------------------------------------------------
-
-def _extract_bing_urls(html_text: str) -> list[str]:
-    unescaped = unescape(html_text)
+def _extract_urls_from_html(html: str) -> list[str]:
+    """Extrai URLs candidatas do HTML via murl/JSON e regex CDN direto."""
+    text = unescape(html)
     candidates: list[str] = []
 
-    # murl/iurl em JSON embutido
-    for m in _MURL_PAT.finditer(unescaped):
-        url = m.group(1).replace("\\/", "/")
-        candidates.append(url)
+    for m in _MURL_PAT.finditer(text):
+        candidates.append(m.group(1).replace("\\/", "/"))
 
-    # Padrão CDN direto no HTML
-    candidates.extend(_CDN_PAT.findall(unescaped))
+    candidates.extend(_CDN_PAT.findall(text))
 
-    # URL-decode + CDN
-    url_decoded = urllib.parse.unquote(unescaped)
-    if url_decoded != unescaped:
-        candidates.extend(_CDN_PAT.findall(url_decoded))
+    decoded = urllib.parse.unquote(text)
+    if decoded != text:
+        candidates.extend(_CDN_PAT.findall(decoded))
 
     return candidates
 
 
-async def _bing_img_query(client: httpx.AsyncClient, query: str, count: int, label: str) -> list[str]:
-    """Executa uma query no Bing Images e retorna URLs CDN rankeadas."""
-    try:
-        resp = await client.get(
-            _BING_IMG,
-            params={"q": query, "count": count * 8, "first": 1},
-            headers=_HEADERS_BROWSER,
-            timeout=18,
-        )
-        if resp.status_code != 200:
-            LOG.debug("[fab_bing/%s] Status %d", label, resp.status_code)
-            return []
-        raw = _extract_bing_urls(resp.text)
-        urls = _rank_urls(raw)
-        LOG.info("[fab_bing/%s] %d URL(s) CDN (brutas=%d) para '%s'", label, len(urls), len(raw), query)
-        return urls
-    except Exception as exc:
-        LOG.debug("[fab_bing/%s] Erro: %s", label, exc)
-        return []
+# ---------------------------------------------------------------------------
+# Bing Image Search
+# ---------------------------------------------------------------------------
 
-
-async def _search_bing_web(client: httpx.AsyncClient, query: str) -> list[str]:
-    """Busca no Bing Web (não imagem) por site:fab.com e extrai CDN URLs dos snippets."""
-    try:
-        resp = await client.get(
-            "https://www.bing.com/search",
-            params={"q": f'site:fab.com "{query}"', "count": 5},
-            headers=_HEADERS_BROWSER,
-            timeout=15,
-        )
-        if resp.status_code != 200:
-            LOG.debug("[fab_web] Status %d", resp.status_code)
-            return []
-        raw = _extract_bing_urls(resp.text)
-        urls = _rank_urls(raw)
-        LOG.info("[fab_web] %d URL(s) CDN para '%s'", len(urls), query)
-        return urls
-    except Exception as exc:
-        LOG.debug("[fab_web] Erro: %s", exc)
-        return []
-
-
-async def _search_bing(client: httpx.AsyncClient, query: str, count: int) -> list[str]:
-    """Tenta várias queries no Bing até encontrar URLs do CDN Fab/Epic."""
-
-    # 1. Query genérica
-    urls = await _bing_img_query(client, f"fab.com {query} unreal engine", count, "geral")
-    if urls:
-        return urls
-
-    # 2. Restrito ao CDN media.fab.com
-    urls = await _bing_img_query(client, f'site:media.fab.com "{query}"', count, "media.fab")
-    if urls:
-        return urls
-
-    # 3. Restrito ao CDN Epic Games
-    urls = await _bing_img_query(client, f'site:cdn1.epicgames.com "{query}"', count, "cdn.epic")
-    if urls:
-        return urls
-
-    # 4. Bing Web Search — extrai og:images dos snippets de resultados do fab.com
-    urls = await _search_bing_web(client, query)
-    if urls:
-        return urls
-
-    # Log snippet da última resposta para diagnóstico
-    LOG.info("[fab_bing] Nenhuma URL CDN encontrada para '%s'", query)
+async def _bing_search(client: httpx.AsyncClient, query: str, count: int) -> list[str]:
+    headers = {**_HEADERS, "Referer": "https://www.bing.com/"}
+    queries = [
+        f"fab.com {query} unreal engine",
+        f'"{query}" unreal engine marketplace',
+    ]
+    for q in queries:
+        try:
+            resp = await client.get(
+                "https://www.bing.com/images/search",
+                params={"q": q, "count": count * 8, "first": 1},
+                headers=headers,
+                timeout=15,
+            )
+            if resp.status_code != 200:
+                continue
+            urls = _rank_urls(_extract_urls_from_html(resp.text))
+            LOG.info("[fab_bing] %d URL(s) CDN para '%s'", len(urls), q)
+            if urls:
+                return urls
+        except Exception as exc:
+            LOG.debug("[fab_bing] Erro: %s", exc)
     return []
 
 
 # ---------------------------------------------------------------------------
-# Estratégia 3: Google Images
+# Google Images
 # ---------------------------------------------------------------------------
 
-def _extract_google_urls(html_text: str) -> list[str]:
-    """Extrai URLs de imagem do HTML do Google Images (JSON embutido em scripts)."""
-    unescaped = unescape(html_text)
-    candidates: list[str] = []
-
-    # Google embeds image URLs in JSON-like structures in <script> tags
-    # Format: ["https://...",width,height] or "ou":"https://..."
-    for pat in (
-        r'"ou"\s*:\s*"(https?://[^"\\]+)"',      # original url field
-        r'"iurl"\s*:\s*"(https?://[^"\\]+)"',     # image url field
-        r'"imgurl"\s*:\s*"(https?://[^"\\]+)"',   # img url field
-    ):
-        for m in re.finditer(pat, unescaped):
-            url = m.group(1).replace("\\/", "/")
-            candidates.append(url)
-
-    # Also try direct CDN pattern
-    candidates.extend(_CDN_PAT.findall(unescaped))
-
-    # URL-decoded
-    url_decoded = urllib.parse.unquote(unescaped)
-    if url_decoded != unescaped:
-        candidates.extend(_CDN_PAT.findall(url_decoded))
-
-    return candidates
-
-
-async def _search_google(client: httpx.AsyncClient, query: str, count: int) -> list[str]:
-    """Busca no Google Images e retorna URLs CDN rankeadas."""
-    headers = {
-        "User-Agent": _UA,
-        "Accept-Language": "en-US,en;q=0.9",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Encoding": "gzip, deflate",
-        "Referer": "https://www.google.com/",
-    }
-    for gquery in (
+async def _google_search(client: httpx.AsyncClient, query: str, count: int) -> list[str]:
+    headers = {**_HEADERS, "Referer": "https://www.google.com/"}
+    queries = [
         f"fab.com {query} unreal engine",
         f'"{query}" unreal engine marketplace screenshot',
-    ):
+    ]
+    for q in queries:
         try:
             resp = await client.get(
                 "https://www.google.com/search",
-                params={"q": gquery, "tbm": "isch", "num": count * 8},
+                params={"q": q, "tbm": "isch", "num": count * 8},
                 headers=headers,
-                timeout=18,
+                timeout=15,
             )
             if resp.status_code != 200:
-                LOG.debug("[fab_google] Status %d para '%s'", resp.status_code, gquery)
                 continue
-            raw = _extract_google_urls(resp.text)
-            urls = _rank_urls(raw)
-            LOG.info("[fab_google] %d URL(s) CDN para '%s' (brutas=%d)", len(urls), gquery, len(raw))
+            urls = _rank_urls(_extract_urls_from_html(resp.text))
+            LOG.info("[fab_google] %d URL(s) CDN para '%s'", len(urls), q)
             if urls:
                 return urls
         except Exception as exc:
@@ -384,59 +176,54 @@ async def _search_google(client: httpx.AsyncClient, query: str, count: int) -> l
 
 
 # ---------------------------------------------------------------------------
-# Estratégia 4: DuckDuckGo Images (VQD token + endpoint JSON)
+# UUID → listing direto no Fab.com
 # ---------------------------------------------------------------------------
 
-async def _search_ddg(client: httpx.AsyncClient, query: str, count: int) -> list[str]:
-    """DuckDuckGo Images com VQD token para obter JSON estruturado com URLs reais."""
-    ddg_query = f"fab.com {query} unreal engine"
-
-    # Passo 1: obter VQD token
+async def _try_fab_listing(client: httpx.AsyncClient, query: str) -> list[str]:
+    """Busca o UUID do produto via Bing web e tenta a API do Fab.com."""
     try:
         resp = await client.get(
-            "https://duckduckgo.com/",
-            params={"q": ddg_query, "iax": "images", "ia": "images"},
-            headers={**_HEADERS_BROWSER, "Referer": "https://duckduckgo.com/"},
-            timeout=12,
-        )
-        vqd_m = _VQD_PAT.search(resp.text)
-        if not vqd_m:
-            LOG.debug("[fab_ddg] VQD não encontrado para '%s'", query)
-            return []
-        vqd = vqd_m.group(1)
-    except Exception as exc:
-        LOG.debug("[fab_ddg] Erro VQD para '%s': %s", query, exc)
-        return []
-
-    # Passo 2: buscar imagens via endpoint JSON com o VQD
-    try:
-        resp = await client.get(
-            "https://duckduckgo.com/i.js",
-            params={"q": ddg_query, "vqd": vqd, "o": "json", "f": ",,,,,", "p": "1"},
-            headers={
-                "User-Agent": _UA,
-                "Accept": "application/json",
-                "Accept-Encoding": "gzip, deflate",
-                "Referer": "https://duckduckgo.com/",
-            },
-            timeout=12,
+            "https://www.bing.com/search",
+            params={"q": f'site:fab.com/listings "{query}"', "count": 5},
+            headers={**_HEADERS, "Referer": "https://www.bing.com/"},
+            timeout=10,
         )
         if resp.status_code != 200:
-            LOG.debug("[fab_ddg] JSON status %d para '%s'", resp.status_code, query)
             return []
+        # tenta UUID direto e também em URL-decoded (Bing pode codificar)
+        m = _FAB_UUID_PAT.search(resp.text) or _FAB_UUID_PAT.search(urllib.parse.unquote(resp.text))
+        if not m:
+            return []
+        uid = m.group(1)
+        LOG.info("[fab_uuid] UUID: %s", uid)
+    except Exception:
+        return []
 
+    try:
+        resp = await client.get(
+            f"https://www.fab.com/i/listings/{uid}",
+            headers={"User-Agent": _UA, "Accept": "application/json", "Referer": "https://www.fab.com/"},
+            timeout=10,
+        )
+        if resp.status_code != 200:
+            LOG.debug("[fab_listing] Status %d uid=%s", resp.status_code, uid)
+            return []
         data = resp.json()
-        candidates = [
-            r.get("image", "")
-            for r in data.get("results", [])
-            if r.get("image")
-        ]
-        urls = _rank_urls(candidates)
-        LOG.info("[fab_ddg] %d URL(s) CDN para '%s'", len(urls), query)
+        urls: list[str] = []
+        for field in ("images", "gallery", "screenshots", "media"):
+            for img in data.get(field, []):
+                url = (img.get("url") or img.get("src") or "") if isinstance(img, dict) else str(img)
+                if url and _IMG_EXT.search(url):
+                    urls.append(url)
+        for field in ("thumbnail", "preview_image", "cover_image", "hero_image"):
+            val = data.get(field) or ""
+            url = val.get("url", "") if isinstance(val, dict) else str(val)
+            if url and _IMG_EXT.search(url):
+                urls.append(url)
+        LOG.info("[fab_listing] %d URL(s) uid=%s", len(urls), uid)
         return urls
-
     except Exception as exc:
-        LOG.debug("[fab_ddg] Erro JSON para '%s': %s", query, exc)
+        LOG.debug("[fab_listing] Erro uid=%s: %s", uid, exc)
         return []
 
 
@@ -449,22 +236,17 @@ async def _download_images(client: httpx.AsyncClient, urls: list[str], count: in
     for url in urls:
         if len(result) >= count:
             break
-        clean_url = url.split("?")[0]
+        clean = url.split("?")[0]
         try:
-            resp = await client.get(
-                clean_url,
-                headers={"User-Agent": _UA},
-                timeout=15,
-                follow_redirects=True,
-            )
+            resp = await client.get(clean, headers={"User-Agent": _UA}, timeout=15, follow_redirects=True)
             ct = resp.headers.get("content-type", "")
             if resp.status_code == 200 and ("image/" in ct or len(resp.content) > 5000):
                 result.append(resp.content)
-                LOG.debug("[fab_dl] OK %s (%d bytes)", clean_url[:80], len(resp.content))
+                LOG.debug("[fab_dl] OK %s (%d bytes)", clean[:80], len(resp.content))
             else:
-                LOG.debug("[fab_dl] SKIP %s → %d %s", clean_url[:80], resp.status_code, ct)
+                LOG.debug("[fab_dl] SKIP %s → %d", clean[:80], resp.status_code)
         except Exception as exc:
-            LOG.debug("[fab_dl] Erro %s: %s", clean_url[:80], exc)
+            LOG.debug("[fab_dl] Erro %s: %s", clean[:80], exc)
     return result
 
 
@@ -474,9 +256,9 @@ async def _download_images(client: httpx.AsyncClient, urls: list[str], count: in
 
 async def fetch_fab_images(pack_title: str, count: int = 3) -> list[bytes]:
     """
-    Busca até `count` imagens de preview no Fab.com para o título do pack.
-    Tenta: API Fab → Bing → DuckDuckGo.
-    Retorna lista de bytes. Nunca levanta exceção.
+    Busca até `count` imagens do Fab.com para o título do pack.
+    Garante que SOMENTE imagens do CDN do Epic/Fab são retornadas.
+    Se não encontrar nada, retorna lista vazia — nunca envia imagem errada.
     """
     query = pack_title.strip()
     if not query:
@@ -486,42 +268,27 @@ async def fetch_fab_images(pack_title: str, count: int = 3) -> list[bytes]:
 
     try:
         async with httpx.AsyncClient(follow_redirects=True, timeout=20) as client:
-            urls: list[str] = []
 
-            # 0. UUID → API direta do Fab.com
-            uid = await _find_fab_uuid(client, query)
-            if uid:
-                urls = _rank_urls(await _fetch_fab_listing(client, uid))
-                if urls:
-                    LOG.info("[fab] UUID+API retornou %d URL(s)", len(urls))
+            # 1. UUID → API direta do Fab.com
+            urls = _rank_urls(await _try_fab_listing(client, query))
+            if urls:
+                LOG.info("[fab] listing direto: %d URL(s)", len(urls))
 
-            # 1. API do Fab.com (search genérico)
+            # 2. Bing Images
             if not urls:
-                urls = _rank_urls(await _search_fab_api(client, query))
-                if urls:
-                    LOG.info("[fab] API Fab retornou %d URL(s)", len(urls))
-
-            # 2. Bing (múltiplas queries)
-            if not urls:
-                urls = await _search_bing(client, query, count)
+                urls = await _bing_search(client, query, count)
 
             # 3. Google Images
             if not urls:
-                LOG.info("[fab] Tentando Google Images para '%s'", query)
-                urls = await _search_google(client, query, count)
-
-            # 4. DuckDuckGo
-            if not urls:
-                LOG.info("[fab] Tentando DuckDuckGo para '%s'", query)
-                urls = await _search_ddg(client, query, count)
+                LOG.info("[fab] tentando Google para '%s'", query)
+                urls = await _google_search(client, query, count)
 
             if not urls:
-                LOG.info("[fab] Nenhuma URL encontrada para '%s'", query)
+                LOG.info("[fab] nenhuma imagem do CDN encontrada para '%s'", query)
                 return []
 
-            LOG.info("[fab] %d candidata(s), baixando até %d...", len(urls), count)
             images = await _download_images(client, urls, count)
-            LOG.info("[fab] %d imagem(ns) para '%s'", len(images), query)
+            LOG.info("[fab] %d imagem(ns) baixada(s) para '%s'", len(images), query)
             return images
 
     except Exception as exc:
