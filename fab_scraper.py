@@ -320,7 +320,71 @@ async def _search_bing(client: httpx.AsyncClient, query: str, count: int) -> lis
 
 
 # ---------------------------------------------------------------------------
-# Estratégia 3: DuckDuckGo Images (VQD token + endpoint JSON)
+# Estratégia 3: Google Images
+# ---------------------------------------------------------------------------
+
+def _extract_google_urls(html_text: str) -> list[str]:
+    """Extrai URLs de imagem do HTML do Google Images (JSON embutido em scripts)."""
+    unescaped = unescape(html_text)
+    candidates: list[str] = []
+
+    # Google embeds image URLs in JSON-like structures in <script> tags
+    # Format: ["https://...",width,height] or "ou":"https://..."
+    for pat in (
+        r'"ou"\s*:\s*"(https?://[^"\\]+)"',      # original url field
+        r'"iurl"\s*:\s*"(https?://[^"\\]+)"',     # image url field
+        r'"imgurl"\s*:\s*"(https?://[^"\\]+)"',   # img url field
+    ):
+        for m in re.finditer(pat, unescaped):
+            url = m.group(1).replace("\\/", "/")
+            candidates.append(url)
+
+    # Also try direct CDN pattern
+    candidates.extend(_CDN_PAT.findall(unescaped))
+
+    # URL-decoded
+    url_decoded = urllib.parse.unquote(unescaped)
+    if url_decoded != unescaped:
+        candidates.extend(_CDN_PAT.findall(url_decoded))
+
+    return candidates
+
+
+async def _search_google(client: httpx.AsyncClient, query: str, count: int) -> list[str]:
+    """Busca no Google Images e retorna URLs CDN rankeadas."""
+    headers = {
+        "User-Agent": _UA,
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Encoding": "gzip, deflate",
+        "Referer": "https://www.google.com/",
+    }
+    for gquery in (
+        f"fab.com {query} unreal engine",
+        f'"{query}" unreal engine marketplace screenshot',
+    ):
+        try:
+            resp = await client.get(
+                "https://www.google.com/search",
+                params={"q": gquery, "tbm": "isch", "num": count * 8},
+                headers=headers,
+                timeout=18,
+            )
+            if resp.status_code != 200:
+                LOG.debug("[fab_google] Status %d para '%s'", resp.status_code, gquery)
+                continue
+            raw = _extract_google_urls(resp.text)
+            urls = _rank_urls(raw)
+            LOG.info("[fab_google] %d URL(s) CDN para '%s' (brutas=%d)", len(urls), gquery, len(raw))
+            if urls:
+                return urls
+        except Exception as exc:
+            LOG.debug("[fab_google] Erro: %s", exc)
+    return []
+
+
+# ---------------------------------------------------------------------------
+# Estratégia 4: DuckDuckGo Images (VQD token + endpoint JSON)
 # ---------------------------------------------------------------------------
 
 async def _search_ddg(client: httpx.AsyncClient, query: str, count: int) -> list[str]:
@@ -441,7 +505,12 @@ async def fetch_fab_images(pack_title: str, count: int = 3) -> list[bytes]:
             if not urls:
                 urls = await _search_bing(client, query, count)
 
-            # 3. DuckDuckGo
+            # 3. Google Images
+            if not urls:
+                LOG.info("[fab] Tentando Google Images para '%s'", query)
+                urls = await _search_google(client, query, count)
+
+            # 4. DuckDuckGo
             if not urls:
                 LOG.info("[fab] Tentando DuckDuckGo para '%s'", query)
                 urls = await _search_ddg(client, query, count)
