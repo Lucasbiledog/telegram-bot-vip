@@ -62,21 +62,46 @@ _FAB_UUID_PAT = re.compile(
 )
 
 
-def _find_image_urls_in_obj(obj, _depth: int = 0) -> list[str]:
-    """Varre recursivamente qualquer objeto JSON buscando URLs de imagem."""
-    if _depth > 6:
+# Campos de alta prioridade (screenshots/galeria reais)
+_HIGH_CTX = re.compile(r"gallery|screenshot|preview|slide|image", re.IGNORECASE)
+# Campos de baixa prioridade (logo, ícone, capa)
+_LOW_CTX  = re.compile(r"thumbnail|thumb|icon|logo|cover|avatar|badge", re.IGNORECASE)
+
+
+def _find_image_urls_in_obj(obj, _ctx: str = "", _depth: int = 0) -> list[tuple[int, str]]:
+    """
+    Varre recursivamente JSON buscando URLs de imagem.
+    Retorna lista de (prioridade, url):
+      prioridade 10 = galeria/screenshot (melhor)
+      prioridade  5 = campo genérico
+      prioridade  1 = thumbnail/icon/logo (pior, evitar)
+    """
+    if _depth > 7:
         return []
-    urls: list[str] = []
+    result: list[tuple[int, str]] = []
     if isinstance(obj, str):
         if obj.startswith("http") and _IMG_EXT.search(obj):
-            urls.append(obj)
+            if _LOW_CTX.search(_ctx):
+                prio = 1
+            elif _HIGH_CTX.search(_ctx):
+                prio = 10
+            else:
+                prio = 5
+            result.append((prio, obj))
     elif isinstance(obj, dict):
-        for v in obj.values():
-            urls.extend(_find_image_urls_in_obj(v, _depth + 1))
+        for k, v in obj.items():
+            result.extend(_find_image_urls_in_obj(v, _ctx=k, _depth=_depth + 1))
     elif isinstance(obj, list):
         for item in obj:
-            urls.extend(_find_image_urls_in_obj(item, _depth + 1))
-    return urls
+            result.extend(_find_image_urls_in_obj(item, _ctx=_ctx, _depth=_depth + 1))
+    return result
+
+
+def _extract_scored_urls(obj) -> list[str]:
+    """Extrai URLs do JSON ordenadas por prioridade de contexto (galeria primeiro)."""
+    pairs = _find_image_urls_in_obj(obj)
+    pairs.sort(key=lambda x: x[0], reverse=True)
+    return [url for _, url in pairs]
 
 
 def _canonical_key(url: str) -> str:
@@ -286,7 +311,7 @@ async def _fab_search_curl(query: str) -> list[str]:
                 # Extrai URLs diretas dos resultados
                 results = data.get("results") or data.get("listings") or data.get("items") or []
                 for listing in (results if isinstance(results, list) else []):
-                    urls.extend(_find_image_urls_in_obj(listing))
+                    urls.extend(_extract_scored_urls(listing))
 
                 # Busca UIDs e chama listing individual para dados completos
                 for listing in (results if isinstance(results, list) else [])[:3]:
@@ -304,7 +329,7 @@ async def _fab_search_curl(query: str) -> list[str]:
                         LOG.info("[fab_curl] listing/%s status=%d", uid, lresp.status_code)
                         if lresp.status_code == 200:
                             LOG.info("[fab_curl] listing JSON: %s", lresp.text[:3000])
-                            urls.extend(_find_image_urls_in_obj(lresp.json()))
+                            urls.extend(_extract_scored_urls(lresp.json()))
 
                 if urls:
                     LOG.info("[fab_curl] %d URL(s) brutas via API", len(urls))
@@ -324,7 +349,7 @@ async def _fab_search_curl(query: str) -> list[str]:
                     try:
                         nd = _json.loads(m.group(1))
                         LOG.info("[fab_curl] __NEXT_DATA__ snippet=%s", _json.dumps(nd)[:600])
-                        urls = _find_image_urls_in_obj(nd)
+                        urls = _extract_scored_urls(nd)
                         LOG.info("[fab_curl] %d URL(s) brutas via __NEXT_DATA__", len(urls))
                         return urls
                     except Exception:
