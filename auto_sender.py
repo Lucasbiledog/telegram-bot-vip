@@ -159,6 +159,17 @@ async def index_message_file(update: Update, session: Session) -> bool:
         session.commit()
 
         LOG.info(f"[INDEX] ✅ Arquivo indexado: {file_data['file_type']} - ID {msg.message_id}")
+
+        # Disparar busca de imagem Fab em background assim que o arquivo entra na fila
+        title = (msg.caption or file_data.get('file_name') or '').strip()
+        if title:
+            try:
+                bot = update.get_bot()
+                asyncio.create_task(_prefetch_fab_images_bg(bot, title))
+                LOG.info(f"[INDEX] 🔍 Pré-fetch Fab agendado para '{title[:60]}'")
+            except Exception as prefetch_err:
+                LOG.warning(f"[INDEX] Falha ao agendar pré-fetch: {prefetch_err}")
+
         return True
 
     except Exception as e:
@@ -700,6 +711,37 @@ async def send_as_media_group(
         return False
 
 
+async def _prefetch_fab_images_bg(bot, title: str) -> None:
+    """
+    Busca e armazena imagens do Fab.com em background logo após indexar um arquivo.
+    Roda como fire-and-forget (asyncio.create_task). Nunca propaga exceções.
+    """
+    try:
+        from models import FabImageCache
+        from main import SessionLocal, _normalize_fab_query, _fab_cache_save
+        from fab_scraper import fetch_fab_images
+
+        norm = _normalize_fab_query(title)
+        if not norm:
+            return
+
+        # Verificar se já está no cache para não buscar de novo
+        with SessionLocal() as s:
+            if s.query(FabImageCache).filter(FabImageCache.query == norm).first():
+                LOG.debug(f"[PREFETCH] Já em cache: '{norm[:60]}'")
+                return
+
+        LOG.info(f"[PREFETCH] Iniciando busca Fab para '{norm[:60]}'")
+        imgs = await fetch_fab_images(norm, count=3)
+        if imgs:
+            file_ids = await _fab_cache_save(bot, norm, imgs)
+            LOG.info(f"[PREFETCH] ✅ {len(file_ids)} imagem(ns) armazenadas para '{norm[:60]}'")
+        else:
+            LOG.info(f"[PREFETCH] Nenhuma imagem encontrada para '{norm[:60]}'")
+    except Exception as exc:
+        LOG.warning(f"[PREFETCH] Erro ao pré-buscar imagens para '{title[:60]}': {exc}")
+
+
 async def _send_fab_images_for_caption(bot: Bot, channel_id: int, caption: str) -> bool:
     """
     Busca imagens do Fab.com para a caption/título e envia ao canal.
@@ -739,11 +781,11 @@ async def _send_fab_images_for_caption(bot: Bot, channel_id: int, caption: str) 
             LOG.info(f"[AUTO-SEND] Nenhuma imagem Fab disponível para '{norm[:60]}'")
             return False
 
-        # ── 3) Envia ────────────────────────────────────────────────────────
-        media = [
-            InputMediaPhoto(media=fid, caption=f"Imagem {i}")
-            for i, fid in enumerate(file_ids, 1)
-        ]
+        # ── 3) Envia — caption com nome do pack apenas na primeira imagem ──
+        media = []
+        for i, fid in enumerate(file_ids, 1):
+            img_caption = caption.strip() if i == 1 else None
+            media.append(InputMediaPhoto(media=fid, caption=img_caption))
         await bot.send_media_group(chat_id=channel_id, media=media)
         LOG.info(f"[AUTO-SEND] {len(file_ids)} imagem(ns) Fab enviada(s) para '{caption[:60]}'")
         return True
