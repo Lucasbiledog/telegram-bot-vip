@@ -363,7 +363,7 @@ async function loadBasicInfo() {
   console.log("[loadBasicInfo] Carregando configurações básicas...");
   try {
     // Mostrar carteira padrão (pode ser obtida da API)
-    $("addr").value = "0x40dDBD27F878d07808339F9965f013F1CBc2F812";
+    $("addr").value = "0x96604B744D95aBD84B44487387145479aD9f8d08";
 
     const defaultPlans = {
       "30": 30.00,
