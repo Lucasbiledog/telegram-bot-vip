@@ -1,0 +1,18 @@
+fastapi==0.111.0
+uvicorn==0.30.1
+SQLAlchemy==2.0.31
+asyncpg==0.29.0
+httpx>=0.27,<0.29
+python-dotenv==1.0.1
+web3==6.20.1
+APScheduler==3.10.4
+python-telegram-bot==22.3
+pyrogram>=2.0.0
+tgcrypto>=1.2.0
+pytz
+eth-account>=0.10.0
+psycopg2-binary
+# Cache e performance
+aioredis>=2.0.1
+redis>=4.6.0
+
